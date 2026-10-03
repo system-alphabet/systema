@@ -21,5 +21,10 @@ pub mod unitstate_admin;
 pub mod worker_ipc;
 pub mod proto {
     //! Generated protobuf types for the IPC protocol.
+    //!
+    //! prost emits one file per proto package, so the three sources under
+    //! `proto/` (`common`, `workload`, `control`) land in a single flat
+    //! module here.  The split is enforced at `protoc` level: each plane
+    //! only imports `common.proto` and cannot name the other's types.
     include!(concat!(env!("OUT_DIR"), "/ipc.rs"));
 }

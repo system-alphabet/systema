@@ -1,0 +1,276 @@
+syntax = "proto3";
+
+package ipc;
+
+import "common.proto";
+
+// ──────────────────────────────────────────────────────────────────
+// workload.proto — the allocator socket, /run/systema/allocator.sock.
+//
+// System A (ipc::server) listens; System Workers and the Finder connect.
+// Carries worker registration, unit method dispatch, unit state
+// replication, staging commits and unit-type events.  Pure workload —
+// no manager/admin traffic ever rides this socket.
+// ──────────────────────────────────────────────────────────────────
+
+// Sent by a System Worker on connect to declare which unit types it handles.
+message WorkerRegistration {
+    // Unique ID of this worker instance, e.g. "system-s-1".
+    string worker_id = 1;
+    // Unit types this worker manages, e.g. ["service"].
+    repeated string unit_types = 2;
+    // True when this worker implements the `unit.define` protocol and can
+    // synthesize definitions for dynamic units of its types on request
+    // (System R: slice parent chains).  Workers without this flag are never
+    // asked for definitions.
+    bool supports_unit_define = 3;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Generic method call / result
+// ──────────────────────────────────────────────────────────────────
+// Sent by System A to invoke a method on a unit managed by the worker.
+// Methods: "status", "start", "stop", "restart", "reload"
+message MethodCall {
+    // Method name (e.g. "status", "start", "stop").
+    string method = 1;
+    // The target unit name.
+    string unit_name = 2;
+    // Method-specific serialized arguments.
+    // For start/restart/reload this is a serialized UnitConfig.
+    // For status/stop this is empty.
+    bytes args = 3;
+    // Unique invocation ID for this activation (UUID v4).
+    // Set for start/restart calls; empty otherwise.
+    string invocation_id = 4;
+}
+
+// Response from a worker to a MethodCall.
+message MethodResult {
+    // Echoes the method name from the call.
+    string method = 1;
+    // Echoes the unit name from the call.
+    string unit_name = 2;
+    // True if the call succeeded.
+    bool success = 3;
+    // Human-readable error message (empty on success).
+    string error = 4;
+    // Method-specific serialized result.
+    // For "status" this is a serialized UnitStatus.
+    // For other methods this is empty.
+    bytes result = 5;
+}
+
+// Sent by System A to acknowledge a worker registration.
+message RegisterAck {
+    bool accepted = 1;
+    string message = 2;
+}
+
+// Sent by a System Worker once its registration is accepted and its initial
+// full state snapshot has been published.  Fire-and-forget (no ACK): System A
+// marks the worker ready and broadcasts `WORKER_READY=<worker_id>` on the
+// notify channel so SysAInit can advance its serial startup sequence.
+message WorkerReady {
+    // Empty — the worker's identity is the envelope's source field.
+}
+
+// Sent by a System Worker as its *last* message once it receives
+// SIGTERM/SIGINT: everything already queued for System A has been flushed
+// and the worker wants to part ways politely.  Fire-and-forget — there is
+// no reply envelope: System A closing the connection *is* the
+// acknowledgement, and the worker exits once it observes that close.
+message WorkerExit {
+    // Why the worker is going away ("SIGTERM"/"SIGINT") — logging only.
+    string reason = 1;
+}
+
+// Sent by a Worker to System A to report runtime state changes for one or
+// more units.  This is the unified state-update channel.
+message UnitStateUpdate {
+    // States of the affected units (may be empty for a pure ACK probe).
+    repeated UnitStatus units = 1;
+    // True when this is a complete snapshot of every unit managed by the
+    // worker (sent on connect/reconnect and in response to UnitSyncRequest).
+    // Full snapshots are accepted unconditionally; incremental updates are
+    // validated against the unit ownership table.
+    bool full_snapshot = 2;
+    // Monotonically increasing sequence number for ordering/dedup (0 = not set).
+    uint64 seq = 3;
+}
+
+// Sent by System A to acknowledge a UnitStateUpdate.
+message UnitStateUpdateAck {
+    // True if the update was accepted.
+    bool accepted = 1;
+    // Units that were ignored (unknown or not owned by the sender).
+    repeated string ignored_units = 2;
+    // Human-readable message (empty on success).
+    string message = 3;
+}
+
+// Sent by System A to a Worker to request a full state snapshot.
+// The Worker replies with a UnitStateUpdate carrying full_snapshot=true.
+message UnitSyncRequest {
+    // Empty — reserved for future filter fields.
+}
+
+// Sent by a Worker to System A to subscribe to `event.publish` notifications
+// for a specific set of units.  An empty `unit_names` list subscribes to
+// updates for *all* units.  Each call adds to the worker's existing
+// subscription.
+message EventSubscribe {
+    // Unit names to subscribe to; empty = all units.
+    repeated string unit_names = 1;
+}
+
+// Sent by a Worker to System A to cancel one or more unit subscriptions.
+// An empty `unit_names` list removes every subscription (including an
+// all-units subscription).
+message EventUnsubscribe {
+    // Unit names to unsubscribe from; empty = unsubscribe from all.
+    repeated string unit_names = 1;
+}
+
+// Sent by a Worker in response to UnitSyncRequest.  Identical to a
+// full-snapshot UnitStateUpdate; kept as a separate message so the two
+// directions use distinct payload types.
+message UnitSyncReport {
+    // The full snapshot of every unit managed by this worker.
+    UnitStateUpdate snapshot = 1;
+}
+
+// Sent by a System Worker to register discovered units as JSON-serialized
+// UnitIR values bound to the caller's PID.
+message RegisterUnits {
+    // Name for the staging area (not used for identity).
+    string name = 1;
+    // JSON-serialized map of unit_id → UnitIR.
+    bytes units_json = 2;
+}
+
+// Sent by a System Worker to commit its staging area.
+// The area is identified by the (uid, name) pair.
+message CommitUnits {
+    // Name of the staging area to commit.
+    string name = 1;
+    // Owner UID of the staging area to commit; 0 = caller's own UID.
+    // Non-root callers may only commit areas owned by their own UID;
+    // root may commit any staging area.
+    uint32 uid = 2;
+}
+
+// Sent by a System Worker to query a staging area.
+message StagingQuery {
+    // Name of the staging area to query.
+    string name = 1;
+    // Owner UID of the staging area to query; 0 = caller's own UID.
+    // Non-root callers may only query areas owned by their own UID;
+    // root may query any staging area.
+    uint32 uid = 2;
+}
+
+// Response to a StagingQuery (worker's own area).
+message StagingQueryResult {
+    // True if the staging area was found.
+    bool success = 1;
+    // Human-readable message (empty on success).
+    string message = 2;
+    // JSON-serialized map of unit_id → UnitIR (empty on failure).
+    bytes units_json = 3;
+    // Number of units in the staging area (0 on failure).
+    uint32 unit_count = 4;
+}
+
+// Sent by System A to acknowledge a unit registration or commit.
+message UnitRegistrationAck {
+    bool success = 1;
+    string message = 2;
+    uint32 unit_count = 3;
+}
+
+// Sent by System A to a worker (e.g. System R) to request the on-demand
+// definition of units that are referenced (e.g. via Requires=/Slice=) but
+// not loaded — the `unit.define` materialization protocol.  The worker that
+// owns the unit type synthesizes the definitions from its domain knowledge
+// (System R: slice parent chains) instead of the disk.
+message UnitDefineRequest {
+    // Unit names whose definitions are requested (e.g. "user-0.slice").
+    repeated string unit_names = 1;
+}
+
+// Reply to a UnitDefineRequest, echoed on the same request_id.
+message UnitDefineResult {
+    bool success = 1;
+    // Human-readable error message (empty on success).
+    string error = 2;
+    // JSON-serialized map of unit_id → UnitIR (same format as the finder
+    // staging area) with the synthesized definitions; empty on failure.
+    bytes units_json = 3;
+}
+
+// Sent by System C (the timer worker) to System A when a timer fires,
+// asking System A to activate the timer's target unit.
+message TimerFired {
+    // The timer unit that fired, e.g. "backup.timer".
+    string timer_unit = 1;
+    // The unit to activate, e.g. "backup.service".
+    string target_unit = 2;
+    // When the trigger elapse occurred (unix epoch seconds).
+    uint64 elapse_epoch = 3;
+}
+
+// Sent by System N (the path worker) to System A when a monitored path
+// condition is satisfied, asking System A to activate the path unit's target.
+message PathFired {
+    // The path unit that fired, e.g. "foo.path".
+    string path_unit = 1;
+    // The unit to activate, e.g. "foo.service".
+    string target_unit = 2;
+    // When the trigger occurred (unix epoch seconds).
+    uint64 fired_epoch = 3;
+}
+
+// The UnitIR projection pushed to System R whenever a unit's runtime state
+// changes.  Carries everything System R needs to (re)apply cgroup resource
+// control: the `[Unit] Slice=` parent and the resource-control limits.
+message UnitResourceEvent {
+    string unit_name = 1;
+    // active_state of the unit when the event was emitted
+    // ("active", "inactive", "failed", ...).  System R applies the limits on
+    // "active" and releases the entry on "inactive"/"failed".
+    string active_state = 2;
+    // Parent slice from [Unit] Slice=; empty means the default (system.slice).
+    string slice = 3;
+    // The resource-control limits (empty when the unit sets none).
+    ResourceConfig resource = 4;
+    // Main process PID to move into the unit's cgroup (0 = none/n/a).
+    // Kept for backward compatibility; new senders fill `pids` instead.
+    uint32 main_pid = 5;
+    // Process PIDs to move into the unit's cgroup (empty = none/n/a).
+    // Scopes wrap externally-created processes, so this may carry several
+    // PIDs at once (from the transient `PIDs=` property).
+    repeated uint32 pids = 6;
+}
+
+// Periodic cgroup runtime metrics pushed by System R to System A.
+// Fire-and-forget (no ACK); System A caches the snapshot opaquely and
+// serves it from the systemd-compatible D-Bus properties.
+message CgroupMetricsUpdate {
+    // Metrics for the currently managed (active) units.
+    repeated UnitCgroupMetrics units = 1;
+}
+
+// Sent to the System R worker to report the number of active login sessions
+// for one user (systemd-logind semantics: `user-<UID>.slice` exists as long
+// as at least one session of that user is logged in).
+//
+// The count is absolute and idempotent: the slice's cgroup hierarchy
+// (`user.slice/<UID>.slice`) is created on the 0 → N transition and
+// released best-effort on the N → 0 transition.  The `user.slice` root is
+// always present once System R is up.
+message UserSessionEvent {
+    uint32 uid = 1;
+    // Absolute number of live sessions for this user.
+    uint32 sessions = 2;
+}
