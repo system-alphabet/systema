@@ -67,7 +67,7 @@ pub trait PathBackend: Send + Sync {
 
 /// Create the platform-appropriate backend for this host.
 pub fn default_backend() -> anyhow::Result<Box<dyn PathBackend>> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         Ok(Box::new(crate::backend::linux::InotifyBackend::new()?))
     }
@@ -83,6 +83,7 @@ pub fn default_backend() -> anyhow::Result<Box<dyn PathBackend>> {
     }
     #[cfg(not(any(
         target_os = "linux",
+        target_os = "android",
         target_os = "freebsd",
         target_os = "macos",
         target_os = "openbsd",
@@ -94,7 +95,7 @@ pub fn default_backend() -> anyhow::Result<Box<dyn PathBackend>> {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux;
 #[cfg(any(
     target_os = "freebsd",
@@ -106,6 +107,7 @@ pub mod linux;
 pub mod kqueue;
 #[cfg(not(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "macos",
     target_os = "openbsd",

@@ -76,7 +76,7 @@ mod imp {
     /// Extract the sender PID from a received control message, if present.
     pub fn sender_pid(c: &ControlMessageOwned) -> Option<u32> {
         match c {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             ControlMessageOwned::ScmCredentials(u) => Some(u.pid() as u32),
             #[cfg(any(
                 target_os = "freebsd",
@@ -89,7 +89,7 @@ mod imp {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn credentials_option() -> nix::libc::c_int {
         nix::libc::SO_PASSCRED
     }
@@ -104,6 +104,7 @@ mod imp {
     }
     #[cfg(not(any(
         target_os = "linux",
+        target_os = "android",
         target_os = "freebsd",
         target_os = "netbsd",
         target_os = "openbsd",

@@ -12,7 +12,7 @@ name = "systema-sysw-systemd"
 filename = "systema-sysw.systemd"
 path = "src/main.rs"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 sysa = { path = "../../../libsysa" }
 systema-sysw-common = { path = "../systema-sysw-common" }
 

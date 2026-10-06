@@ -211,7 +211,7 @@ pub(crate) fn peer_cred(stream: &UnixStream) -> Result<(u32, u32)> {
     let fd = stream.as_raw_fd();
 
     // Linux: struct ucred { pid, uid, gid } via SO_PEERCRED.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         unsafe {
             let mut cred: libc::ucred = std::mem::zeroed();

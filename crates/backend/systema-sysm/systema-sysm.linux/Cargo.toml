@@ -13,9 +13,9 @@ filename = "systema-sysm.linux"
 path = "src/main.rs"
 
 # systema-sysm-linux is Linux-only.  All dependencies are gated behind
-# cfg(target_os = "linux") so that on other platforms this crate builds as a
+# cfg(any(target_os = "linux", target_os = "android")) so that on other platforms this crate builds as a
 # dependency-free stub (see src/main.rs) instead of compiling Linux-only code.
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 sysa = { path = "../../../libsysa" }
 systema-sysf = { path = "../../systema-sysf" }
 systema-sysm-common = { path = "../systema-sysm-common" }

@@ -21,7 +21,7 @@ async-trait.workspace = true
 parking_lot.workspace = true
 prost.workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 inotify.workspace = true
 libc = "0.2"
 

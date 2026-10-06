@@ -21,14 +21,19 @@ const IOC_TYPE_SHIFT: u32 = 8;
 const IOC_NR_SHIFT: u32 = 0;
 const IOC_SIZE_SHIFT: u32 = 16;
 
-const fn ioc(dir: u32, ty: u8, nr: u8, size: usize) -> libc::c_ulong {
+// Spelled `libc::Ioctl` rather than a concrete width: that alias is
+// `c_ulong` on linux-gnu but `c_int` on android (and on musl), and it is
+// what `libc::ioctl`'s second parameter is declared with — so the request
+// number has to agree with it, not with a fixed 64-bit type.  The `_IOC`
+// layout itself is the same on both, so only the spelling changes.
+const fn ioc(dir: u32, ty: u8, nr: u8, size: usize) -> libc::Ioctl {
     ((dir << IOC_DIR_SHIFT)
         | ((ty as u32) << IOC_TYPE_SHIFT)
         | ((nr as u32) << IOC_NR_SHIFT)
-        | ((size as u32) << IOC_SIZE_SHIFT)) as libc::c_ulong
+        | ((size as u32) << IOC_SIZE_SHIFT)) as libc::Ioctl
 }
 
-const fn iowr(ty: u8, nr: u8, size: usize) -> libc::c_ulong {
+const fn iowr(ty: u8, nr: u8, size: usize) -> libc::Ioctl {
     ioc(IOC_READ | IOC_WRITE, ty, nr, size)
 }
 
@@ -45,15 +50,14 @@ struct AutofsDevIoctl {
 
 const AUTOFS_TYPE: u8 = 0xf9;
 const AUTOFS_DEV_IOCTL_SIZEOF: usize = std::mem::size_of::<AutofsDevIoctl>();
-const AUTOFS_DEV_IOCTL_VERSION: libc::c_ulong = iowr(AUTOFS_TYPE, 0x00, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_OPENMOUNT: libc::c_ulong = iowr(AUTOFS_TYPE, 0x04, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_PROTOVER: libc::c_ulong = iowr(AUTOFS_TYPE, 0x01, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_PROTOSUBVER: libc::c_ulong =
-    iowr(AUTOFS_TYPE, 0x02, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_TIMEOUT: libc::c_ulong = iowr(AUTOFS_TYPE, 0x0b, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_EXPIRE: libc::c_ulong = iowr(AUTOFS_TYPE, 0x0c, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_ACK: libc::c_ulong = iowr(AUTOFS_TYPE, 0x09, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_FAIL: libc::c_ulong = iowr(AUTOFS_TYPE, 0x0d, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_VERSION: libc::Ioctl = iowr(AUTOFS_TYPE, 0x00, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_OPENMOUNT: libc::Ioctl = iowr(AUTOFS_TYPE, 0x04, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_PROTOVER: libc::Ioctl = iowr(AUTOFS_TYPE, 0x01, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_PROTOSUBVER: libc::Ioctl = iowr(AUTOFS_TYPE, 0x02, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_TIMEOUT: libc::Ioctl = iowr(AUTOFS_TYPE, 0x0b, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_EXPIRE: libc::Ioctl = iowr(AUTOFS_TYPE, 0x0c, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_ACK: libc::Ioctl = iowr(AUTOFS_TYPE, 0x09, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_FAIL: libc::Ioctl = iowr(AUTOFS_TYPE, 0x0d, AUTOFS_DEV_IOCTL_SIZEOF);
 
 const AUTOFS_DEV_IOCTL_OPENMOUNT_SIZEOF: usize = AUTOFS_DEV_IOCTL_SIZEOF + 256; // room for path
 

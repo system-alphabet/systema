@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use systema_sysr_common::{NoopController, ResourceController};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod cgroup_v2;
 
 /// Build the resource controller for this platform.
@@ -19,14 +19,14 @@ mod cgroup_v2;
 /// the no-op fallback is always returned.  Shared across connection attempts
 /// and worker instances.
 pub fn linux_controller() -> Arc<dyn ResourceController> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         match cgroup_v2::CgroupV2Controller::detect() {
             Some(c) => Arc::new(c),
             None => Arc::new(NoopController),
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         Arc::new(NoopController)
     }

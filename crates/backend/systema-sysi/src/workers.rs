@@ -155,7 +155,7 @@ pub enum Platform {
 
 impl Platform {
     pub fn current() -> Self {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "android")) {
             Platform::Linux
         } else {
             Platform::Other

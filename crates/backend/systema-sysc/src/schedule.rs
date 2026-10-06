@@ -36,7 +36,7 @@ fn local_now() -> NaiveDateTime {
 
 /// Epoch of the last machine boot, used as the `OnBootSec=` anchor.
 pub fn boot_epoch() -> u64 {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if let Some(btime) = btime_from_proc_stat() {
             return btime;
@@ -57,7 +57,7 @@ pub fn boot_epoch() -> u64 {
 }
 
 /// Read `btime` (boot epoch) from `/proc/stat`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn btime_from_proc_stat() -> Option<u64> {
     let data = std::fs::read_to_string("/proc/stat").ok()?;
     for line in data.lines() {

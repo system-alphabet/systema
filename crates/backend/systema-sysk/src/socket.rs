@@ -363,7 +363,7 @@ fn bind_stream(address: &str, backlog: u32, socket_mode: u32, directory_mode: u3
 }
 
 /// Bind a Unix stream socket with an abstract address (@ → \0 prefix).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn new_socket_fd() -> Result<RawFd> {
     unsafe {
         let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
@@ -383,7 +383,7 @@ fn new_socket_fd() -> Result<RawFd> {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn bind_abstract_unix(address: &str, backlog: u32) -> Result<BoundSocket> {
     use std::os::unix::prelude::*;
 
@@ -436,7 +436,7 @@ fn bind_abstract_unix(address: &str, backlog: u32) -> Result<BoundSocket> {
     Ok(BoundSocket::UnixStream(listener))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn bind_abstract_unix(address: &str, _backlog: u32) -> Result<BoundSocket> {
     let trimmed = address.trim_start_matches(ABSTRACT_PREFIX);
     anyhow::bail!(sysa::l10n::fmt(sysa::l10n::t_("Abstract Unix sockets (prefix '@') are not supported on this platform. Use a filesystem path like '/tmp/{trimmed}' instead."), &[("trimmed", &trimmed.to_string())]));
@@ -626,7 +626,7 @@ fn bind_seqpacket(address: &str, backlog: u32, socket_mode: u32, directory_mode:
 /// Bind a netlink socket for a `ListenNetlink=` address.
 ///
 /// Format: `"protocol_name group"` — e.g. `"kobject-uevent 1"`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn bind_netlink(address: &str) -> Result<RawFd> {
     let parts: Vec<&str> = address.split_whitespace().collect();
     if parts.is_empty() {
@@ -704,7 +704,7 @@ fn bind_netlink(address: &str) -> Result<RawFd> {
     Ok(fd)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn bind_netlink(_address: &str) -> Result<RawFd> {
     anyhow::bail!(sysa::l10n::t_("Netlink sockets are only supported on Linux."));
 }
@@ -912,7 +912,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn bind_datagram_abstract() {
         let name = format!("@sysk-dgram-test-{}", std::process::id());
@@ -930,7 +930,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn bind_netlink_kobject_uevent() {
         let fd = bind_netlink("kobject-uevent 1").unwrap();
@@ -940,7 +940,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn bind_netlink_empty_fails() {
         assert!(bind_netlink("").is_err());

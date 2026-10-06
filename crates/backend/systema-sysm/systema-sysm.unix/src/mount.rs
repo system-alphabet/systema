@@ -28,12 +28,12 @@ fn mount_type_flag() -> &'static str {
 
 /// Whether the platform's `mount` supports the `-s` (sloppy) flag.
 fn sloppy_supported() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(any(target_os = "linux", target_os = "android"))
 }
 
 /// Whether the platform's `umount` supports the `-l` (lazy detach) flag.
 fn lazy_unmount_supported() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(any(target_os = "linux", target_os = "android"))
 }
 
 // ---------------------------------------------------------------------------
@@ -270,13 +270,13 @@ pub async fn do_remount(
 
     let mut cmd = Command::new("mount");
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     cmd.arg("-o").arg(format!("remount,{}", config.options));
 
     #[cfg(target_os = "freebsd")]
     cmd.arg("-u").arg("-o").arg(&config.options);
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
     {
         cmd.arg("-o").arg(format!("remount,{}", config.options));
         warn!("remount semantics may differ on this platform — falling back to -o remount");

@@ -25,7 +25,7 @@ use tracing::{debug, error, info};
 // The nix mount API differs between Linux (mount/umount2/MsFlags) and the
 // BSDs (FreeBSD nmount/Nmount + unmount/MntFlags).  Platform-specific
 // primitives live in `imp` so the rest of this module stays portable.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod imp {
     use nix::errno::Errno;
     use nix::mount::{mount, umount2, MntFlags, MsFlags};

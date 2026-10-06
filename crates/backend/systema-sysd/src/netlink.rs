@@ -7,22 +7,22 @@
 //!
 //! On non-Linux this module is a no-op (poll-only).
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use std::io;
 
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use tracing::warn;
 
 /// Spawn a background thread that pushes `()` to `tx` whenever a kernel
 /// uevent arrives.  Returns true if the watcher is running.
 pub fn spawn_uevent_watcher(tx: UnboundedSender<()>) -> bool {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         spawn_linux_watcher(tx)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = tx;
         debug!("netlink uevents not available on this platform; polling only");
@@ -30,7 +30,7 @@ pub fn spawn_uevent_watcher(tx: UnboundedSender<()>) -> bool {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn spawn_linux_watcher(tx: UnboundedSender<()>) -> bool {
     use std::os::fd::FromRawFd;
 
@@ -82,7 +82,7 @@ fn spawn_linux_watcher(tx: UnboundedSender<()>) -> bool {
         })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn watch_loop(socket: std::os::unix::net::UnixStream, tx: UnboundedSender<()>) {
     use std::os::fd::AsRawFd;
     let mut buf = [0u8; 4096];

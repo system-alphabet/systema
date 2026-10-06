@@ -1674,6 +1674,7 @@ dependencies = [
  "async-trait",
  "clap",
  "futures",
+ "libc",
  "nix",
  "parking_lot",
  "prost",

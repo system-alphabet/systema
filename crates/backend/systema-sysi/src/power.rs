@@ -231,11 +231,11 @@ pub fn execute_action(action: PowerAction, policy: PowerCtl) -> Result<()> {
             ]
         ));
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         LinuxPowerController.execute(action)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         NoopController.execute(action)
     }
@@ -262,11 +262,11 @@ pub trait PowerController: Send + Sync {
 /// `LINUX_REBOOT_CMD_*` constant; on success it does **not return** (the
 /// machine goes down).  If the caller still observes a return value it means
 /// the transition failed (an error result).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LinuxPowerController;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl PowerController for LinuxPowerController {
     fn execute(&self, action: PowerAction) -> Result<()> {
         let cmd = match action {
@@ -281,7 +281,20 @@ impl PowerController for LinuxPowerController {
         // Calling reboot(2) requires CAP_SYS_BOOT or effective root.  A
         // non-zero return here means the transition failed (e.g. not enough
         // privilege), since a successful reboot never returns.
-        let ret = unsafe { libc::reboot(cmd) };
+        //
+        // Issued as syscall(2) instead of libc's `reboot(3)`: supplying the
+        // two magic words is exactly what glibc's and bionic's wrappers do,
+        // and `libc` only declares `reboot()` for linux-gnu — android has
+        // `SYS_reboot` and the magic constants but no declaration.
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_reboot,
+                libc::LINUX_REBOOT_MAGIC1,
+                libc::LINUX_REBOOT_MAGIC2,
+                cmd,
+                0,
+            )
+        };
         if ret != 0 {
             let err = std::io::Error::last_os_error();
             return Err(anyhow::anyhow!(sysa::l10n::fmt(sysa::l10n::t_("reboot(2) for power action '{action}' failed: {err} (are we running as root/CAP_SYS_BOOT?)"), &[("action", &action.to_string()), ("err", &err.to_string())])));

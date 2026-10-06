@@ -334,11 +334,11 @@ impl PamSession {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use super::*;
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn dlopen_finds_libpam() {
         assert!(
             dlopen_pam().is_ok(),
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pam_setup_with_missing_service_fails() {
         // No /etc/pam.d/<name> file exists → the session open must fail
         // with an error message (never panic), proving the failure path is

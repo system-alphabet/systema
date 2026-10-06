@@ -65,9 +65,16 @@ async fn main() -> Result<()> {
 
     info!("System S (System Service Worker) starting up");
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     if !args.no_raper {
-        if let Err(e) = nix::sys::prctl::set_child_subreaper(true) {
+        // `nix` gates its `prctl` module on `target_os = "linux"` alone
+        // (src/sys/mod.rs:58), so android has no `set_child_subreaper`.
+        // This is nix's own `prctl_set_bool` body spelled out — same
+        // arguments, and bionic's prctl(2) takes them the same way.
+        let on = true as libc::c_ulong;
+        let rc = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, on, 0, 0, 0) };
+        if rc != 0 {
+            let e = std::io::Error::last_os_error();
             warn!("PR_SET_CHILD_SUBREAPER failed (services may be orphaned): {e}");
         }
         // Adopted orphans — and, worse, zombies inherited with them — are

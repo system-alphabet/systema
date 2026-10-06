@@ -48,7 +48,7 @@ use tokio::signal::unix::{Signal, SignalKind};
 use tracing::{info, warn};
 
 use crate::ipc::SharedRegistry;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::state::ServiceState;
 
 /// Safety-net period.  SIGCHLD is the primary trigger (a reparented zombie
@@ -61,7 +61,7 @@ const SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 /// Enabled on Linux regardless of `--no-raper`: with a subreaper this
 /// collects adopted orphans, without one it still collects our own direct
 /// children that no path waits for any more (e.g. a unit left `Stopping`).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) async fn run(shared: &SharedRegistry) {
     let mut sigchld = match tokio::signal::unix::signal(SignalKind::child()) {
         Ok(s) => Some(s),
@@ -92,14 +92,14 @@ pub(crate) async fn run(shared: &SharedRegistry) {
 /// Non-Linux placeholder: no `/proc` enumeration, and the platform's
 /// non-destructive child peek is not portable.  Log once and idle; the
 /// shutdown path still reaps everything.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub(crate) async fn run(_shared: &SharedRegistry) {
     warn!("orphan reaper: not implemented on this platform; zombies may accumulate");
     std::future::pending::<()>().await
 }
 
 /// Await one SIGCHLD (returns `false` once the stream is exhausted).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 async fn wait_sigchld(sig: &mut Option<Signal>) -> bool {
     match sig {
         Some(s) => s.recv().await.is_some(),
@@ -109,7 +109,7 @@ async fn wait_sigchld(sig: &mut Option<Signal>) -> bool {
 }
 
 /// One non-destructive probe + one reaping pass.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 async fn sweep(shared: &SharedRegistry) {
     // 1. Peek.  A zeroed siginfo keeps this safe whichever way the kernel
     //    behaves: it only fills siginfo when it found a child, so
@@ -186,7 +186,7 @@ async fn sweep(shared: &SharedRegistry) {
 }
 
 /// Human-readable exit description for a raw `waitpid` status word.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn describe(pid: u32, status: i32) -> String {
     use nix::sys::wait::WaitStatus;
     let pid = nix::unistd::Pid::from_raw(pid as i32);
@@ -212,7 +212,7 @@ fn describe(pid: u32, status: i32) -> String {
 /// `/proc/<pid>/stat` is `pid (comm) state ppid ...`; `comm` may itself
 /// contain spaces and parentheses, so it is delimited by the first `(` and
 /// the last `)`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn scan_children() -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut out = Vec::new();
@@ -251,7 +251,7 @@ fn scan_children() -> Vec<(u32, String)> {
 
 /// Split `/proc/<pid>/stat` into `(comm, remainder)` around the parenthesised
 /// command name.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn split_stat(stat: &str) -> Option<(&str, &str)> {
     let open = stat.find('(')?;
     let close = stat.rfind(')')?;
@@ -261,7 +261,7 @@ fn split_stat(stat: &str) -> Option<(&str, &str)> {
     Some((&stat[open + 1..close], stat[close + 1..].trim_start()))
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
 mod tests {
     use super::*;
 
