@@ -41,11 +41,16 @@
 //! current-thread runtime no other task can fork, register, or reap in
 //! between.
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use std::collections::HashSet;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use std::time::Duration;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::signal::unix::{Signal, SignalKind};
-use tracing::{info, warn};
+use tracing::warn;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use tracing::info;
 
 use crate::ipc::SharedRegistry;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -54,6 +59,7 @@ use crate::state::ServiceState;
 /// Safety-net period.  SIGCHLD is the primary trigger (a reparented zombie
 /// notifies its new parent); the timer catches coalesced or missed signals
 /// and zombies whose original parent never died but never reaped either.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Run the reaper until the surrounding `select!` drops us (shutdown).

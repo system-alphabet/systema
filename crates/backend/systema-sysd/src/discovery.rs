@@ -116,8 +116,11 @@ fn scan_devices(caps: Capabilities) -> Vec<DeviceMeta> {
         let mut meta = DeviceMeta {
             node: name.clone(),
             dev_file: p.to_string_lossy().to_string(),
-            major: libc::major(md.rdev()) as u32,
-            minor: libc::minor(md.rdev()) as u32,
+            // rdev() is u64 while libc::dev_t is platform-specific
+            // (u64 on Linux, i32 on OpenBSD, ...): narrow it the way the
+            // platform's own `major()`/`minor()` expect.
+            major: libc::major(md.rdev() as libc::dev_t) as u32,
+            minor: libc::minor(md.rdev() as libc::dev_t) as u32,
             ..Default::default()
         };
         if caps.sysfs {

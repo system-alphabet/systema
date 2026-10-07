@@ -35,8 +35,13 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use nix::cmsg_space;
 use nix::sys::socket::{
-    bind, recvmsg, socket, AddressFamily, MsgFlags, SockFlag, SockType, UnixAddr, UnixCredentials,
+    bind, recvmsg, socket, AddressFamily, MsgFlags, SockFlag, SockType, UnixAddr,
 };
+// nix only models per-message sender credentials (`UnixCredentials`,
+// `SCM_CREDS`) on Linux and the FreeBSD family; OpenBSD has neither a
+// `LOCAL_CREDS` socket option nor an `SCM_CREDS` control message.
+#[cfg(not(target_os = "openbsd"))]
+use nix::sys::socket::UnixCredentials;
 use nix::sys::stat::{fchmod, Mode};
 use tracing::{debug, info, warn};
 
@@ -44,15 +49,33 @@ use crate::process::{is_alive, pid_is_zombie};
 
 // The sd_notify sender-credential mechanism differs by platform: Linux
 // attaches per-message `SCM_CREDENTIALS` (enabled via `SO_PASSCRED`); the
-// BSDs carry `SCM_CREDS` (enabled via `LOCAL_CREDS`).  The reader logic is
-// otherwise identical, so only the socket option and the received
-// control-message variant are abstracted here.
+// FreeBSD family carries `SCM_CREDS` (enabled via `LOCAL_CREDS`).  The
+// reader logic is otherwise identical, so only the socket option and the
+// received control-message variant are abstracted here.  OpenBSD offers
+// neither mechanism (only `getpeereid()`, which needs a connected socket
+// and cannot serve one socket shared by every service), so sd_notify is
+// disabled there.
 mod imp {
-    use std::os::unix::io::{AsRawFd, OwnedFd};
+    // `AsRawFd` is only needed by the credential setup below, which
+    // OpenBSD does not have.
+    #[cfg(not(target_os = "openbsd"))]
+    use std::os::unix::io::AsRawFd;
+    use std::os::unix::io::OwnedFd;
 
     use nix::sys::socket::ControlMessageOwned;
 
     /// Enable delivery of the sender's credentials on the notify socket.
+    ///
+    /// OpenBSD has no per-message credential mechanism at all, so fail up
+    /// front: `setup_at()` then disables the notify socket and callers
+    /// treat notify services like `Type=simple`.
+    #[cfg(target_os = "openbsd")]
+    pub fn enable_sender_credentials(_fd: &OwnedFd) -> nix::Result<()> {
+        Err(nix::errno::Errno::EOPNOTSUPP)
+    }
+
+    /// Enable delivery of the sender's credentials on the notify socket.
+    #[cfg(not(target_os = "openbsd"))]
     pub fn enable_sender_credentials(fd: &OwnedFd) -> nix::Result<()> {
         let one: nix::libc::c_int = 1;
         // SAFETY: fd is a valid socket; LOCAL_CREDS is a boolean socket
@@ -81,7 +104,6 @@ mod imp {
             #[cfg(any(
                 target_os = "freebsd",
                 target_os = "netbsd",
-                target_os = "openbsd",
                 target_os = "dragonfly"
             ))]
             ControlMessageOwned::ScmCreds(u) => Some(u.pid() as u32),
@@ -96,7 +118,6 @@ mod imp {
     #[cfg(any(
         target_os = "freebsd",
         target_os = "netbsd",
-        target_os = "openbsd",
         target_os = "dragonfly"
     ))]
     fn credentials_option() -> nix::libc::c_int {
@@ -358,6 +379,13 @@ fn spawn_reader(fd: RawFd, tracker: Arc<Mutex<Tracker>>) {
         .spawn(move || {
             let mut buf = vec![0u8; 8192];
             loop {
+                // OpenBSD models no credential control message; its notify
+                // socket is never handed to the reader anyway
+                // (`enable_sender_credentials()` fails there), so size the
+                // buffer for a plain file-descriptor cmsg instead.
+                #[cfg(target_os = "openbsd")]
+                let mut cmsg_buf = cmsg_space!(RawFd);
+                #[cfg(not(target_os = "openbsd"))]
                 let mut cmsg_buf = cmsg_space!(UnixCredentials);
                 let (n, sender_pid) = {
                     let mut iov = [IoSliceMut::new(&mut buf)];

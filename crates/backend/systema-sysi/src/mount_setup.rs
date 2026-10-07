@@ -25,6 +25,8 @@ use tracing::{debug, error, info};
 // The nix mount API differs between Linux (mount/umount2/MsFlags) and the
 // BSDs (FreeBSD nmount/Nmount + unmount/MntFlags).  Platform-specific
 // primitives live in `imp` so the rest of this module stays portable.
+// OpenBSD has neither nmount nor a generic mount option string, so its
+// `imp` only reports the missing filesystem (see there).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod imp {
     use nix::errno::Errno;
@@ -106,6 +108,56 @@ mod imp {
             nm.str_opt_owned("options", options);
         }
         nm.nmount(MntFlags::empty()).map_err(|e| e.error())
+    }
+
+    /// Best-effort unmount of `path`.
+    pub fn do_unmount(path: &str) -> Result<(), Errno> {
+        unmount(path, MntFlags::MNT_FORCE)
+    }
+
+    /// True when `e` is `EBUSY` (target already occupied by another fs).
+    pub fn is_busy(e: &Errno) -> bool {
+        *e == Errno::EBUSY
+    }
+}
+
+#[cfg(target_os = "openbsd")]
+mod imp {
+    use nix::errno::Errno;
+    use nix::mount::{unmount, MntFlags};
+
+    /// Flags type accepted by the platform mount primitive.
+    pub type Flags = MntFlags;
+
+    /// Mount flags for the cgroup v2 hierarchy.
+    pub fn cgroup_flags() -> Flags {
+        MntFlags::MNT_NOSUID | MntFlags::MNT_NOEXEC
+    }
+    /// Mount flags for the /dev/shm tmpfs.
+    pub fn dev_shm_flags() -> Flags {
+        MntFlags::MNT_NOSUID | MntFlags::MNT_NOEXEC
+    }
+    /// Mount flags for the /dev/pts devpts.
+    pub fn dev_pts_flags() -> Flags {
+        MntFlags::MNT_NOSUID | MntFlags::MNT_NOEXEC
+    }
+
+    /// Mount `fstype` at `path`.
+    ///
+    /// OpenBSD's `mount(2)` takes a filesystem-specific argument struct
+    /// (`struct tmpfs_args`, ...) rather than the Linux-style option
+    /// string, and two of the three API filesystems do not exist there
+    /// at all: cgroup2 is Linux-only and `/dev/pts` is served by devfs.
+    /// Report the missing filesystem so the callers keep their documented
+    /// degradation path (warn, boot continues) instead of claiming a
+    /// mount that never happened.
+    pub fn do_mount(
+        _fstype: &str,
+        _path: &str,
+        _options: &str,
+        _flags: Flags,
+    ) -> Result<(), Errno> {
+        Err(Errno::ENODEV)
     }
 
     /// Best-effort unmount of `path`.

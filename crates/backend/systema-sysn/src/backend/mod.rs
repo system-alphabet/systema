@@ -58,6 +58,9 @@ pub trait PathBackend: Send + Sync {
 
     /// All currently armed units (used to re-scan everything after an
     /// event queue overflow).
+    // Only the Linux (inotify) backend calls this; the BSD/macOS backends
+    // re-scan unconditionally, so the method has no caller there.
+    #[allow(dead_code)]
     fn armed_units(&self) -> Vec<String>;
 
     /// Block until at least one change is available, then return the

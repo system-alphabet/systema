@@ -72,7 +72,6 @@ fn btime_from_proc_stat() -> Option<u64> {
 #[cfg(any(
     target_os = "freebsd",
     target_os = "netbsd",
-    target_os = "openbsd",
     target_os = "macos"
 ))]
 fn boottime_sysctl() -> Option<u64> {
@@ -82,6 +81,33 @@ fn boottime_sysctl() -> Option<u64> {
         let name = b"kern.boottime\0";
         let r = libc::sysctlbyname(
             name.as_ptr() as *const libc::c_char,
+            &mut tv as *mut _ as *mut libc::c_void,
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        );
+        if r == 0 {
+            Some(tv.tv_sec as u64)
+        } else {
+            None
+        }
+    }
+}
+
+/// Read the boot time from `sysctl kern.boottime`.
+///
+/// OpenBSD has no `sysctlbyname(3)`; the very same node (a `struct timeval`,
+/// sysctl(3)) is reached through the numeric MIB interface instead:
+/// `sysctl({CTL_KERN, KERN_BOOTTIME})`.
+#[cfg(target_os = "openbsd")]
+fn boottime_sysctl() -> Option<u64> {
+    unsafe {
+        let mut tv: libc::timeval = std::mem::zeroed();
+        let mut len = std::mem::size_of::<libc::timeval>() as libc::size_t;
+        let name = [libc::CTL_KERN, libc::KERN_BOOTTIME];
+        let r = libc::sysctl(
+            name.as_ptr(),
+            name.len() as libc::c_uint,
             &mut tv as *mut _ as *mut libc::c_void,
             &mut len,
             std::ptr::null_mut(),
