@@ -4,7 +4,8 @@
 //! is compiled out (gated behind `cfg(any(target_os = "linux", target_os = "android"))`) and the binary
 //! becomes an inert stub, so building the workspace never fails and never
 //! compiles Linux-only code.  The dependencies in Cargo.toml are gated the
-//! same way, so on non-Linux platforms this crate is a dependency-free stub.
+//! same way — apart from `sysa`, which the stub needs for `l10n::t_()` — so on
+//! non-Linux platforms this crate is a stub with a single dependency.
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;

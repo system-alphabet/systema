@@ -12,7 +12,13 @@ name = "systema-sysw-systemd"
 filename = "systema-sysw.systemd"
 path = "src/main.rs"
 
-[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+# systema-sysw.systemd is a portable D-Bus bridge (zbus + tokio); it has no
+# platform-specific code and no stub variant, so its dependencies are
+# unconditional.  They used to be gated behind
+# cfg(any(target_os = "linux", target_os = "android")), which left every
+# import unresolved — and the build broken — on every other target (FreeBSD,
+# macOS, ...).
+[dependencies]
 sysa = { path = "../../../libsysa" }
 systema-sysw-common = { path = "../systema-sysw-common" }
 
