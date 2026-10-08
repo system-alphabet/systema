@@ -5,7 +5,11 @@
 #
 # Usage:
 #   source termux-env-local.sh    # before starting any systema binary
-#   cargo build                    # harmless during the build as well
+#   source termux-env-local.sh && cargo build
+#                                 # ALSO bakes these paths into the binaries
+#                                 # as compile-time defaults (libsysa
+#                                 # build.rs reruns on env change — no
+#                                 # `cargo clean` needed)
 #
 # Same variable set as `termux-env.sh` (see that file and
 # crates/libsysa/src/paths.rs), but the static/configuration part of the FHS
@@ -23,9 +27,18 @@
 #
 # Authority for the variable list and the colon-separated list syntax:
 #   crates/libsysa/src/paths.rs   (resolve / resolve_list)
-#   crates/libsysa/build.rs       (compile-time defaults, for reference)
+#   crates/libsysa/build.rs       (same variables read at build time)
 # ---------------------------------------------------------------------------
 
+# `set -u` guards only THIS file — since it is sourced, the option must
+# NOT leak into the caller's interactive shell, where it breaks zsh
+# plugins on every prompt (e.g. powerlevel10k with
+# `_z:8: _Z_OWNER: parameter not set`).  Save the caller's nounset state
+# and restore it again at the end of this file.
+case $- in
+    *u*) _systema_env_had_nounset=1 ;;
+    *)   _systema_env_had_nounset=0 ;;
+esac
 set -u
 
 # $PREFIX is normally set by Termux itself; fall back to the default.
@@ -109,3 +122,7 @@ echo "termux-env-local: SYSTEMA_RUNSTATEDIR = ${SYSTEMA_RUNSTATEDIR}"
 echo "termux-env-local: SYSTEMA_UNIT_PATH = ${SYSTEMA_UNIT_PATH}"
 echo "termux-env-local: All 17 SYSTEMA_* / SYSTEMD_* variables from paths.rs exported."
 echo "termux-env-local: Ready. Run the systema binaries."
+
+# Restore the caller's nounset state (see the `set -u` note at the top).
+[ "$_systema_env_had_nounset" -eq 1 ] || set +u
+unset _systema_env_had_nounset
