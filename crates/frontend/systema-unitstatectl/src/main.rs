@@ -15,7 +15,6 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(
     name = "systema-unitstatectl",
-    version,
     about = "System A — Unit State Controller"
 )]
 struct Cli {
@@ -41,6 +40,21 @@ struct Cli {
         help = "When to use colors"
     )]
     color: ColorChoice,
+
+    #[arg(
+        long,
+        global = true,
+        short = 'v',
+        help = "Print version information and exit"
+    )]
+    version: bool,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Print full version: build options and compile-time paths"
+    )]
+    full_version: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -174,6 +188,14 @@ fn build_localized_cli() -> clap::Command {
         .mut_arg("color", |a| {
             a.help(l10n::t_("When to use colors (always, auto, never)."))
         })
+        .mut_arg("version", |a| {
+            a.help(l10n::t_("Print version information and exit."))
+        })
+        .mut_arg("full_version", |a| {
+            a.help(l10n::t_(
+                "Print full version: build options and compile-time paths.",
+            ))
+        })
         .mut_subcommand("list", |cmd| {
             cmd.about(l10n::t_("List the System Allocator's cached unit state."))
                 .mut_arg("name", |a| {
@@ -190,6 +212,14 @@ async fn main() -> Result<()> {
     sysa::l10n::init();
 
     let matches = build_localized_cli().get_matches();
+    if *matches.get_one::<bool>("version").unwrap_or(&false) {
+        sysa::version::print_version();
+        return Ok(());
+    }
+    if *matches.get_one::<bool>("full_version").unwrap_or(&false) {
+        sysa::version::print_full_version();
+        return Ok(());
+    }
     let debug = *matches.get_one::<bool>("debug").unwrap_or(&false);
     let log_level = matches
         .get_one::<String>("log_level")
@@ -202,6 +232,7 @@ async fn main() -> Result<()> {
 
     let level = if debug { "debug" } else { log_level };
     init_tracing(level);
+    sysa::paths::debug_dump(sysa::paths::instance().log_dir);
 
     let use_pager = !no_pager;
     let _guard: PagerGuard = sysa_pager::open(PagerConfig {

@@ -18,6 +18,7 @@ pub mod signals;
 pub mod staging_admin;
 pub mod unit_name;
 pub mod unitstate_admin;
+pub mod version;
 pub mod worker_ipc;
 pub mod proto {
     //! Generated protobuf types for the IPC protocol.

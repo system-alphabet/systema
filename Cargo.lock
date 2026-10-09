@@ -1371,6 +1371,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "colored",
  "futures",
  "gettext-rs",
  "libc",

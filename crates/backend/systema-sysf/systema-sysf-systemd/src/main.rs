@@ -35,6 +35,15 @@ struct Args {
         help = "Name for the staging area"
     )]
     name: String,
+
+    #[arg(long, short = 'v', help = "Print version information and exit")]
+    version: bool,
+
+    #[arg(
+        long,
+        help = "Print full version: build options and compile-time paths"
+    )]
+    full_version: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -56,9 +65,25 @@ async fn main() -> Result<()> {
             })
             .mut_arg("name", |a| {
                 a.help(sysa::l10n::t_("Name for the staging area."))
+            })
+            .mut_arg("version", |a| {
+                a.help(sysa::l10n::t_("Print version information and exit."))
+            })
+            .mut_arg("full_version", |a| {
+                a.help(sysa::l10n::t_(
+                    "Print full version: build options and compile-time paths.",
+                ))
             });
         Args::from_arg_matches(&cmd.get_matches()).unwrap_or_else(|e| e.exit())
     };
+    if args.version {
+        sysa::version::print_version();
+        return Ok(());
+    }
+    if args.full_version {
+        sysa::version::print_full_version();
+        return Ok(());
+    }
     let log_level = if args.debug { "debug" } else { &args.log_level };
     // Self-managed logging: <log-dir>/<name>.log, or stderr when the log
     // file cannot be opened — same contract as the other daemons.

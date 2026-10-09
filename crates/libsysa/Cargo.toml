@@ -17,6 +17,7 @@ futures.workspace = true
 async-trait.workspace = true
 libc = "0.2"
 gettext-rs.workspace = true
+colored.workspace = true
 
 [features]
 default = []

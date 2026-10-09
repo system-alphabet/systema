@@ -3,6 +3,7 @@ mod builtin {
 }
 
 use std::sync::OnceLock;
+use tracing::debug;
 
 pub struct Paths {
     /// Allocator workload-plane socket: workers register here and the
@@ -102,4 +103,104 @@ pub fn init() {
 
 pub fn instance() -> &'static Paths {
     INSTANCE.get_or_init(compute_paths)
+}
+
+/// The compile-time path defaults baked in by build.rs, as
+/// (`SYSTEMA_*` / `SYSTEMD_*` environment variable, default) pairs —
+/// the record printed by `--full-version`.
+pub fn builtin_defaults() -> Vec<(&'static str, String)> {
+    let list = |items: &[&str]| items.join(":");
+    vec![
+        (
+            "SYSTEMD_LIB_UNIT_DIR",
+            builtin::SYSTEMD_LIB_UNIT_DIR.to_string(),
+        ),
+        (
+            "SYSTEMD_FIRST_BOOT_FILE",
+            builtin::SYSTEMD_FIRST_BOOT_FILE.to_string(),
+        ),
+        (
+            "SYSTEMD_MACHINE_ID_FILE",
+            builtin::SYSTEMD_MACHINE_ID_FILE.to_string(),
+        ),
+        ("SYSTEMA_IPC_SOCKET", builtin::IPC_SOCKET_PATH.to_string()),
+        (
+            "SYSTEMA_FDPASS_SOCK",
+            builtin::SYSTEMA_FDPASS_SOCK.to_string(),
+        ),
+        (
+            "SYSTEMA_CONTROL_SOCKET",
+            builtin::CONTROL_SOCKET_PATH.to_string(),
+        ),
+        ("SYSTEMA_RUNSTATEDIR", builtin::RUNSTATEDIR.to_string()),
+        ("SYSTEMA_NOTIFY_DIR", builtin::NOTIFY_DIR.to_string()),
+        (
+            "SYSTEMA_SHELL_PATH",
+            builtin::SYSTEMA_SHELL_PATH.to_string(),
+        ),
+        (
+            "SYSTEMA_SOCKET_HANDLER_PATH",
+            builtin::SYSTEMA_SOCKET_HANDLER_PATH.to_string(),
+        ),
+        ("SYSTEMA_LOCALE_DIR", builtin::LOCALE_DIR.to_string()),
+        ("SYSTEMA_LOG_DIR", builtin::LOG_DIR.to_string()),
+        ("SYSTEMA_RELOAD_SOCKET", builtin::RELOAD_SOCKET.to_string()),
+        ("SYSTEMA_UNIT_PATH", list(builtin::UNIT_SEARCH_PATHS)),
+        (
+            "SYSTEMA_GENERATOR_PATH",
+            list(builtin::GENERATOR_SEARCH_PATHS),
+        ),
+        ("SYSTEMA_FINDER_PATH", list(builtin::FINDER_SEARCH_PATHS)),
+        ("SYSTEMA_BIN_PATH", list(builtin::SYSTEMA_BIN_SEARCH_PATHS)),
+    ]
+}
+
+/// Log every effective path value at debug level (`-D` /
+/// `--log-level debug`).  System A runs in volatile environments:
+/// `SYSTEMA_*` / `SYSTEMD_*` env vars and CLI flags (e.g.
+/// `systema-sysi --log-dir`) may change paths between runs, so each
+/// startup records what this run actually resolved.
+///
+/// `log_dir` is the log directory this process really uses — usually
+/// [`Paths::log_dir`], or a CLI override of it.
+pub fn debug_dump(log_dir: &str) {
+    let p = instance();
+    let list = |items: &[String]| items.join(":");
+    // Same names and order as `builtin_defaults()` so a run's log can be
+    // compared against `--full-version` line by line.
+    let values = [
+        ("SYSTEMD_LIB_UNIT_DIR", p.systemd_lib_unit_dir.to_string()),
+        (
+            "SYSTEMD_FIRST_BOOT_FILE",
+            p.systemd_first_boot_file.to_string(),
+        ),
+        (
+            "SYSTEMD_MACHINE_ID_FILE",
+            p.systemd_machine_id_file.to_string(),
+        ),
+        ("SYSTEMA_IPC_SOCKET", p.ipc_socket_path.to_string()),
+        ("SYSTEMA_FDPASS_SOCK", p.systema_fdpass_sock.to_string()),
+        ("SYSTEMA_CONTROL_SOCKET", p.control_socket_path.to_string()),
+        ("SYSTEMA_RUNSTATEDIR", p.runstatedir.to_string()),
+        ("SYSTEMA_NOTIFY_DIR", p.notify_dir.clone()),
+        ("SYSTEMA_SHELL_PATH", p.systema_shell_path.to_string()),
+        (
+            "SYSTEMA_SOCKET_HANDLER_PATH",
+            p.systema_socket_handler_path.to_string(),
+        ),
+        ("SYSTEMA_LOCALE_DIR", p.locale_dir.to_string()),
+        ("SYSTEMA_LOG_DIR", log_dir.to_string()),
+        ("SYSTEMA_RELOAD_SOCKET", p.reload_socket.to_string()),
+        ("SYSTEMA_UNIT_PATH", list(&p.unit_search_paths)),
+        ("SYSTEMA_GENERATOR_PATH", list(&p.generator_search_paths)),
+        ("SYSTEMA_FINDER_PATH", list(&p.finder_search_paths)),
+        ("SYSTEMA_BIN_PATH", list(&p.systema_bin_search_paths)),
+    ];
+    debug!(
+        "resolved paths (SYSTEMA_*/SYSTEMD_* env and CLI flags override the compiled-in defaults):"
+    );
+    let width = values.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    for (name, value) in values {
+        debug!("  {name:<width$} {value}");
+    }
 }

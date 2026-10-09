@@ -219,6 +219,9 @@ fn open_console() -> Option<(Box<dyn Write + Send>, bool)> {
 /// `level` follows the usual filter syntax (`info`, `debug`, RUST_LOG
 /// expressions).  Returns where logs actually go.
 ///
+/// The effective path values are recorded at debug level so every run's
+/// log documents what it resolved (see [`crate::paths::debug_dump`]).
+///
 /// The primary log goes to the configured file (or stderr) and is mirrored
 /// to the console device when it is openable.  When the console is a TTY
 /// (or `console-is-tty` is on the kernel command line) the formatter emits
@@ -287,6 +290,9 @@ pub fn init(log_dir: &str, log_name: &str, level: &str) -> LogTarget {
     };
     fmt.with_writer(std::sync::Mutex::new(writer as Box<dyn Write + Send>))
         .init();
+    // Record the paths this run actually resolved: environments are
+    // volatile, env vars and CLI flags can change them between runs.
+    crate::paths::debug_dump(log_dir);
     target
 }
 

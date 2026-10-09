@@ -117,6 +117,15 @@ struct Args {
     sysr_flags: Option<String>,
     #[arg(long, allow_hyphen_values = true, help = "Extra flags for System M only")]
     sysm_flags: Option<String>,
+
+    #[arg(long, short = 'v', help = "Print version information and exit")]
+    version: bool,
+
+    #[arg(
+        long,
+        help = "Print full version: build options and compile-time paths"
+    )]
+    full_version: bool,
 }
 
 /// Canonical short names of every supervised worker (must mirror
@@ -282,6 +291,14 @@ async fn main() -> Result<()> {
                 a.help(sysa::l10n::t_(
                     "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence.",
                 ))
+            })
+            .mut_arg("version", |a| {
+                a.help(sysa::l10n::t_("Print version information and exit."))
+            })
+            .mut_arg("full_version", |a| {
+                a.help(sysa::l10n::t_(
+                    "Print full version: build options and compile-time paths.",
+                ))
             });
         let cmd = WORKER_SHORT_NAMES.iter().fold(cmd, |cmd, name| {
             cmd.mut_arg(format!("{name}_flags"), |a| {
@@ -292,6 +309,14 @@ async fn main() -> Result<()> {
         });
         Args::from_arg_matches(&cmd.get_matches()).unwrap_or_else(|e| e.exit())
     };
+    if args.version {
+        sysa::version::print_version();
+        return Ok(());
+    }
+    if args.full_version {
+        sysa::version::print_full_version();
+        return Ok(());
+    }
     let log_level = if args.debug { "debug" } else { &args.log_level };
     // SysAInit's own log: <log-dir>/systema-sysi.log, stderr for "-".
     // Workers resolve SYSTEMA_LOG_DIR the same way (see logging module).
