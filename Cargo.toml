@@ -1,11 +1,28 @@
 [workspace]
 members = [
     "crates/libsysa",
-    "crates/systema-sysf",
-    "crates/systema-sysa",
-    "crates/systema-syss",
-    "crates/systema-syst",
-    "crates/systema-sysk",
+    "crates/backend/systema-sysi",
+    "crates/backend/systema-sysf",
+    "crates/backend/systema-sysf/systema-sysf-systemd",
+    "crates/backend/systema-sysa",
+    "crates/backend/systema-syss",
+    "crates/backend/systema-syst",
+    "crates/backend/systema-sysk",
+    "crates/backend/systema-sysc",
+    "crates/backend/systema-sysd",
+    "crates/backend/systema-sysn",
+    "crates/backend/systema-syse",
+    "crates/backend/systema-sysm/systema-sysm-common",
+    "crates/backend/systema-sysm/systema-sysm.unix",
+    "crates/backend/systema-sysm/systema-sysm.linux",
+    "crates/backend/systema-sysr/systema-sysr-common",
+    "crates/backend/systema-sysr/systema-sysr.linux",
+    "crates/backend/systema-sysr/systema-sysr",
+    "crates/backend/systema-sysw/systema-sysw-common",
+    "crates/backend/systema-sysw/systema-sysw.systemd",
+    "crates/sysa-pager",
+    "crates/frontend/systema-stagingctl",
+    "crates/frontend/systema-unitstatectl",
 ]
 resolver = "2"
 
@@ -22,7 +39,6 @@ tokio-util = { version = "0.7", features = ["codec"] }
 
 # Serialization
 prost = "0.13"
-prost-types = "0.13"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -39,7 +55,6 @@ configparser = "3"
 
 # Error handling
 anyhow = "1"
-thiserror = "2"
 
 # Logging
 tracing = "0.1"
@@ -54,6 +69,18 @@ parking_lot = "0.12"
 
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
+
+# Regex
+regex = "1"
+
+# Date/time (calendar schedule computation)
+chrono = "0.4"
+
+# Colored terminal output
+colored = "2"
+
+# inotify (Linux mount point monitoring)
+inotify = "0.10"
 
 # Internationalization
 gettext-rs = { version = "0.7", features = ["gettext-system"] }

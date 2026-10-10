@@ -1,0 +1,11 @@
+[package]
+name = "systema-sysr-linux"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+sysa = { path = "../../../libsysa" }
+systema-sysr-common = { path = "../systema-sysr-common" }
+tracing.workspace = true

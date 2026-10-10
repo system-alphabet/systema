@@ -1,0 +1,26 @@
+[package]
+name = "systema-sysd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-sysd"
+path = "src/main.rs"
+
+[dependencies]
+sysa = { path = "../../libsysa" }
+sysf = { path = "../systema-sysf", package = "systema-sysf" }
+tokio.workspace = true
+tokio-util.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc = "0.2"

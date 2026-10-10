@@ -1,0 +1,29 @@
+[package]
+name = "systema-syse"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-syse"
+path = "src/main.rs"
+
+[dependencies]
+sysa = { path = "../../libsysa" }
+systema-sysr-common = { path = "../systema-sysr/systema-sysr-common" }
+
+tokio.workspace = true
+tokio-util.workspace = true
+prost.workspace = true
+bytes.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["process", "signal", "user"] }

@@ -1,22 +1,23 @@
 [package]
-name = "libsysa"
+name = "sysa"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 prost.workspace = true
-prost-types.workspace = true
 bytes.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 libc = "0.2"
 gettext-rs.workspace = true
+colored.workspace = true
 
 [features]
 default = []

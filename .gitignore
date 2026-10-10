@@ -23,3 +23,8 @@ target
 # Trae
 .trae/
 .marscode/
+
+# Freebuff
+.freebuff/
+
+.cargo/config.toml

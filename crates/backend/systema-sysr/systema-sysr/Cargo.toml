@@ -1,0 +1,24 @@
+[package]
+name = "systema-sysr"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+sysa = { path = "../../../libsysa" }
+systema-sysr-common = { path = "../systema-sysr-common" }
+systema-sysr-linux = { path = "../systema-sysr.linux" }
+systema-sysf = { path = "../../systema-sysf" }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+async-trait.workspace = true
+prost.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true

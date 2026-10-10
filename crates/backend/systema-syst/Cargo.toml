@@ -1,0 +1,25 @@
+[package]
+name = "systema-syst"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-syst"
+path = "src/main.rs"
+
+[dependencies]
+sysa = { path = "../../libsysa" }
+
+tokio.workspace = true
+tokio-util.workspace = true
+prost.workspace = true
+bytes.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+async-trait.workspace = true

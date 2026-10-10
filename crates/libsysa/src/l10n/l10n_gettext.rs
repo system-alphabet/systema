@@ -1,4 +1,6 @@
-use gettextrs::{bind_textdomain_codeset, bindtextdomain, gettext, LocaleCategory, ngettext, textdomain};
+use gettextrs::{
+    bind_textdomain_codeset, bindtextdomain, gettext, ngettext, textdomain, LocaleCategory,
+};
 
 pub fn t_(msgid: &str) -> String {
     gettext(msgid)

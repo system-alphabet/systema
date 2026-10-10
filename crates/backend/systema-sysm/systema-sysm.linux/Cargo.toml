@@ -1,0 +1,39 @@
+cargo-features = ["different-binary-name"]
+
+[package]
+name = "systema-sysm-linux"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-sysm-linux"
+filename = "systema-sysm.linux"
+path = "src/main.rs"
+
+# systema-sysm-linux is Linux-only.  Everything but `sysa` is gated behind
+# cfg(any(target_os = "linux", target_os = "android")) so that on other platforms this crate builds as a
+# near-dependency-free stub (see src/main.rs) instead of compiling Linux-only
+# code.  `sysa` stays unconditional because the stub message itself is wrapped
+# in `sysa::l10n::t_()`, exactly like every other user-facing string.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+systema-sysf = { path = "../../systema-sysf" }
+systema-sysm-common = { path = "../systema-sysm-common" }
+
+tokio.workspace = true
+tokio-util.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+
+libc = "0.2"
+
+[dependencies]
+sysa = { path = "../../../libsysa" }

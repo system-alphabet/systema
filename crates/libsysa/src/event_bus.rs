@@ -2,43 +2,35 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Topics that can be subscribed to on the event bus.
+///
+/// Workers no longer emit free-form event strings; all runtime state
+/// changes flow through the unified `unit.state_update` protocol, which
+/// SysA re-dispatches as [`EventTopic::UnitStateChange`].
+///
+/// Control-bus subscribers (System Wrapper bridge flavors) additionally
+/// receive the richer life-cycle topics below; their `data` payloads are
+/// protobuf-encoded control-plane messages.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum EventTopic {
-    /// A service process exited.
-    ProcessExit,
-    /// A service started successfully.
-    ServiceStarted,
-    /// A service failed unexpectedly.
-    ServiceFailed,
-    /// A unit's active state changed.
+    /// A unit's runtime state changed (unified `unit.state_update`).
     UnitStateChange,
+    /// A unit's full snapshot changed (data = encoded `UnitSnapshot`).
+    UnitChanged,
+    /// A unit was loaded into memory (data = encoded `UnitSnapshot`).
+    UnitNew,
+    /// A unit was unloaded from memory (data = encoded `UnitRemovedEvent`).
+    UnitRemoved,
+    /// New cgroup metrics arrived (data = encoded `UnitCgroupMetrics`).
+    UnitMetrics,
+    /// A job was created (data = encoded `JobEvent`, result empty).
+    JobNew,
+    /// A job finished (data = encoded `JobEvent`, result filled).
+    JobCompleted,
+    /// Events for a single, named unit.  Used by subscribers that want to
+    /// watch a specific unit instead of every unit.
+    Unit(String),
     /// Subscribe to **all** topics.
     All,
-}
-
-impl EventTopic {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "process.exit" => EventTopic::ProcessExit,
-            "service.started" => EventTopic::ServiceStarted,
-            "service.failed" => EventTopic::ServiceFailed,
-            "unit.state_change" => EventTopic::UnitStateChange,
-            _ => {
-                tracing::warn!("Unknown event topic string: {}", s);
-                EventTopic::ProcessExit
-            }
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            EventTopic::ProcessExit => "process.exit",
-            EventTopic::ServiceStarted => "service.started",
-            EventTopic::ServiceFailed => "service.failed",
-            EventTopic::UnitStateChange => "unit.state_change",
-            EventTopic::All => "all",
-        }
-    }
 }
 
 /// An event published on the event bus.
@@ -149,6 +141,15 @@ impl EventBus {
             }
         }
 
+        if let Some(handles) = self
+            .subscribers
+            .get(&EventTopic::Unit(event.unit_name.clone()))
+        {
+            for handle in handles {
+                handle.subscriber.on_event(event).await;
+            }
+        }
+
         for handle in &self.all_subscribers {
             handle.subscriber.on_event(event).await;
         }
@@ -160,6 +161,19 @@ impl EventBus {
         let mut tasks = Vec::new();
 
         if let Some(handles) = self.subscribers.get(&event.topic) {
+            for handle in handles {
+                let sub = handle.subscriber.clone();
+                let ev = event.clone();
+                tasks.push(tokio::spawn(async move {
+                    sub.on_event(&ev).await;
+                }));
+            }
+        }
+
+        if let Some(handles) = self
+            .subscribers
+            .get(&EventTopic::Unit(event.unit_name.clone()))
+        {
             for handle in handles {
                 let sub = handle.subscriber.clone();
                 let ev = event.clone();
@@ -186,5 +200,51 @@ impl EventBus {
 impl Default for EventBus {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct RecordingSubscriber {
+        topic: EventTopic,
+        received: Arc<tokio::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EventSubscriber for RecordingSubscriber {
+        fn topics(&self) -> Vec<EventTopic> {
+            vec![self.topic.clone()]
+        }
+
+        async fn on_event(&self, event: &Event) {
+            self.received.lock().await.push(event.unit_name.clone());
+        }
+    }
+
+    fn unit_event(unit_name: &str) -> Event {
+        Event {
+            topic: EventTopic::UnitStateChange,
+            unit_name: unit_name.to_string(),
+            worker_id: "worker".to_string(),
+            timestamp: tokio::time::Instant::now(),
+            data: bytes::Bytes::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn unit_topic_receives_only_matching_unit() {
+        let mut bus = EventBus::new();
+        let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        bus.subscribe(Arc::new(RecordingSubscriber {
+            topic: EventTopic::Unit("svc-a.service".to_string()),
+            received: received.clone(),
+        }));
+
+        bus.dispatch(&unit_event("svc-a.service")).await;
+        bus.dispatch(&unit_event("svc-b.service")).await;
+
+        assert_eq!(*received.lock().await, vec!["svc-a.service"]);
     }
 }

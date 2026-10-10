@@ -1,0 +1,41 @@
+cargo-features = ["different-binary-name"]
+
+[package]
+name = "systema-sysw-systemd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-sysw-systemd"
+filename = "systema-sysw.systemd"
+path = "src/main.rs"
+
+# systema-sysw.systemd is a portable D-Bus bridge (zbus + tokio); it has no
+# platform-specific code and no stub variant, so its dependencies are
+# unconditional.  They used to be gated behind
+# cfg(any(target_os = "linux", target_os = "android")), which left every
+# import unresolved — and the build broken — on every other target (FreeBSD,
+# macOS, ...).
+[dependencies]
+sysa = { path = "../../../libsysa" }
+systema-sysw-common = { path = "../systema-sysw-common" }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+prost.workspace = true
+bytes.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+zbus.workspace = true
+zvariant.workspace = true
+uuid.workspace = true
+once_cell.workspace = true
+
+[dev-dependencies]
+libc = "0.2"
