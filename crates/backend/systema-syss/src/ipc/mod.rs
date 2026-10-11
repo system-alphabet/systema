@@ -19,7 +19,7 @@ pub fn shared_registry() -> SharedRegistry {
     Arc::new(Mutex::new(None))
 }
 
-pub async fn run(shared: &SharedRegistry) -> Result<()> {
+pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) -> Result<()> {
     let registry = new_registry();
     *shared.lock().await = Some(registry.clone());
     let fdpass: Arc<Mutex<Option<tokio::net::UnixStream>>> = Arc::new(Mutex::new(None));
@@ -49,7 +49,7 @@ pub async fn run(shared: &SharedRegistry) -> Result<()> {
 
     let fdpass_controller = fdpass.clone();
     let notify = crate::notify::NotifyManager::setup();
-    let dbus = crate::dbus::DbusWaiter::default();
+    let dbus = crate::dbus::DbusWaiter::new(bus_address);
     // On SIGTERM/SIGINT the IPC loop stops our services *first* — while the
     // connection is still open, so their final states still reach System A —
     // and only then exchanges the `worker.exit` goodbye.

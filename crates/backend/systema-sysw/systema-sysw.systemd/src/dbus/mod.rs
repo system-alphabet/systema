@@ -22,7 +22,8 @@ use once_cell::sync::OnceCell;
 use tracing::{info, warn};
 use zbus::connection::Builder;
 
-/// Budget for connecting to the system bus.
+/// Budget for connecting to the bus — the system bus by default, the
+/// `--bus-address` target when the launcher passes one.
 ///
 /// At boot the system bus (`dbus.service`) is on-demand: the socket exists
 /// (bound by the socket-activation layer) but no daemon accepts yet.  zbus's
@@ -45,15 +46,33 @@ pub struct BridgeContext {
     pub mirror: MirrorHandle,
     pub client: Arc<ControlClient>,
     pub conn: Arc<OnceCell<zbus::Connection>>,
+    /// The bus to serve on: `--bus-address` when the launcher passes one,
+    /// zbus's system-bus default otherwise (plan 备注 11).
+    pub bus_address: Option<zbus::Address>,
 }
 
 impl BridgeContext {
-    pub fn new(mirror: MirrorHandle, client: Arc<ControlClient>) -> Arc<Self> {
+    pub fn new(
+        mirror: MirrorHandle,
+        client: Arc<ControlClient>,
+        bus_address: Option<zbus::Address>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             mirror,
             client,
             conn: Arc::new(OnceCell::new()),
+            bus_address,
         })
+    }
+}
+
+/// The builder for this bridge's bus — the explicit `--bus-address` if one
+/// was given, zbus's system-bus default otherwise (the system domain never
+/// passes one, so its behavior is unchanged byte-for-byte).
+fn bus_builder(ctx: &BridgeContext) -> zbus::Result<Builder<'static>> {
+    match &ctx.bus_address {
+        Some(addr) => Builder::address(addr.clone()),
+        None => Builder::system(),
     }
 }
 
@@ -162,11 +181,11 @@ pub async fn run_dbus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection
     // Safety check: verify no other process already owns our bus name, so we
     // never conflict with a real systemd init.
     {
-        let probe = tokio::time::timeout(BUS_CONNECT_TIMEOUT, zbus::Connection::system())
+        let probe = tokio::time::timeout(BUS_CONNECT_TIMEOUT, bus_builder(ctx)?.build())
             .await
             .map_err(|_| {
                 zbus::Error::Handshake(
-                    sysa::l10n::t_("timed out connecting to the system bus").to_string(),
+                    sysa::l10n::t_("timed out connecting to the bus").to_string(),
                 )
             })??;
         let has_owner: bool = probe
@@ -192,14 +211,14 @@ pub async fn run_dbus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection
 
     let conn = tokio::time::timeout(
         BUS_CONNECT_TIMEOUT,
-        Builder::system()?
+        bus_builder(ctx)?
             .name(BUS_NAME)?
             .serve_at("/org/freedesktop/systemd1", manager)?
             .build(),
     )
     .await
     .map_err(|_| {
-        zbus::Error::Handshake(sysa::l10n::t_("timed out connecting to the system bus").to_string())
+        zbus::Error::Handshake(sysa::l10n::t_("timed out connecting to the bus").to_string())
     })??;
 
     // Replace zbus's built-in org.freedesktop.DBus.Properties on the manager

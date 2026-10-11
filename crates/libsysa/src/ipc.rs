@@ -12,6 +12,33 @@ use crate::proto::Envelope;
 /// A framed Unix stream that sends/receives length-delimited protobuf envelopes.
 pub type EnvelopeFramed = Framed<UnixStream, LengthDelimitedCodec>;
 
+/// Connect to a control-port bus socket (`control.socket`).
+///
+/// A kernel permission refusal — an unprivileged caller reaching for the
+/// *system* instance's socket — gets the cross-domain hint appended: P1
+/// keeps the two domains strictly separate, so the system domain is
+/// reachable only with elevated privileges, while `--user` targets the
+/// caller's own per-user instance.  Everything else keeps the plain
+/// message, so a merely missing instance still reports `ENOENT`.
+pub async fn connect_control(path: &str) -> Result<UnixStream> {
+    match UnixStream::connect(path).await {
+        Ok(stream) => Ok(stream),
+        Err(e) => {
+            let template = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                crate::l10n::t_(
+                    "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance.",
+                )
+            } else {
+                crate::l10n::t_("Failed to connect to System A: {e}")
+            };
+            Err(anyhow::anyhow!(crate::l10n::fmt(
+                template,
+                &[("e", &e.to_string())]
+            )))
+        }
+    }
+}
+
 /// Wrap a `UnixStream` with the length-delimited codec.
 pub fn frame_stream(stream: UnixStream) -> EnvelopeFramed {
     let codec = LengthDelimitedCodec::builder()

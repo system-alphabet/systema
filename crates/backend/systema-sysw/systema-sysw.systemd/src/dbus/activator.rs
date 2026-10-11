@@ -265,7 +265,7 @@ mod tests {
                 .unwrap(),
         );
         let mirror: MirrorHandle = Arc::new(parking_lot::RwLock::new(UnitMirror::new()));
-        let ctx = BridgeContext::new(mirror, client);
+        let ctx = BridgeContext::new(mirror, client, None);
         (ctx, seen)
     }
 

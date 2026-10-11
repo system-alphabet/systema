@@ -2,6 +2,7 @@
 members = [
     "crates/libsysa",
     "crates/backend/systema-sysi",
+    "crates/backend/systema-sysu",
     "crates/backend/systema-sysf",
     "crates/backend/systema-sysf/systema-sysf-systemd",
     "crates/backend/systema-sysa",

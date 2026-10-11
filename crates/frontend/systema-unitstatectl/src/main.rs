@@ -35,6 +35,13 @@ struct Cli {
     #[arg(
         long,
         global = true,
+        help = "Talk to the per-user instance (systema-sysu) instead of the system instance"
+    )]
+    user: bool,
+
+    #[arg(
+        long,
+        global = true,
         value_enum,
         default_value_t = ColorChoice::Auto,
         help = "When to use colors"
@@ -185,6 +192,11 @@ fn build_localized_cli() -> clap::Command {
         .mut_arg("no_pager", |a| {
             a.help(l10n::t_("Do not pipe output into a pager."))
         })
+        .mut_arg("user", |a| {
+            a.help(l10n::t_(
+                "Talk to the per-user instance (systema-sysu) instead of the system instance.",
+            ))
+        })
         .mut_arg("color", |a| {
             a.help(l10n::t_("When to use colors (always, auto, never)."))
         })
@@ -208,6 +220,14 @@ fn build_localized_cli() -> clap::Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    // `--user` must take effect before paths::init() freezes the resolved
+    // socket paths: scan argv first, then point the control socket at the
+    // per-user instance.  clap still registers the flag (so `--help`
+    // documents it); its parsed value is used below for the
+    // "instance not running" check.
+    if std::env::args().any(|a| a == "--user") {
+        std::env::set_var("SYSTEMA_CONTROL_SOCKET", sysa::paths::user_control_socket());
+    }
     sysa::paths::init();
     sysa::l10n::init();
 
@@ -226,6 +246,7 @@ async fn main() -> Result<()> {
         .map(|s| s.as_str())
         .unwrap_or("warn");
     let no_pager = *matches.get_one::<bool>("no_pager").unwrap_or(&false);
+    let user = *matches.get_one::<bool>("user").unwrap_or(&false);
     let color = *matches
         .get_one::<ColorChoice>("color")
         .unwrap_or(&ColorChoice::Auto);
@@ -233,6 +254,30 @@ async fn main() -> Result<()> {
     let level = if debug { "debug" } else { log_level };
     init_tracing(level);
     sysa::paths::debug_dump(sysa::paths::instance().log_dir);
+
+    // In `--user` mode a missing socket means the per-user instance was
+    // never started — and a *stale* socket file (left behind by a crash or
+    // an old logout) means it is not running either.  Probe with a real
+    // connect so both cases (ENOENT, ECONNREFUSED) get this message up
+    // front instead of a raw error deep inside the admin client; any other
+    // failure (e.g. EACCES) is left to the admin client, which renders the
+    // permission hint.
+    if user {
+        let socket = sysa::paths::instance().control_socket_path;
+        if let Err(e) = std::os::unix::net::UnixStream::connect(socket) {
+            match e.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
+                    anyhow::bail!(l10n::fmt(
+                        l10n::t_(
+                            "No per-user instance is listening on {socket}; start one with 'systema-sysu --login'.",
+                        ),
+                        &[("socket", socket)]
+                    ))
+                }
+                _ => {}
+            }
+        }
+    }
 
     let use_pager = !no_pager;
     let _guard: PagerGuard = sysa_pager::open(PagerConfig {

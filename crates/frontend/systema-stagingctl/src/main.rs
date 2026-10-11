@@ -37,6 +37,13 @@ struct Args {
     #[arg(
         long,
         global = true,
+        help = "Talk to the per-user instance (systema-sysu) instead of the system instance"
+    )]
+    user: bool,
+
+    #[arg(
+        long,
+        global = true,
         value_enum,
         default_value_t = ColorChoice::Auto,
         help = "When to use colors"
@@ -85,10 +92,9 @@ enum Commands {
         #[arg(
             short,
             long,
-            default_value_t = 0,
-            help = "Commit every staging area owned by this UID (default: 0)"
+            help = "Commit every staging area owned by this UID (default: 0, or the calling user's UID with --user)"
         )]
-        uid: u32,
+        uid: Option<u32>,
     },
 }
 
@@ -299,7 +305,6 @@ async fn run_commit(uid: u32) -> Result<()> {
 }
 
 fn build_localized_cli() -> clap::Command {
-    
     Args::command()
         .about(l10n::t_("System A — Staging Area Controller"))
         .mut_arg("json", |a| a.help(l10n::t_("Output in JSON format.")))
@@ -309,6 +314,11 @@ fn build_localized_cli() -> clap::Command {
         })
         .mut_arg("no_pager", |a| {
             a.help(l10n::t_("Do not pipe output into a pager."))
+        })
+        .mut_arg("user", |a| {
+            a.help(l10n::t_(
+                "Talk to the per-user instance (systema-sysu) instead of the system instance.",
+            ))
         })
         .mut_arg("color", |a| {
             a.help(l10n::t_("When to use colors (always, auto, never)."))
@@ -334,7 +344,7 @@ fn build_localized_cli() -> clap::Command {
             cmd.about(l10n::t_("Commit staging areas into the active unit set."))
                 .mut_arg("uid", |a| {
                     a.help(l10n::t_(
-                        "Commit every staging area owned by this UID (default: 0).",
+                        "Commit every staging area owned by this UID (default: 0, or the calling user's UID with --user).",
                     ))
                 })
         })
@@ -342,6 +352,14 @@ fn build_localized_cli() -> clap::Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    // `--user` must take effect before paths::init() freezes the resolved
+    // socket paths: scan argv first, then point the control socket at the
+    // per-user instance.  clap still registers the flag (so `--help`
+    // documents it); its parsed value is used below for the
+    // "instance not running" check and the `commit --uid` default.
+    if std::env::args().any(|a| a == "--user") {
+        std::env::set_var("SYSTEMA_CONTROL_SOCKET", sysa::paths::user_control_socket());
+    }
     sysa::paths::init();
     sysa::l10n::init();
 
@@ -361,6 +379,7 @@ async fn main() -> Result<()> {
         .map(|s| s.as_str())
         .unwrap_or("warn");
     let no_pager = *matches.get_one::<bool>("no_pager").unwrap_or(&false);
+    let user = *matches.get_one::<bool>("user").unwrap_or(&false);
     let color = *matches
         .get_one::<ColorChoice>("color")
         .unwrap_or(&ColorChoice::Auto);
@@ -368,6 +387,30 @@ async fn main() -> Result<()> {
     let level = if debug { "debug" } else { log_level };
     init_tracing(level);
     sysa::paths::debug_dump(sysa::paths::instance().log_dir);
+
+    // In `--user` mode a missing socket means the per-user instance was
+    // never started — and a *stale* socket file (left behind by a crash or
+    // an old logout) means it is not running either.  Probe with a real
+    // connect so both cases (ENOENT, ECONNREFUSED) get this message up
+    // front instead of a raw error deep inside the admin client; any other
+    // failure (e.g. EACCES) is left to the admin client, which renders the
+    // permission hint.
+    if user {
+        let socket = sysa::paths::instance().control_socket_path;
+        if let Err(e) = std::os::unix::net::UnixStream::connect(socket) {
+            match e.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
+                    anyhow::bail!(l10n::fmt(
+                        l10n::t_(
+                            "No per-user instance is listening on {socket}; start one with 'systema-sysu --login'.",
+                        ),
+                        &[("socket", socket)]
+                    ))
+                }
+                _ => {}
+            }
+        }
+    }
 
     let use_pager = !no_pager && !json;
     let _guard: PagerGuard = sysa_pager::open(PagerConfig {
@@ -399,7 +442,15 @@ async fn main() -> Result<()> {
             run_list(json, uids, regex_strs).await
         }
         Some(("commit", sub_m)) => {
-            let uid = sub_m.get_one::<u32>("uid").copied().unwrap_or(0);
+            // Without `--uid` the system domain commits UID 0's areas (as
+            // before); with `--user` the natural default is the calling
+            // user's own UID — the per-user instance only ever sees the
+            // caller's staging areas anyway.
+            let uid = sub_m.get_one::<u32>("uid").copied().unwrap_or(if user {
+                unsafe { libc::geteuid() }
+            } else {
+                0
+            });
             run_commit(uid).await
         }
         None => run_list(json, vec![], vec![]).await,

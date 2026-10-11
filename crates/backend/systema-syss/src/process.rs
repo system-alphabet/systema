@@ -58,32 +58,47 @@ const FORCED_SERVICE_ENV: &[(&str, &str)] =
     &[("SYSTEMCTL_FORCE_BUS", "1"), ("SYSTEMD_OFFLINE", "0")];
 
 /// Directory where per-service stdout/stderr logs are captured.
-const SERVICE_LOG_DIR: &str = "/var/log/services";
+///
+/// `/var/log/services` in the system domain.  The per-user instance
+/// (`systema-sysu`) points `SYSTEMA_SERVICE_LOG_DIR` at a user-writable
+/// directory, since an unprivileged System S cannot create anything under
+/// `/var/log`.  Resolved once, lazily, so the value a unit's `Environment=`
+/// tries to set is not consulted (the manager's environment is).
+fn service_log_dir() -> &'static str {
+    static DIR: OnceLock<String> = OnceLock::new();
+    DIR.get_or_init(|| {
+        std::env::var("SYSTEMA_SERVICE_LOG_DIR")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "/var/log/services".to_string())
+    })
+}
 
-/// Lazily create the service log directory (`/var/log/services/`) with
-/// world-readable permissions (0755).  Returns `Ok(())` on success or if the
-/// directory already exists; logs a warning and returns `Ok(())` on failure
-/// so that a log-directory issue never prevents a service from starting.
+/// Lazily create the service log directory (`/var/log/services/` by
+/// default) with world-readable permissions (0755).  Returns `Ok(())` on
+/// success or if the directory already exists; logs a warning and returns
+/// `Ok(())` on failure so that a log-directory issue never prevents a
+/// service from starting.
 fn ensure_service_log_dir() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(|| {
-        if let Err(e) = std::fs::create_dir_all(SERVICE_LOG_DIR) {
-            warn!("Failed to create {}: {}", SERVICE_LOG_DIR, e);
+        let dir = service_log_dir();
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            warn!("Failed to create {}: {}", dir, e);
         } else {
             // Ensure the directory is world-readable and traversable.
-            let _ =
-                std::fs::set_permissions(SERVICE_LOG_DIR, std::fs::Permissions::from_mode(0o755));
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
         }
     });
 }
 
-/// Open a log file at `/var/log/services/<name>.log` in append mode with
+/// Open a log file at `<service-log-dir>/<name>.log` in append mode with
 /// 0644 permissions (world-readable).  Returns `None` on failure so that
 /// log-file issues never prevent a service from starting.
 fn open_service_log(name: &str) -> Option<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
 
-    let path = format!("{}/{}.log", SERVICE_LOG_DIR, name);
+    let path = format!("{}/{}.log", service_log_dir(), name);
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -719,33 +734,46 @@ fn build_pre_exec(
             }
         }
         if let Some(creds) = &creds {
-            unsafe {
-                match &creds.username {
-                    // Load the user's supplementary groups (systemd's
-                    // initgroups()), or drop all supplementary groups when
-                    // only Group= was set.
-                    Some(username) => {
-                        let uname = CString::new(username.as_str()).map_err(|_| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidInput,
-                                sysa::l10n::t_("NUL in username"),
-                            )
-                        })?;
-                        if libc::initgroups(uname.as_ptr(), creds.gid) < 0 {
-                            return Err(std::io::Error::last_os_error());
+            // An unprivileged System S (the per-user instance) cannot call
+            // initgroups(2)/setgroups(2) — they need CAP_SETGID — and
+            // setuid(2) to its own uid is a no-op anyway, so `User=` naming
+            // the current user would fail with EPERM on a credential switch
+            // that changes nothing.  Skip the whole switch exactly when it
+            // is that no-op (target uid/gid == the process's own, process
+            // not privileged); a root System S (the system instance) always
+            // takes the full systemd-compatible path below.
+            let euid = unsafe { libc::geteuid() };
+            let egid = unsafe { libc::getegid() };
+            let no_op = euid != 0 && creds.uid == euid && creds.gid == egid;
+            if !no_op {
+                unsafe {
+                    match &creds.username {
+                        // Load the user's supplementary groups (systemd's
+                        // initgroups()), or drop all supplementary groups when
+                        // only Group= was set.
+                        Some(username) => {
+                            let uname = CString::new(username.as_str()).map_err(|_| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidInput,
+                                    sysa::l10n::t_("NUL in username"),
+                                )
+                            })?;
+                            if libc::initgroups(uname.as_ptr(), creds.gid) < 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                        }
+                        None => {
+                            if libc::setgroups(0, std::ptr::null()) < 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
                         }
                     }
-                    None => {
-                        if libc::setgroups(0, std::ptr::null()) < 0 {
-                            return Err(std::io::Error::last_os_error());
-                        }
+                    if libc::setgid(creds.gid) < 0 {
+                        return Err(std::io::Error::last_os_error());
                     }
-                }
-                if libc::setgid(creds.gid) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setuid(creds.uid) < 0 {
-                    return Err(std::io::Error::last_os_error());
+                    if libc::setuid(creds.uid) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
                 }
             }
         }

@@ -29,14 +29,26 @@ use zbus::Connection;
 
 use crate::process::{is_alive, pid_is_zombie};
 
-/// Lazily-established system bus connection, shared across waits.
+/// Lazily-established D-Bus connection, shared across waits.  `address: None`
+/// (the system domain, which never passes `--bus-address`) selects zbus's
+/// system-bus default.
 #[derive(Clone, Default)]
 pub struct DbusWaiter {
     connection: Arc<Mutex<Option<Connection>>>,
+    address: Option<zbus::Address>,
 }
 
 impl DbusWaiter {
-    /// Wait until `bus_name` is owned on the system bus, polling
+    /// A waiter polling `address` — or the system bus when `None`
+    /// (plan 备注 11: the launcher decides the bus, not the worker).
+    pub fn new(address: Option<zbus::Address>) -> Self {
+        Self {
+            address,
+            ..Default::default()
+        }
+    }
+
+    /// Wait until `bus_name` is owned on the bus, polling
     /// `NameHasOwner` every 100 ms.
     ///
     /// Fails with an error when the process exits or the `timeout_secs`
@@ -88,22 +100,30 @@ impl DbusWaiter {
         )))
     }
 
-    /// The cached connection, connecting to the system bus on first use.
+    /// The cached connection, connecting on first use: the `--bus-address`
+    /// target when the launcher passed one, zbus's system bus otherwise.
     /// Failed attempts clear the cache so the next call retries.
     async fn connection(&self) -> Option<Connection> {
         if let Some(conn) = self.connection.lock().as_ref() {
             return Some(conn.clone());
         }
-        match Connection::system().await {
+        let attempt = match &self.address {
+            Some(addr) => match zbus::connection::Builder::address(addr.clone()) {
+                Ok(builder) => builder.build().await,
+                Err(e) => Err(e),
+            },
+            None => Connection::system().await,
+        };
+        match attempt {
             Ok(conn) => {
-                debug!("Connected to the system bus for Type=dbus readiness");
+                debug!("Connected for Type=dbus readiness");
                 *self.connection.lock() = Some(conn.clone());
                 Some(conn)
             }
             Err(e) => {
                 // The bus may still be starting (e.g. dbus.service itself):
                 // drop the failed attempt and let the caller retry.
-                warn!("Type=dbus: system bus connection failed: {}", e);
+                warn!("Type=dbus: D-Bus connection failed: {}", e);
                 *self.connection.lock() = None;
                 None
             }

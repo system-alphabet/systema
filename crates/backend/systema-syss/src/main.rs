@@ -36,6 +36,9 @@ struct Args {
     #[arg(long, help = "Do not register as a child subreaper")]
     no_raper: bool,
 
+    #[arg(long, help = "D-Bus address to use (default: the system bus)")]
+    bus_address: Option<String>,
+
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
 
@@ -66,6 +69,11 @@ async fn main() -> Result<()> {
             .mut_arg("no_raper", |a| {
                 a.help(sysa::l10n::t_("Do not register as a child subreaper."))
             })
+            .mut_arg("bus_address", |a| {
+                a.help(sysa::l10n::t_(
+                    "D-Bus address to use (default: the system bus).",
+                ))
+            })
             .mut_arg("version", |a| {
                 a.help(sysa::l10n::t_("Print version information and exit."))
             })
@@ -84,6 +92,18 @@ async fn main() -> Result<()> {
         sysa::version::print_full_version();
         return Ok(());
     }
+    // Fail fast on a malformed address (plan 备注 11): which bus this
+    // worker's `Type=dbus` watch polls is the launcher's decision, not the
+    // worker's.
+    let bus_address = match args.bus_address {
+        Some(raw) => Some(raw.parse::<zbus::Address>().map_err(|e| {
+            anyhow::anyhow!(sysa::l10n::fmt(
+                sysa::l10n::t_("invalid --bus-address: {err}"),
+                &[("err", &e.to_string())]
+            ))
+        })?),
+        None => None,
+    };
     let log_level = if args.debug { "debug" } else { &args.log_level };
     // Self-managed logging: <log-dir>/<name>.log, or stderr for "-".
     sysa::logging::init(sysa::paths::instance().log_dir, "systema-syss", log_level);
@@ -123,7 +143,7 @@ async fn main() -> Result<()> {
         // then sends `worker.exit`, waits for System A to close the
         // connection, and only then returns — racing a signal branch here
         // would drop the socket before the goodbye is exchanged.
-        result = ipc::run(&shared) => result?,
+        result = ipc::run(&shared, bus_address) => result?,
         // Orphan reaper: while the worker runs, collect every child no unit
         // is waiting for (adopted orphans under subreaper mode, plus direct
         // children nobody reaps anymore).  It overlaps the shutdown hook —

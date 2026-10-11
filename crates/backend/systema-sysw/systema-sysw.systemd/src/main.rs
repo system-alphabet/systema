@@ -26,6 +26,9 @@ struct Args {
     )]
     log_level: String,
 
+    #[arg(long, help = "D-Bus address to use (default: the system bus)")]
+    bus_address: Option<String>,
+
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
 
@@ -53,6 +56,11 @@ async fn main() -> Result<()> {
                     "Log level (trace, debug, info, warn, error).",
                 ))
             })
+            .mut_arg("bus_address", |a| {
+                a.help(sysa::l10n::t_(
+                    "D-Bus address to use (default: the system bus).",
+                ))
+            })
             .mut_arg("version", |a| {
                 a.help(sysa::l10n::t_("Print version information and exit."))
             })
@@ -71,6 +79,18 @@ async fn main() -> Result<()> {
         sysa::version::print_full_version();
         return Ok(());
     }
+    // Fail fast on a malformed address, before anything connects anywhere
+    // (plan 备注 11): the workers must not know which bus domain they are
+    // in — the launcher decides it per spawn.
+    let bus_address = match args.bus_address {
+        Some(raw) => Some(raw.parse::<zbus::Address>().map_err(|e| {
+            anyhow::anyhow!(sysa::l10n::fmt(
+                sysa::l10n::t_("invalid --bus-address: {err}"),
+                &[("err", &e.to_string())]
+            ))
+        })?),
+        None => None,
+    };
     let log_level = if args.debug { "debug" } else { &args.log_level };
     // Self-managed logging: <log-dir>/<name>.log, or stderr when the log
     // file cannot be opened — same contract as the other daemons.
@@ -88,7 +108,7 @@ async fn main() -> Result<()> {
             _sig = sysa::signals::shutdown_signal() => {
                 break;
             }
-            result = bridge::run() => result,
+            result = bridge::run(bus_address.clone()) => result,
         };
         match result {
             Ok(()) => {

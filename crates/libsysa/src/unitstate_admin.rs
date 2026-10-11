@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use prost::Message;
 
-use crate::ipc::{frame_stream, make_envelope, recv_envelope, send_envelope};
+use crate::ipc::{connect_control, frame_stream, make_envelope, recv_envelope, send_envelope};
 use crate::proto::{UnitStateEntry, UnitStateEof, UnitStateListRequest};
 
 /// Result of streaming the System Allocator's cached unit state.
@@ -37,14 +37,7 @@ impl UnitStateAdmin {
     where
         F: FnMut(&str, &[u8]) -> Result<()>,
     {
-        let stream = tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!(crate::l10n::fmt(
-                    crate::l10n::t_("Failed to connect to System A: {e}"),
-                    &[("e", &e.to_string())]
-                ))
-            })?;
+        let stream = connect_control(&self.socket_path).await?;
         let mut framed = frame_stream(stream);
 
         let query_env = make_envelope(

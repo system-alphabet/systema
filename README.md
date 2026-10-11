@@ -51,11 +51,12 @@ Two independent planes, deliberately separated:
 
 ## Components
 
-### Binaries (17)
+### Binaries (18)
 
 | Binary | System | Role |
 |--------|--------|------|
 | `systema-sysi` | **SysAInit** (System I) | init: mounts API filesystems, spawns System A, then the workers serially; can run as PID 1 or as a plain process |
+| `systema-sysu` | **System U** (User) | per-user session launcher: starts and supervises the per-user instance (System A + System S + System T + System W) on `$XDG_RUNTIME_DIR/systema` sockets, exposing the session's `systemctl --user` D-Bus surface; `--login` / `--logout` hooks |
 | `systema-sysa` | **System A** (Allocator) | global control plane: load/parse units, resolve dependencies, schedule, keep *desired* state |
 | `systema-syss` | **System S** (Service) | `fork/exec` service processes, lifecycle state machine, subreaper for orphans, `Type=notify` / `Type=dbus` readiness |
 | `systema-syst` | **System T** (Target) | target activation — no external processes, state tracking only |

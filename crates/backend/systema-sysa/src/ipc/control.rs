@@ -29,8 +29,8 @@ use sysa::event_bus::{Event, EventSubscriber, EventTopic};
 use sysa::ipc::make_envelope;
 use sysa::proto::manager_value::Value;
 use sysa::proto::{
-    AbandonScopeRequest, AdminStagingOp, AdminStagingResult, DaemonReloadResult, Envelope,
-    EnqueueJobRequest, EnqueueJobResult, GetUnitByInvocationRequest, GetUnitByPidRequest,
+    AbandonScopeRequest, AdminStagingOp, AdminStagingResult, DaemonReloadResult, EnqueueJobRequest,
+    EnqueueJobResult, Envelope, GetUnitByInvocationRequest, GetUnitByPidRequest,
     GetUnitByPidResult, ListUnitsRequest, ListUnitsResult, LoadUnitRequest, LoadUnitResult,
     ManagerHelloRequest, ManagerHelloResult, ManagerValue, RefUnitRequest, RefUnitResult,
     RegisterPowerUnitsRequest, RegisterPowerUnitsResult, ResetFailedUnitRequest,
@@ -119,7 +119,10 @@ impl EventSubscriber for ControlForwarder {
 }
 
 fn debug_drop(topic: EventTopic) {
-    warn!("Control forwarder dropped event for {:?} (slow/closed session)", topic);
+    warn!(
+        "Control forwarder dropped event for {:?} (slow/closed session)",
+        topic
+    );
 }
 
 /// Serve one control session until the peer disconnects.
@@ -140,9 +143,7 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
     // used to live on the allocator IPC socket.
     let first_env = match reader.next().await {
         None => {
-            info!(
-                "Control client (PID {client_pid}) disconnected before the first envelope"
-            );
+            info!("Control client (PID {client_pid}) disconnected before the first envelope");
             return Ok(());
         }
         Some(Err(e)) => anyhow::bail!(sysa::l10n::fmt(
@@ -162,9 +163,7 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
                 break;
             }
         }
-        info!(
-            "Admin control session from PID {client_pid} (UID {client_uid}): '{first_method}'"
-        );
+        info!("Admin control session from PID {client_pid} (UID {client_uid}): '{first_method}'");
         return Ok(());
     }
     if first_env.method != "manager.hello" {
@@ -297,6 +296,17 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
 // One-shot admin sessions (stagingctl, unitstatectl)
 // ---------------------------------------------------------------------------
 
+/// The localized hint appended to a refusal below.
+///
+/// P1 keeps the two domains strictly separate (no ACL/polkit bridge yet),
+/// so an unauthorized caller is told how to actually get in: elevate for
+/// the system domain, or manage their own per-user instance with `--user`.
+fn privilege_hint() -> String {
+    sysa::l10n::t_(
+        "System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance.",
+    )
+}
+
 /// Build the reply envelopes for a one-shot `admin.*` request.
 ///
 /// The admin API was moved from the allocator IPC socket to the control
@@ -316,14 +326,18 @@ fn admin_replies(
             let result = if !authorized {
                 AdminStagingResult {
                     success: false,
-                    message: sysa::l10n::fmt(
-                        sysa::l10n::t_(
-                            "Permission denied (UID {uid}): only root or UID {sys_uid} may query staging areas.",
+                    message: format!(
+                        "{} {}",
+                        sysa::l10n::fmt(
+                            sysa::l10n::t_(
+                                "Permission denied (UID {uid}): only root or UID {sys_uid} may query staging areas.",
+                            ),
+                            &[
+                                ("uid", &client_uid.to_string()),
+                                ("sys_uid", &sys_uid.to_string()),
+                            ],
                         ),
-                        &[
-                            ("uid", &client_uid.to_string()),
-                            ("sys_uid", &sys_uid.to_string()),
-                        ],
+                        privilege_hint()
                     ),
                     entries: vec![],
                 }
@@ -353,14 +367,18 @@ fn admin_replies(
                     "admin.unitstate.eof",
                     UnitStateEof {
                         total: 0,
-                        message: sysa::l10n::fmt(
-                            sysa::l10n::t_(
-                                "Permission denied (UID {uid}): only root or UID {sys_uid} may inspect unit state.",
+                        message: format!(
+                            "{} {}",
+                            sysa::l10n::fmt(
+                                sysa::l10n::t_(
+                                    "Permission denied (UID {uid}): only root or UID {sys_uid} may inspect unit state.",
+                                ),
+                                &[
+                                    ("uid", &client_uid.to_string()),
+                                    ("sys_uid", &sys_uid.to_string()),
+                                ],
                             ),
-                            &[
-                                ("uid", &client_uid.to_string()),
-                                ("sys_uid", &sys_uid.to_string()),
-                            ],
+                            privilege_hint()
                         ),
                     },
                 )?);
@@ -501,10 +519,7 @@ fn notify_commit(allocator: &AllocatorHandle) {
 }
 
 /// Route one control request to its handler and build the reply envelope.
-async fn dispatch(
-    allocator: &AllocatorHandle,
-    env: Envelope,
-) -> Result<Option<Envelope>> {
+async fn dispatch(allocator: &AllocatorHandle, env: Envelope) -> Result<Option<Envelope>> {
     let method = env.method.as_str();
     let reply = match method {
         "manager.enqueue" => manager_enqueue(allocator, env).await?,
@@ -654,7 +669,14 @@ async fn manager_start_transient(allocator: &AllocatorHandle, env: Envelope) -> 
     } else {
         None
     };
-    let uf = transient_unit_from_properties(&canonical, &req.properties.as_ref().map(|bag| bag.properties.as_slice()).unwrap_or(&[]), sender_pid);
+    let uf = transient_unit_from_properties(
+        &canonical,
+        &req.properties
+            .as_ref()
+            .map(|bag| bag.properties.as_slice())
+            .unwrap_or(&[]),
+        sender_pid,
+    );
 
     {
         let mut state = allocator.write();
@@ -835,7 +857,11 @@ async fn manager_ref_unit(
         next_request_id(),
         "system-a",
         "",
-        if is_ref { "manager.ref_unit.result" } else { "manager.unref_unit.result" },
+        if is_ref {
+            "manager.ref_unit.result"
+        } else {
+            "manager.unref_unit.result"
+        },
         RefUnitResult {
             success: true,
             message: String::new(),
@@ -1095,11 +1121,7 @@ async fn manager_start_units(allocator: &AllocatorHandle, env: Envelope) -> Resu
         info!("manager.start_units: processing '{name}'");
         match tokio::time::timeout(
             std::time::Duration::from_secs(15),
-            crate::scheduler::enqueue_start_with_mode(
-                allocator.clone(),
-                name,
-                JobMode::Replace,
-            ),
+            crate::scheduler::enqueue_start_with_mode(allocator.clone(), name, JobMode::Replace),
         )
         .await
         {
@@ -1293,10 +1315,16 @@ fn encode_envelope(env: &Envelope) -> bytes::Bytes {
 fn set_desired_state(alloc: &AllocatorHandle, name: &str, kind: JobKind) {
     match kind {
         JobKind::Start | JobKind::Restart => {
-            alloc.write().desired.insert(name.to_string(), DesiredState::Active);
+            alloc
+                .write()
+                .desired
+                .insert(name.to_string(), DesiredState::Active);
         }
         JobKind::Stop => {
-            alloc.write().desired.insert(name.to_string(), DesiredState::Inactive);
+            alloc
+                .write()
+                .desired
+                .insert(name.to_string(), DesiredState::Inactive);
         }
         JobKind::Reload | JobKind::Nop => {}
     }
@@ -1354,11 +1382,33 @@ fn apply_resource_property(rc: &mut ResourceControl, key: &str, value: &ManagerV
         return true;
     }
     match (key, &value.value) {
-        (key, Some(Value::S(s))) if matches!(key, "MemoryMin" | "MemoryLow" | "MemoryHigh" | "MemoryMax" | "MemorySwapMax" | "CPUQuotaPeriodSec" | "CPUQuotaPeriodUSec") => {
+        (key, Some(Value::S(s)))
+            if matches!(
+                key,
+                "MemoryMin"
+                    | "MemoryLow"
+                    | "MemoryHigh"
+                    | "MemoryMax"
+                    | "MemorySwapMax"
+                    | "CPUQuotaPeriodSec"
+                    | "CPUQuotaPeriodUSec"
+            ) =>
+        {
             set_byte_string(rc, key, s);
             true
         }
-        (key, Some(Value::U(u))) if matches!(key, "MemoryMin" | "MemoryLow" | "MemoryHigh" | "MemoryMax" | "MemorySwapMax" | "CPUQuotaPeriodSec" | "CPUQuotaPeriodUSec") => {
+        (key, Some(Value::U(u)))
+            if matches!(
+                key,
+                "MemoryMin"
+                    | "MemoryLow"
+                    | "MemoryHigh"
+                    | "MemoryMax"
+                    | "MemorySwapMax"
+                    | "CPUQuotaPeriodSec"
+                    | "CPUQuotaPeriodUSec"
+            ) =>
+        {
             set_byte_string(rc, key, &u.to_string());
             true
         }
@@ -1386,7 +1436,9 @@ fn apply_resource_property(rc: &mut ResourceControl, key: &str, value: &ManagerV
             rc.tasks_max = if s == "infinity" {
                 u32::MAX
             } else {
-                s.parse::<u64>().map(|v| v.min(u32::MAX as u64) as u32).unwrap_or(rc.tasks_max)
+                s.parse::<u64>()
+                    .map(|v| v.min(u32::MAX as u64) as u32)
+                    .unwrap_or(rc.tasks_max)
             };
             true
         }
@@ -1614,7 +1666,7 @@ fn prop_u32s(props: &[TransientProperty], key: &str) -> Option<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-use std::collections::{HashMap, HashSet};
+    use std::collections::{HashMap, HashSet};
 
     use sysa::proto::{
         ListUnitsRequest, ListUnitsResult, StartUnitsRequest, StartUnitsResult, StopUnitsRequest,
@@ -1622,7 +1674,7 @@ use std::collections::{HashMap, HashSet};
     };
 
     use crate::state::{StagingArea, WorkerEntry};
-    use crate::unit::types::{UnitSection};
+    use crate::unit::types::UnitSection;
     use systema_sysf::ir::{UnitIR, UnitType};
 
     fn test_allocator() -> AllocatorHandle {
@@ -1665,9 +1717,7 @@ use std::collections::{HashMap, HashSet};
 
     /// Spawn a control session over a socketpair and drive the client side,
     /// returning the framed client stream so the caller can send/receive.
-    async fn spawn_session_pair(
-        allocator: AllocatorHandle,
-    ) -> sysa::ipc::EnvelopeFramed {
+    async fn spawn_session_pair(allocator: AllocatorHandle) -> sysa::ipc::EnvelopeFramed {
         use tokio::net::UnixStream;
         let (server, client) = UnixStream::pair().unwrap();
         tokio::spawn(async move {
@@ -1703,7 +1753,9 @@ use std::collections::{HashMap, HashSet};
         let mut client = spawn_session_pair(alloc.clone()).await;
         do_hello(&mut client).await;
 
-        let req = ListUnitsRequest { enabled_only: false };
+        let req = ListUnitsRequest {
+            enabled_only: false,
+        };
         sysa::ipc::send_envelope(&mut client, &req_env("manager.list_units", req))
             .await
             .unwrap();
@@ -1822,10 +1874,7 @@ use std::collections::{HashMap, HashSet};
             .unwrap();
         assert_eq!(created, 1);
         assert_eq!(updated, 0);
-        let uf = state
-            .units
-            .get("poweroff.power")
-            .expect("unit in graph");
+        let uf = state.units.get("poweroff.power").expect("unit in graph");
         assert_eq!(uf.kind.worker_type(), "power");
     }
 
@@ -1838,7 +1887,9 @@ use std::collections::{HashMap, HashSet};
                 units_json: b"not-json".to_vec(),
             },
         );
-        let err = dispatch(&allocator, env).await.expect_err("bad JSON must fail");
+        let err = dispatch(&allocator, env)
+            .await
+            .expect_err("bad JSON must fail");
         assert!(
             err.to_string().contains("JSON"),
             "error must describe the bad payload: {err:#}"
@@ -1854,7 +1905,9 @@ use std::collections::{HashMap, HashSet};
                 units_json: b"not json".to_vec(),
             },
         );
-        let err = dispatch(&allocator, env).await.expect_err("bad JSON must fail");
+        let err = dispatch(&allocator, env)
+            .await
+            .expect_err("bad JSON must fail");
         assert!(
             err.to_string().contains("JSON"),
             "error must describe the bad payload: {}",
@@ -1867,7 +1920,12 @@ use std::collections::{HashMap, HashSet};
         let allocator = test_allocator();
         let reply = call(
             "manager.list_units",
-            req_env("manager.list_units", ListUnitsRequest { enabled_only: false }),
+            req_env(
+                "manager.list_units",
+                ListUnitsRequest {
+                    enabled_only: false,
+                },
+            ),
             allocator,
         )
         .await;
@@ -1978,11 +2036,16 @@ use std::collections::{HashMap, HashSet};
     #[test]
     fn admin_staging_list_returns_empty() {
         let alloc = test_allocator();
-        let replies = run_admin_replies(alloc, "admin.staging", AdminStagingOp {
-            op: "list".to_string(),
-            uid: 0,
-            name: String::new(),
-        }, 0);
+        let replies = run_admin_replies(
+            alloc,
+            "admin.staging",
+            AdminStagingOp {
+                op: "list".to_string(),
+                uid: 0,
+                name: String::new(),
+            },
+            0,
+        );
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].method, "admin.staging.result");
         let result = AdminStagingResult::decode(replies[0].payload.as_slice()).unwrap();
@@ -1993,11 +2056,16 @@ use std::collections::{HashMap, HashSet};
     #[test]
     fn admin_staging_rejects_unprivileged_uid() {
         let alloc = test_allocator();
-        let replies = run_admin_replies(alloc, "admin.staging", AdminStagingOp {
-            op: "list".to_string(),
-            uid: 0,
-            name: String::new(),
-        }, 0xdead00d);
+        let replies = run_admin_replies(
+            alloc,
+            "admin.staging",
+            AdminStagingOp {
+                op: "list".to_string(),
+                uid: 0,
+                name: String::new(),
+            },
+            0xdead00d,
+        );
         assert_eq!(replies.len(), 1);
         let result = AdminStagingResult::decode(replies[0].payload.as_slice()).unwrap();
         assert!(!result.success);
@@ -2015,9 +2083,7 @@ use std::collections::{HashMap, HashSet};
         for entry in &entries {
             let doc: serde_json::Value = serde_json::from_slice(&entry.json).unwrap();
             assert!(doc["kind"].is_string());
-            assert!(
-                doc["unit"]["description"].is_string() || doc["unit"]["after"].is_array()
-            );
+            assert!(doc["unit"]["description"].is_string() || doc["unit"]["after"].is_array());
         }
         assert_eq!(eof.total, 3);
         assert!(eof.message.is_empty());
@@ -2026,7 +2092,8 @@ use std::collections::{HashMap, HashSet};
     #[test]
     fn admin_unitstate_rejects_unprivileged_uid() {
         let alloc = test_allocator();
-        let replies = run_admin_replies(alloc, "admin.unitstate", UnitStateListRequest {}, 0xdead00d);
+        let replies =
+            run_admin_replies(alloc, "admin.unitstate", UnitStateListRequest {}, 0xdead00d);
         let (entries, eof) = split_unitstate_replies(&replies);
         assert!(entries.is_empty());
         assert_eq!(eof.total, 0);
@@ -2060,9 +2127,12 @@ use std::collections::{HashMap, HashSet};
     async fn admin_unitstate_via_control_session_roundtrip() {
         let alloc = test_allocator();
         let mut client = spawn_session_pair(alloc.clone()).await;
-        sysa::ipc::send_envelope(&mut client, &req_env("admin.unitstate", UnitStateListRequest {}))
-            .await
-            .unwrap();
+        sysa::ipc::send_envelope(
+            &mut client,
+            &req_env("admin.unitstate", UnitStateListRequest {}),
+        )
+        .await
+        .unwrap();
         // Read entries until EOF; the entry count tracks the EOF tally.
         // (When the test runs as a non-root UID the server returns a
         // permission-denied EOF with zero entries — the framing is identical.)
@@ -2117,7 +2187,9 @@ use std::collections::{HashMap, HashSet};
         assert!(result.success, "commit must succeed: {}", result.message);
         let state = alloc.read();
         assert!(
-            !state.staging_areas.contains_key(&(0, "system-f1".to_string())),
+            !state
+                .staging_areas
+                .contains_key(&(0, "system-f1".to_string())),
             "staging area must be consumed after commit"
         );
     }
@@ -2151,7 +2223,11 @@ use std::collections::{HashMap, HashSet};
             0,
         );
         let result = AdminStagingResult::decode(replies[0].payload.as_slice()).unwrap();
-        assert!(result.success, "named commit must succeed: {}", result.message);
+        assert!(
+            result.success,
+            "named commit must succeed: {}",
+            result.message
+        );
         // A second commit of the same (already consumed) area is idempotent.
         let replies = run_admin_replies(
             alloc.clone(),

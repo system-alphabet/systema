@@ -155,6 +155,32 @@ pub fn builtin_defaults() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Runtime directory of the per-user instance (`systema-sysu`).
+///
+/// `$XDG_RUNTIME_DIR/systema` when the login session provides one (the
+/// directory is 0700, so the instance's sockets are reachable only by
+/// their owner and by root), else `/tmp/systema-<uid>`.
+///
+/// Deliberately *not* read through [`instance()`]: this is where the
+/// per-user instance lives by definition, so it must give the same answer
+/// for the launcher, for `--user` CLI modes and for any inherited
+/// `SYSTEMA_RUNSTATEDIR` from a different (system) shell.
+pub fn user_runtime_dir() -> String {
+    match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(dir) if !dir.trim().is_empty() => {
+            format!("{}/systema", dir.trim().trim_end_matches('/'))
+        }
+        _ => format!("/tmp/systema-{}", unsafe { libc::geteuid() }),
+    }
+}
+
+/// The control socket of the per-user instance — where the `--user` CLI
+/// modes connect.  Both this function and `systema-sysu` derive the path
+/// from [`user_runtime_dir`], so they cannot drift apart.
+pub fn user_control_socket() -> String {
+    format!("{}/control.socket", user_runtime_dir())
+}
+
 /// Log every effective path value at debug level (`-D` /
 /// `--log-level debug`).  System A runs in volatile environments:
 /// `SYSTEMA_*` / `SYSTEMD_*` env vars and CLI flags (e.g.

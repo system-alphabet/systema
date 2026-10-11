@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use prost::Message;
 
-use crate::ipc::{frame_stream, make_envelope, recv_envelope, send_envelope};
+use crate::ipc::{connect_control, frame_stream, make_envelope, recv_envelope, send_envelope};
 use crate::proto::{AdminStagingOp, AdminStagingResult};
 
 /// Administration tool for querying staging areas.
@@ -62,14 +62,7 @@ impl StagingAdmin {
     }
 
     async fn send_op(&self, op: &str, uid: u32, name: &str) -> Result<AdminStagingResult> {
-        let stream = tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!(crate::l10n::fmt(
-                    crate::l10n::t_("Failed to connect to System A: {e}"),
-                    &[("e", &e.to_string())]
-                ))
-            })?;
+        let stream = connect_control(&self.socket_path).await?;
         let mut framed = frame_stream(stream);
 
         let query = AdminStagingOp {
