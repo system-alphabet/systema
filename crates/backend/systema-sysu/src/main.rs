@@ -29,7 +29,7 @@ mod workers;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -74,9 +74,9 @@ struct Args {
 
     #[arg(
         long,
-        help = "Directory for per-process log files (systema-sysa.log, ...)"
+        help = "Path of this process's log file; child processes receive <dir>/<binary>.log (\"-\" writes to stderr only)"
     )]
-    log_dir: PathBuf,
+    log_file: Option<PathBuf>,
 
     #[arg(
         long,
@@ -141,17 +141,10 @@ fn build_args() -> Args {
                 "Time to wait for System A / a worker to report ready before aborting.",
             ))
         })
-        .mut_arg("log_dir", |a| {
+        .mut_arg("log_file", |a| {
             a.help(sysa::l10n::t_(
-                "Directory for per-process log files (systema-sysa.log, ...).",
+                "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only.",
             ))
-            // The derive marks this non-`Option` field required; a runtime
-            // `default_value` alone does not lift that in clap 4, so an
-            // invocation without `--log-dir` (e.g. `--version`, `--login`)
-            // would abort.  Default + optional, exactly as an attr-level
-            // `default_value` would produce.
-            .default_value(sysa::paths::instance().log_dir)
-            .required(false)
         })
         .mut_arg("login", |a| {
             a.help(sysa::l10n::t_(
@@ -299,8 +292,10 @@ fn detached_child_args(args: &Args) -> Vec<String> {
     out.push(args.shutdown_timeout.to_string());
     out.push("--ready-timeout".to_string());
     out.push(args.ready_timeout.to_string());
-    out.push("--log-dir".to_string());
-    out.push(args.log_dir.to_string_lossy().into_owned());
+    if let Some(file) = &args.log_file {
+        out.push("--log-file".to_string());
+        out.push(file.to_string_lossy().into_owned());
+    }
     out
 }
 
@@ -332,30 +327,9 @@ fn login(args: &Args) -> Result<i32> {
     let mut cmd = std::process::Command::new(&exe);
     cmd.args(detached_child_args(args));
 
-    // stdio: land pre-logging output in the instance log; "-" keeps the
-    // child attached to this terminal instead.
-    let log_dir = args.log_dir.to_string_lossy().into_owned();
-    if log_dir != "-" {
-        let dir = Path::new(&log_dir);
-        let _ = std::fs::create_dir_all(dir);
-        let path = dir.join("systema-sysu.out");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .with_context(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("Cannot open {path}."),
-                    &[("path", &path.display().to_string())],
-                )
-            })?;
-        let dup = file.try_clone().with_context(|| "try_clone")?;
-        cmd.stdout(std::process::Stdio::from(file));
-        cmd.stderr(std::process::Stdio::from(dup));
-    } else {
-        cmd.stdout(std::process::Stdio::inherit());
-        cmd.stderr(std::process::Stdio::inherit());
-    }
+    // stdio: inherited from this terminal.  The child logs to its own two
+    // sinks (stderr + log file) from `logging::init_daemon` on; there is
+    // nothing to capture by redirecting here.
 
     let mut child = cmd.spawn().with_context(|| {
         sysa::l10n::fmt(
@@ -508,10 +482,11 @@ async fn main() -> Result<()> {
     }
 
     let log_level = if args.debug { "debug" } else { &args.log_level };
-    // The launcher's own log: <log-dir>/systema-sysu.log, stderr for "-".
-    // Workers resolve SYSTEMA_LOG_DIR the same way (see logging module).
-    let log_dir_str = args.log_dir.to_string_lossy().into_owned();
-    sysa::logging::init(&log_dir_str, "systema-sysu", log_level);
+    // The launcher's own log: stderr always, plus the file resolved from
+    // --log-file / SYSTEMA_LOG_FILE (the env matrix points it into the XDG
+    // log directory) / the built-in default.  Every worker it spawns
+    // receives `--log-file <dir>/<binary>.log` derived from this target.
+    let log_target = sysa::logging::init_daemon("systema-sysu", args.log_file.clone(), log_level);
     info!("systema-sysu starting (PID {})", std::process::id());
 
     // Single instance, idempotent (plan §3.3): an already-running
@@ -566,7 +541,7 @@ async fn main() -> Result<()> {
         &args.log_level,
         Duration::from_secs(args.shutdown_timeout),
         Duration::from_secs(args.ready_timeout),
-        &args.log_dir,
+        &log_target,
     )
     .await;
     remove_pidfile_if_ours();
@@ -577,12 +552,13 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn detached_child_passes_the_supervision_flags() {
         let args = Args::parse_from([
             "systema-sysu",
-            "--log-dir",
+            "--log-file",
             "-",
             "--debug",
             "--bin-dir",
@@ -605,7 +581,7 @@ mod tests {
                 "7",
                 "--ready-timeout",
                 "9",
-                "--log-dir",
+                "--log-file",
                 "-",
             ]
         );
@@ -613,7 +589,9 @@ mod tests {
 
     #[test]
     fn detached_child_passes_the_log_level_when_not_debug() {
-        let args = Args::parse_from(["systema-sysu", "--log-dir", "-", "--log-level", "trace"]);
+        // Without an explicit --log-file there is nothing to forward: the
+        // daemon child resolves SYSTEMA_LOG_FILE (the env matrix) itself.
+        let args = Args::parse_from(["systema-sysu", "--log-level", "trace"]);
         assert_eq!(
             detached_child_args(&args),
             vec![
@@ -624,8 +602,6 @@ mod tests {
                 "10",
                 "--ready-timeout",
                 "30",
-                "--log-dir",
-                "-",
             ]
         );
     }

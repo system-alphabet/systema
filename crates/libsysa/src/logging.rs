@@ -1,55 +1,91 @@
-//! Shared logging bootstrap for System Alphabet daemons.
+//! Shared logging bootstrap for System Alphabet components.
 //!
-//! Every worker writes its own log file under [`crate::paths::Paths::log_dir`]
-//! (`<log-dir>/<name>.log`, created on demand); the special value `-`
-//! selects stderr instead.  In addition, every daemon mirrors its logs to
-//! `/dev/console` (`SYSTEMA_CONSOLE` to override) so boot progress is
-//! visible on the physical console — but only when that device actually
-//! exists and is openable for writing; a missing/unwritable console (the
-//! norm in containers and headless environments) silently disables the
-//! mirror.
+//! Every component writes the *same* record to two sinks:
 //!
-//! When the console is a terminal, or the kernel command line requests it
-//! via `console-is-tty`, the console stream gets ANSI colours; the primary
-//! log (file / stderr) always stays plain so the escape sequences are never
-//! stored in the log file.  Failures always fall back to stderr so that a
-//! broken log directory never prevents a process from starting.
+//! * **standard error** — always for daemons (whatever the parent attached
+//!   stderr to), and for interactive tools only with `--debug`;
+//! * **a log file** — resolved as `--log-file` > `SYSTEMA_LOG_FILE` >
+//!   `/var/log/systema/<name>.log` for daemons; an interactive tool writes
+//!   a file only when `--log-file` is given explicitly.
+//!
+//! The path value `-` selects stderr only (no file sink).  A log file that
+//! cannot be opened — early boot before `/var` is writable, an
+//! unprivileged tool, a full disk — degrades to stderr-only with a single
+//! warning: a broken log location never prevents a process from starting.
+//!
+//! Nothing else is special-cased: there is no console mirror and no
+//! device-specific stream handling.  The formatter is coloured only when
+//! stderr is a terminal; the file sink always receives plain text (see
+//! [`StripAnsiWriter`]).
+//!
+//! Spawning parents keep one log directory by passing each child
+//! `--log-file <dir>/<binary>.log`, derived from this process's own target
+//! ([`LogTarget::child_file`] / [`child_log_file`]) — argv beats any
+//! inherited `SYSTEMA_LOG_FILE`.
 
 use std::fs::File;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tracing_subscriber::EnvFilter;
 
-/// Where [`init`] sent the logs.
+/// Where this process's file sink went; set once by [`init`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogTarget {
     /// Append to this file.
     File(PathBuf),
-    /// Standard error.
+    /// No file sink: everything that is enabled goes to stderr.
     Stderr,
+}
+
+impl LogTarget {
+    /// The `--log-file` value for a child component `binary` spawned by
+    /// this process: the same directory as this process's file, the
+    /// child's own basename (`-/…` propagates the stderr-only choice).
+    pub fn child_file(&self, binary: &str) -> PathBuf {
+        match self {
+            LogTarget::File(path) => {
+                let dir = path.parent().filter(|d| !d.as_os_str().is_empty());
+                dir.unwrap_or_else(|| Path::new("."))
+                    .join(format!("{binary}.log"))
+            }
+            LogTarget::Stderr => PathBuf::from("-"),
+        }
+    }
+}
+
+/// The target [`init`] resolved for this process, once it has run.
+static RESOLVED: OnceLock<LogTarget> = OnceLock::new();
+
+/// [`LogTarget::child_file`] of this process's own target: the `--log-file`
+/// value to hand a child component `binary`.  Before [`init`] — or when
+/// this process has no file sink — the child is told `-` (stderr only).
+pub fn child_log_file(binary: &str) -> PathBuf {
+    match RESOLVED.get() {
+        Some(target) => target.child_file(binary),
+        None => PathBuf::from("-"),
+    }
 }
 
 /// A writer that fans each write out to two destinations.
 ///
-/// Every daemon writes its primary log (a file, or stderr) **and** mirrors
-/// the same bytes to the console device so boot progress is visible on a
-/// physical/remote console.  A failure on one destination (e.g. the console
-/// not being writable) never blocks or drops the other.
+/// Every record goes to the stderr sink **and** the log file.  A failure
+/// on one destination never blocks or drops the other.
 struct TeeWriter {
     primary: Box<dyn Write + Send>,
-    console: Box<dyn Write + Send>,
+    mirror: Box<dyn Write + Send>,
 }
 
 impl Write for TeeWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let _ = self.primary.write(buf);
-        let _ = self.console.write(buf);
+        let _ = self.mirror.write(buf);
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         let _ = self.primary.flush();
-        let _ = self.console.flush();
+        let _ = self.mirror.flush();
         Ok(())
     }
 }
@@ -73,11 +109,11 @@ enum AnsiState {
 /// A writer that strips ANSI escape sequences before forwarding to its
 /// inner writer.
 ///
-/// The formatter is colourised for the console; the primary log must stay
-/// plain, so it is wrapped in this writer which removes every escape
-/// sequence (CSI / OSC / two-byte) and keeps only the text.  Sequences may
-/// be split across `write` calls — the parser state is retained between
-/// calls so no escape is ever half-emitted into the log.
+/// The formatter may colourise stderr (when it is a terminal); the log
+/// file must stay plain, so it is wrapped in this writer which removes
+/// every escape sequence (CSI / OSC / two-byte) and keeps only the text.
+/// Sequences may be split across `write` calls — the parser state is
+/// retained between calls so no escape is ever half-emitted into the log.
 struct StripAnsiWriter {
     inner: Box<dyn Write + Send>,
     state: AnsiState,
@@ -141,23 +177,43 @@ impl Write for StripAnsiWriter {
     }
 }
 
-/// Resolve the effective target for `log_name` without installing a
-/// subscriber: `-` yields stderr, anything else the append-mode log file
-/// (with the directory auto-created).  Unwritable targets degrade to
-/// stderr with a warning on the real stderr.
-fn resolve_target(log_dir: &str, log_name: &str) -> LogTarget {
-    if log_dir == "-" {
-        return LogTarget::Stderr;
+/// Resolve the log file for a component named `name`: the explicit CLI
+/// value wins, then `SYSTEMA_LOG_FILE`, then — when `default_file` applies
+/// (daemons) — `<builtin log dir>/<name>.log`.  `None` (no file sink)
+/// covers `-` and a tool that was given no `--log-file`.
+fn resolve_log_file(
+    name: &str,
+    cli: Option<PathBuf>,
+    env: Option<std::ffi::OsString>,
+    default_file: bool,
+) -> Option<PathBuf> {
+    let value = cli.or_else(|| env.map(PathBuf::from)).or_else(|| {
+        default_file.then(|| Path::new(crate::paths::builtin_log_dir()).join(format!("{name}.log")))
+    })?;
+    (value != Path::new("-")).then_some(value)
+}
+
+/// [`resolve_log_file`] followed by opening the file (its directory is
+/// created on demand).  An unwritable target prints one warning and
+/// yields `None` so the caller degrades to stderr alone.
+fn open_resolved(
+    name: &str,
+    cli: Option<PathBuf>,
+    env: Option<std::ffi::OsString>,
+    default_file: bool,
+) -> Option<(PathBuf, File)> {
+    let path = resolve_log_file(name, cli, env, default_file)?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(parent);
+        }
     }
-    let dir = Path::new(log_dir);
-    let _ = std::fs::create_dir_all(dir);
-    let path = dir.join(format!("{log_name}.log"));
     match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
     {
-        Ok(_) => LogTarget::File(path),
+        Ok(file) => Some((path, file)),
         Err(e) => {
             eprintln!(
                 "{}",
@@ -169,130 +225,115 @@ fn resolve_target(log_dir: &str, log_name: &str) -> LogTarget {
                     ]
                 )
             );
-            LogTarget::Stderr
+            None
         }
     }
 }
 
-/// Whether the kernel command line requests a TTY console via the
-/// `console-is-tty` parameter.  systemd honours this to decide whether it
-/// may use ANSI styling on `/dev/console`.
-fn kernel_wants_console_tty(cmdline: &str) -> bool {
-    cmdline.split_whitespace().any(|w| w == "console-is-tty")
+/// What [`init`] turns on — the single policy shared by every component.
+pub struct Options<'a> {
+    /// Component name — the default log file's basename (e.g. `"systema-syss"`).
+    pub name: &'a str,
+    /// Filter expression (`info`, `debug`, `RUST_LOG` syntax).
+    pub level: &'a str,
+    /// The `--log-file` value, when the command line carried one.
+    pub log_file: Option<PathBuf>,
+    /// Consult `SYSTEMA_LOG_FILE` (daemons: yes; interactive tools: no —
+    /// they log to a file only when the command line asks for one).
+    pub env_file: bool,
+    /// Fall back to `<builtin log dir>/<name>.log` when nothing was given
+    /// (daemons: yes; interactive tools: no).
+    pub default_file: bool,
+    /// Enable the stderr sink (daemons: always; tools: `--debug` only).
+    pub stderr: bool,
 }
 
-/// Whether the console device should carry ANSI colours: it is an actual
-/// terminal, or the kernel command line carries `console-is-tty` (e.g. when
-/// the console is a serial line that still renders escape sequences).
-fn console_wants_ansi(file: &File) -> bool {
-    if file.is_terminal() {
-        return true;
-    }
-    std::fs::read_to_string("/proc/cmdline")
-        .map(|c| kernel_wants_console_tty(&c))
-        .unwrap_or(false)
+/// Daemon policy: stderr always; the file sink resolved as
+/// `--log-file` > `SYSTEMA_LOG_FILE` > the built-in default.
+/// Returns where this process's logs actually go.
+pub fn init_daemon(name: &str, log_file: Option<PathBuf>, level: &str) -> LogTarget {
+    init(Options {
+        name,
+        level,
+        log_file,
+        env_file: true,
+        default_file: true,
+        stderr: true,
+    })
 }
 
-/// Open the console device (`/dev/console` by default; override with the
-/// `SYSTEMA_CONSOLE` environment variable).
-///
-/// The console is opened **only** when the device exists *and* openable for
-/// writing; a missing or unwritable console (the norm in containers or
-/// headless environments) silently disables the mirror — no warning is
-/// emitted because this is an expected condition.
-///
-/// Returns the console writer and whether its stream should be colourised
-/// (see [`console_wants_ansi`]).
-fn open_console() -> Option<(Box<dyn Write + Send>, bool)> {
-    let path = std::env::var("SYSTEMA_CONSOLE").unwrap_or_else(|_| "/dev/console".to_string());
-    if !Path::new(&path).exists() {
-        return None;
-    }
-    let file = std::fs::OpenOptions::new().write(true).open(&path).ok()?;
-    let wants_ansi = console_wants_ansi(&file);
-    Some((Box::new(file), wants_ansi))
+/// Interactive-tool policy: a file sink only with an explicit
+/// `--log-file`, stderr only with `--debug` (`stderr`).
+/// Returns where this process's logs actually go.
+pub fn init_tool(name: &str, log_file: Option<PathBuf>, level: &str, stderr: bool) -> LogTarget {
+    init(Options {
+        name,
+        level,
+        log_file,
+        env_file: false,
+        default_file: false,
+        stderr,
+    })
 }
 
-/// Install the global tracing subscriber for a daemon named `log_name`
-/// (the log file basename, e.g. `"systema-syss"`).
-///
-/// `level` follows the usual filter syntax (`info`, `debug`, RUST_LOG
-/// expressions).  Returns where logs actually go.
+/// Install the global tracing subscriber for one component — the single
+/// initialization every component uses (see the module docs for the sink
+/// rules).  Returns where this process's logs actually go.
 ///
 /// The effective path values are recorded at debug level so every run's
 /// log documents what it resolved (see [`crate::paths::debug_dump`]).
-///
-/// The primary log goes to the configured file (or stderr) and is mirrored
-/// to the console device when it is openable.  When the console is a TTY
-/// (or `console-is-tty` is on the kernel command line) the formatter emits
-/// ANSI colours and the console receives them, while the primary stream is
-/// wrapped in a [`StripAnsiWriter`] so the file stays plain.
-pub fn init(log_dir: &str, log_name: &str, level: &str) -> LogTarget {
-    let target = resolve_target(log_dir, log_name);
-    let console = open_console();
-    let console_ansi = console.as_ref().map(|(_, ansi)| *ansi).unwrap_or(false);
-    let filter = match level.parse::<EnvFilter>() {
+pub fn init(opts: Options<'_>) -> LogTarget {
+    let env = opts
+        .env_file
+        .then(|| std::env::var_os("SYSTEMA_LOG_FILE"))
+        .flatten()
+        .filter(|v| !v.is_empty());
+    let opened = open_resolved(opts.name, opts.log_file, env, opts.default_file);
+    let target = match &opened {
+        Some((path, _)) => LogTarget::File(path.clone()),
+        None => LogTarget::Stderr,
+    };
+    let _ = RESOLVED.set(target.clone());
+
+    let filter = match opts.level.parse::<EnvFilter>() {
         Ok(f) => f,
         Err(e) => {
             eprintln!(
                 "{}",
                 crate::l10n::fmt(
                     crate::l10n::t_("Invalid log level '{level}' ({e}); using info"),
-                    &[("level", &level.to_string()), ("e", &e.to_string())]
+                    &[("level", &opts.level.to_string()), ("e", &e.to_string())]
                 )
             );
             EnvFilter::new("info")
         }
     };
-    let fmt = tracing_subscriber::fmt()
-        .with_ansi(console_ansi)
-        .with_env_filter(filter);
 
-    let primary: Box<dyn Write + Send> = match &target {
-        LogTarget::File(path) => {
-            // Re-open independently: the probe handle above is dropped.
-            match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!(
-                        "{}",
-                        crate::l10n::fmt(
-                            crate::l10n::t_(
-                                "Cannot open log file {path} ({e}); falling back to stderr"
-                            ),
-                            &[
-                                ("path", &(path.display()).to_string()),
-                                ("e", &e.to_string())
-                            ]
-                        )
-                    );
-                    Box::new(std::io::stderr())
-                }
-            }
-        }
-        LogTarget::Stderr => Box::new(std::io::stderr()),
+    let writer: Option<Box<dyn Write + Send>> = match (opts.stderr, opened) {
+        (true, Some((_, file))) => Some(Box::new(TeeWriter {
+            primary: Box::new(std::io::stderr()),
+            // Colours may reach the terminal stderr; the file stays plain.
+            mirror: Box::new(StripAnsiWriter::new(Box::new(file))),
+        })),
+        (true, None) => Some(Box::new(std::io::stderr())),
+        (false, Some((_, file))) => Some(Box::new(file)),
+        (false, None) => None,
     };
-
-    // Colours go to the console only; strip them from the primary stream so
-    // no escape sequence is ever persisted into the log file.
-    let primary = if console_ansi {
-        Box::new(StripAnsiWriter::new(primary)) as Box<dyn Write + Send>
-    } else {
-        primary
-    };
-    let writer = match console {
-        Some((console, _)) => Box::new(TeeWriter { primary, console }),
-        None => primary,
-    };
-    fmt.with_writer(std::sync::Mutex::new(writer as Box<dyn Write + Send>))
-        .init();
-    // Record the paths this run actually resolved: environments are
-    // volatile, env vars and CLI flags can change them between runs.
-    crate::paths::debug_dump(log_dir);
+    if let Some(writer) = writer {
+        let ansi = opts.stderr && std::io::stderr().is_terminal();
+        tracing_subscriber::fmt()
+            .with_ansi(ansi)
+            .with_env_filter(filter)
+            .with_writer(std::sync::Mutex::new(writer))
+            .init();
+        // Record the paths this run actually resolved: environments are
+        // volatile, env vars and CLI flags can change them between runs.
+        let record = match &target {
+            LogTarget::File(path) => path.display().to_string(),
+            LogTarget::Stderr => "-".to_string(),
+        };
+        crate::paths::debug_dump(&record);
+    }
     target
 }
 
@@ -313,9 +354,38 @@ mod tests {
         }
     }
 
+    fn env(s: &str) -> Option<std::ffi::OsString> {
+        Some(std::ffi::OsString::from(s))
+    }
+
     #[test]
-    fn dash_selects_stderr() {
-        assert_eq!(resolve_target("-", "whatever"), LogTarget::Stderr);
+    fn dash_yields_no_file() {
+        assert_eq!(
+            resolve_log_file("whatever", Some(PathBuf::from("-")), None, true),
+            None
+        );
+        assert_eq!(resolve_log_file("x", None, env("-"), true), None);
+    }
+
+    #[test]
+    fn cli_beats_env_beats_default() {
+        assert_eq!(
+            resolve_log_file("name", Some("/cli/x.log".into()), env("/env/x.log"), true),
+            Some(PathBuf::from("/cli/x.log"))
+        );
+        assert_eq!(
+            resolve_log_file("name", None, env("/env/x.log"), true),
+            Some(PathBuf::from("/env/x.log"))
+        );
+        let default = resolve_log_file("name", None, None, true).unwrap();
+        assert!(default.ends_with("name.log"));
+        assert!(default.starts_with(crate::paths::builtin_log_dir()));
+        // Tools: no default and no env — nothing explicit, no file sink.
+        assert_eq!(resolve_log_file("name", None, None, false), None);
+        assert_eq!(
+            resolve_log_file("name", None, env("/env/x.log"), false),
+            None
+        );
     }
 
     #[test]
@@ -323,59 +393,78 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sysa-logtest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let sub = dir.join("nested");
-        let target = resolve_target(sub.to_str().unwrap(), "unit-test");
-        match &target {
-            LogTarget::File(p) => assert!(p.starts_with(&sub) && p.exists()),
-            LogTarget::Stderr => panic!("expected a file target"),
-        }
+        let opened = open_resolved("unit-test", Some(sub.join("unit-test.log")), None, false);
+        let (path, _file) = opened.expect("expected a file target");
+        assert!(path.starts_with(&sub) && path.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn unwritable_degrades_to_stderr() {
+    fn unwritable_degrades_to_no_file() {
         // A path *under a file* can never be created nor opened.
         let blocker = std::env::temp_dir().join(format!("sysa-logblock-{}", std::process::id()));
         std::fs::write(&blocker, b"x").unwrap();
-        let target = resolve_target(blocker.join("sub").to_str().unwrap(), "unit-test");
-        assert_eq!(target, LogTarget::Stderr);
+        let target = open_resolved(
+            "unit-test",
+            Some(blocker.join("sub").join("unit-test.log")),
+            None,
+            false,
+        );
+        assert!(target.is_none());
         let _ = std::fs::remove_file(&blocker);
+    }
+
+    #[test]
+    fn child_file_uses_own_directory() {
+        let target = LogTarget::File(PathBuf::from("/var/log/systema/systema-sysi.log"));
+        assert_eq!(
+            target.child_file("systema-sysa"),
+            PathBuf::from("/var/log/systema/systema-sysa.log")
+        );
+        // A stderr-only parent tells its children to stay on stderr too.
+        assert_eq!(
+            LogTarget::Stderr.child_file("systema-sysa"),
+            PathBuf::from("-")
+        );
+        // Before init nothing is resolved: the child gets `-`.
+        assert_eq!(child_log_file("systema-sysa"), PathBuf::from("-"));
     }
 
     #[test]
     fn tee_writer_fans_out_to_both_destinations() {
         let primary_buf = Arc::new(Mutex::new(Vec::new()));
-        let console_buf = Arc::new(Mutex::new(Vec::new()));
+        let mirror_buf = Arc::new(Mutex::new(Vec::new()));
         let mut tee = TeeWriter {
             primary: Box::new(CaptureWriter(primary_buf.clone())),
-            console: Box::new(CaptureWriter(console_buf.clone())),
+            mirror: Box::new(CaptureWriter(mirror_buf.clone())),
         };
 
-        tee.write_all(b"hello console\n").unwrap();
+        tee.write_all(b"hello both\n").unwrap();
         tee.flush().unwrap();
 
-        assert_eq!(*primary_buf.lock().unwrap(), b"hello console\n");
-        assert_eq!(*console_buf.lock().unwrap(), b"hello console\n");
+        assert_eq!(*primary_buf.lock().unwrap(), b"hello both\n");
+        assert_eq!(*mirror_buf.lock().unwrap(), b"hello both\n");
     }
 
     #[test]
-    fn write_to_failed_console_still_reaches_primary() {
+    fn write_to_failed_sink_still_reaches_the_other() {
         struct FailWriter;
         impl Write for FailWriter {
             fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("console gone"))
+                Err(std::io::Error::other("sink gone"))
             }
             fn flush(&mut self) -> std::io::Result<()> {
-                Err(std::io::Error::other("console gone"))
+                Err(std::io::Error::other("sink gone"))
             }
         }
 
         let primary_buf = Arc::new(Mutex::new(Vec::new()));
         let mut tee = TeeWriter {
             primary: Box::new(CaptureWriter(primary_buf.clone())),
-            console: Box::new(FailWriter),
+            mirror: Box::new(FailWriter),
         };
 
-        // The primary write must still succeed even when the console errors.
+        // The primary write must still succeed even when the mirror errors.
         tee.write_all(b"log line\n").unwrap();
         tee.flush().unwrap();
 
@@ -429,19 +518,5 @@ mod tests {
 
         w.write_all(b"no escapes here\n").unwrap();
         assert_eq!(*buf.lock().unwrap(), b"no escapes here\n");
-    }
-
-    #[test]
-    fn kernel_wants_console_tty_parses_cmdline() {
-        assert!(kernel_wants_console_tty(
-            "BOOT_IMAGE=/vmlinuz root=/dev/sda1 console-is-tty quiet"
-        ));
-        assert!(!kernel_wants_console_tty(
-            "BOOT_IMAGE=/vmlinuz root=/dev/sda1 console=tty0 quiet"
-        ));
-        assert!(!kernel_wants_console_tty(""));
-        // Prefix/suffix matches must not fool the exact token comparison.
-        assert!(!kernel_wants_console_tty("not-console-is-tty"));
-        assert!(!kernel_wants_console_tty("console-is-tty=1"));
     }
 }

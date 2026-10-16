@@ -63,7 +63,12 @@ export SYSTEMD_FIRST_BOOT_FILE="${PREFIX}/var/run/systemd/first-boot"
 # State / logs
 # ---------------------------------------------------------------------------
 export SYSTEMD_MACHINE_ID_FILE="${PREFIX}/etc/machine-id"
+# Build-time base directory of the default per-process log files
+# (libsysa build.rs bakes it; the runtime knob names a file instead):
 export SYSTEMA_LOG_DIR="${PREFIX}/var/log/systema"
+# Runtime anchor: systema-sysi's own log file; every worker gets
+# `--log-file ${PREFIX}/var/log/systema/<binary>.log` derived from it.
+export SYSTEMA_LOG_FILE="${PREFIX}/var/log/systema/systema-sysi.log"
 
 # ---------------------------------------------------------------------------
 # Static data (/usr -> $PREFIX)

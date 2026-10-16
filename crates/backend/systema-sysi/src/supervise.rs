@@ -558,7 +558,7 @@ fn spawn_process(
     procs: &mut Vec<Spawned>,
     debug: bool,
     log_level: &str,
-    log_dir: &std::path::Path,
+    log_target: &sysa::logging::LogTarget,
     extra_flags: &HashMap<&'static str, Vec<String>>,
 ) -> Option<i32> {
     let mut cmd = std::process::Command::new(&rp.path);
@@ -572,43 +572,12 @@ fn spawn_process(
         cmd.args(flags);
     }
 
-    // Workers resolve SYSTEMA_LOG_DIR themselves ("-" means stderr) and
-    // write tracing output into <log-dir>/<binary>.log.  SysAInit only
-    // redirects the inherited stdio for pre-logging output; with "-" there
-    // is nothing to redirect.
-    let log_dir_str = log_dir.to_string_lossy().into_owned();
-    cmd.env("SYSTEMA_LOG_DIR", &log_dir_str);
-
-    if log_dir_str != "-" {
-        let log_path = log_dir.join(format!("{}.log", rp.spec.binary));
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            Ok(file) => {
-                let stdout = file.try_clone().ok();
-                cmd.stdout(std::process::Stdio::from(file));
-                cmd.stderr(match stdout {
-                    Some(f) => std::process::Stdio::from(f),
-                    None => std::process::Stdio::inherit(),
-                });
-                info!(
-                    "Redirecting {} logs to {}",
-                    rp.spec.name,
-                    log_path.display()
-                );
-            }
-            Err(e) => {
-                warn!(
-                    "Cannot open log file {} ({}); {} inherits stderr",
-                    log_path.display(),
-                    e,
-                    rp.spec.name
-                );
-            }
-        }
-    }
+    // Workers log like SysAInit does — stderr plus their own file, which
+    // they open themselves.  Point it at the same directory as ours (argv
+    // beats any inherited SYSTEMA_LOG_FILE); "-" propagates a
+    // stderr-only parent.
+    cmd.arg("--log-file")
+        .arg(log_target.child_file(rp.spec.binary));
 
     match cmd.spawn() {
         Ok(child) => {
@@ -859,7 +828,7 @@ pub async fn run(
     log_level: &str,
     grace: Duration,
     ready_timeout: Duration,
-    log_dir: &std::path::Path,
+    log_target: &sysa::logging::LogTarget,
     extra_flags: &HashMap<&'static str, Vec<String>>,
     power_ctl: power::PowerCtl,
 ) -> Result<i32> {
@@ -902,7 +871,8 @@ pub async fn run(
 
     // --- Phase 1: System A, then wait for MANAGER_READY. ---
     let code = if let Some(rp) = allocator_specs.first() {
-        if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_dir, extra_flags) {
+        if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_target, extra_flags)
+        {
             Some(shutdown(&procs, code, grace).await)
         } else {
             wait_ready(
@@ -930,7 +900,8 @@ pub async fn run(
 
     // --- Phase 2: workers, serially, each gated on WORKER_READY. ---
     for rp in &workers {
-        if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_dir, extra_flags) {
+        if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_target, extra_flags)
+        {
             let code = shutdown(&procs, code, grace).await;
             notify.shutdown();
             drop(reaper);

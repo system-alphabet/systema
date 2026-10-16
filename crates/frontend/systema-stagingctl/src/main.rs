@@ -9,7 +9,6 @@ use sysa::l10n;
 use sysa::proto::StagingAreaEntry;
 use sysa::staging_admin::StagingAdmin;
 use sysa_pager::{pager_eprintln, pager_print, pager_println, PagerConfig, PagerGuard};
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(
@@ -30,6 +29,13 @@ struct Args {
         help = "Log level (trace, debug, info, warn, error)"
     )]
     log_level: String,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Log file to append to; without it, nothing is written to a file"
+    )]
+    log_file: Option<std::path::PathBuf>,
 
     #[arg(long, global = true, help = "Do not pipe output into a pager")]
     no_pager: bool,
@@ -96,11 +102,6 @@ enum Commands {
         )]
         uid: Option<u32>,
     },
-}
-
-fn init_tracing(level: &str) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| level.parse().unwrap());
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
 fn parse_units_json(bytes: &[u8]) -> Result<BTreeMap<String, Value>> {
@@ -309,6 +310,11 @@ fn build_localized_cli() -> clap::Command {
         .about(l10n::t_("System A — Staging Area Controller"))
         .mut_arg("json", |a| a.help(l10n::t_("Output in JSON format.")))
         .mut_arg("debug", |a| a.help(l10n::t_("Enable debug-level logging.")))
+        .mut_arg("log_file", |a| {
+            a.help(l10n::t_(
+                "Log file to append to; without it, nothing is written to a file.",
+            ))
+        })
         .mut_arg("log_level", |a| {
             a.help(l10n::t_("Log level (trace, debug, info, warn, error)."))
         })
@@ -385,8 +391,10 @@ async fn main() -> Result<()> {
         .unwrap_or(&ColorChoice::Auto);
 
     let level = if debug { "debug" } else { log_level };
-    init_tracing(level);
-    sysa::paths::debug_dump(sysa::paths::instance().log_dir);
+    // Tool policy: stderr only with -D/--debug, a file only with an
+    // explicit --log-file (see the logging module).
+    let log_file = matches.get_one::<std::path::PathBuf>("log_file").cloned();
+    sysa::logging::init_tool("systema-stagingctl", log_file, level, debug);
 
     // In `--user` mode a missing socket means the per-user instance was
     // never started — and a *stale* socket file (left behind by a crash or

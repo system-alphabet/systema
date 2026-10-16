@@ -34,6 +34,12 @@ struct Args {
 
     #[arg(
         long,
+        help = "Path of this process's log file (\"-\" writes to stderr only)"
+    )]
+    log_file: Option<std::path::PathBuf>,
+
+    #[arg(
+        long,
         short = 'n',
         default_value = "systema-sysf/discovery",
         help = "Name for the staging area"
@@ -75,6 +81,11 @@ async fn main() -> Result<()> {
             .mut_arg("debug", |a| {
                 a.help(sysa::l10n::t_("Enable debug-level logging."))
             })
+            .mut_arg("log_file", |a| {
+                a.help(sysa::l10n::t_(
+                    "Path of this process's log file (\"-\" writes to stderr only).",
+                ))
+            })
             .mut_arg("log_level", |a| {
                 a.help(sysa::l10n::t_(
                     "Log level (trace, debug, info, warn, error).",
@@ -113,8 +124,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let log_level = if args.debug { "debug" } else { &args.log_level };
-    // Self-managed logging: <log-dir>/<name>.log, or stderr for "-".
-    sysa::logging::init(sysa::paths::instance().log_dir, "systema-sysf", log_level);
+    // Self-managed logging: stderr always, plus the file resolved from
+    // --log-file / SYSTEMA_LOG_FILE / the built-in default.
+    sysa::logging::init_daemon("systema-sysf", args.log_file.clone(), log_level);
 
     match args.command {
         Some(Command::Commit) => run_commit(&args.name).await,
@@ -180,9 +192,16 @@ async fn run_finders(name: &str) -> Result<()> {
     let mut children: Vec<(PathBuf, tokio::process::Child)> = Vec::new();
     for path in &finders {
         info!("Spawning finder {}", path.display());
+        let binary = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "systema-finder".to_string());
         let child = tokio::process::Command::new(path)
             .arg("--name")
             .arg(name)
+            // Same log directory as ours (see the logging module).
+            .arg("--log-file")
+            .arg(sysa::logging::child_log_file(&binary))
             .spawn()
             .with_context(|| {
                 sysa::l10n::fmt(

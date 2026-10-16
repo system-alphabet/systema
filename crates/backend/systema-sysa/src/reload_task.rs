@@ -103,6 +103,10 @@ impl ReloadTask {
         let status = tokio::process::Command::new(&sysf_path)
             .arg("--name")
             .arg("systema-sysf/reload")
+            // Same log directory as ours; "-" when this process has no
+            // file sink (see the logging module).
+            .arg("--log-file")
+            .arg(sysa::logging::child_log_file("systema-sysf"))
             .status()
             .await
             .map_err(|e| {

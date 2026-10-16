@@ -57,8 +57,8 @@ socket 默认值是**编译期常量**（`/run/systema/...`），用户实例必
 | `SYSTEMA_FDPASS_SOCK` | `$SYSTEMA_RUNSTATEDIR/fdpass.sock` |
 | `SYSTEMA_NOTIFY_DIR` | `$SYSTEMA_RUNSTATEDIR/systema/notify`（见实现备注 9：不能取 `$SYSTEMA_RUNSTATEDIR/notify`——那是 syss 给服务用的 sd_notify socket 路径） |
 | `SYSTEMA_RELOAD_SOCKET` | `$SYSTEMA_RUNSTATEDIR/sysf.sock` |
-| `SYSTEMA_LOG_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/systema/log` |
-| `SYSTEMA_SERVICE_LOG_DIR`（新，见 5.1） | `$SYSTEMA_LOG_DIR/services` |
+| `SYSTEMA_LOG_FILE`（见备注 12） | `${XDG_STATE_HOME:-$HOME/.local/state}/systema/log/systema-sysu.log`（启动器自身；各 worker 按同目录 `<binary>.log` 派生） |
+| `SYSTEMA_SERVICE_LOG_DIR`（新，见 5.1） | `${XDG_STATE_HOME:-$HOME/.local/state}/systema/log/services` |
 | `SYSTEMA_UNIT_PATH` | `$HOME/.config/systema:/etc/systemd/user:/usr/lib/systemd/user`（**整体替换**：绝不能继承默认值，否则会扫进 `/etc/systemd/system` 等系统目录） |
 | `SYSTEMA_GENERATOR_PATH` | `$SYSTEMA_RUNSTATEDIR/systemd/generator:$SYSTEMA_RUNSTATEDIR/systemd/generator.late`（用户私有、当前为空） |
 
@@ -171,7 +171,6 @@ P1 = 3.4 的 shell 钩子（尽力而为）；P2 = PAM 模块（确定性会话�
 - `Standard*=tty` 的用户单元：无 TTY 可挂，行为退化。
 - 登出停止非确定（见 3.4）。
 - 不注册 `.power` 单元；用户实例内 reboot/halt 无入口。
-- daemon 日志仍会镜像 `/dev/console`，用户实例可能无权限 → 仅告警不失败。
 
 ## 8. 验证清单
 
@@ -249,7 +248,8 @@ P1 = 3.4 的 shell 钩子（尽力而为）；P2 = PAM 模块（确定性会话�
    纯函数 `user_runtime_dir()`——启动器矩阵（§3.1）与 `--user` 必须计算出
    同一运行时目录，同源于一处。
 3. **`--login` 机制**：父进程以隐藏标志 `--daemon` 重执行自身；子进程
-   `setsid()` 脱离会话，stdio 重定向到 `<log-dir>/systema-sysu.out`。
+   `setsid()` 脱离会话，stdio 继承自父进程——不再重定向（子进程由
+   `logging::init_daemon` 自行双写 stderr + 日志文件，见备注 12）。
    pidfile = `{user_runtime_dir}/systema-sysu.pid`，在监督开始前写入；
    父进程轮询 pidfile（≤3s），以区分"已起来"与"启动即失败"。
 4. **控制阶段启动失败不致命**：`manager.start_units` 的 enqueue 级失败
@@ -330,3 +330,19 @@ P1 = 3.4 的 shell 钩子（尽力而为）；P2 = PAM 模块（确定性会话�
      重连循环（进程存活，实例无扰，`systemctl` 落到既有管理器上）。
    - **授权**：session bus 用户私有，`manager.*` 桥只带 `sender_pid`
      的旁路（§9 审计项）在用户域不构成跨用户风险；系统域入口仍须补。
+12. **全局日志方案改版（修订 §3.1 矩阵行、备注 3）**：所有组件统一走
+   `libsysa::logging` 的同一套初始化，永远双写 **stderr + 日志文件**
+   两个 sink，不再镜像 `/dev/console`（`SYSTEMA_CONSOLE`、
+   `console-is-tty` 判断一并移除）。日志文件路径解析优先级
+   **`--log-file`（运行参数）> `SYSTEMA_LOG_FILE`（环境变量）> 内置默认**
+   `/var/log/systema/<name>.log`；值 `-` 表示仅 stderr。文件打不开
+   （早启动 `/var` 未就绪、无权限等）时降级为仅 stderr 并告警一次，
+   进程绝不因日志路径失败而退出。启动器/监督者 spawn 子进程时不再
+   重定向 stdio、也不再注入环境变量，而是逐个传
+   `--log-file <自身日志所在目录>/<binary>.log`（argv 优先于继承的
+   环境变量）；仅 stderr 的父进程给子进程传 `--log-file -`。
+   交互式 CLI（`stagingctl`/`unitstatectl`）策略不同：不显式给
+   `--log-file` 就不写文件，不给 `--debug` 就绝不往 stderr 输出日志。
+   §3.1 矩阵中的 `SYSTEMA_LOG_DIR` 因此改为 `SYSTEMA_LOG_FILE`
+   （值为启动器自身日志文件；各 worker 的目录由 argv 派生）；
+   `SYSTEMA_SERVICE_LOG_DIR` 语义不变（服务日志是另一套机制）。

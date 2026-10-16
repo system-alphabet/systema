@@ -10,7 +10,6 @@ use serde_json::Value;
 use sysa::l10n;
 use sysa::unitstate_admin::UnitStateAdmin;
 use sysa_pager::{pager_eprintln, pager_println, PagerConfig, PagerGuard};
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(
@@ -28,6 +27,13 @@ struct Cli {
         help = "Log level (trace, debug, info, warn, error)"
     )]
     log_level: String,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Log file to append to; without it, nothing is written to a file"
+    )]
+    log_file: Option<std::path::PathBuf>,
 
     #[arg(long, global = true, help = "Do not pipe output into a pager")]
     no_pager: bool,
@@ -85,11 +91,6 @@ enum ColorChoice {
     Never,
     /// Always use colors.
     Always,
-}
-
-fn init_tracing(level: &str) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| level.parse().unwrap());
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
 fn render_unit(name: &str, json: &[u8], color: bool) -> Result<()> {
@@ -186,6 +187,11 @@ fn build_localized_cli() -> clap::Command {
     Cli::command()
         .about(l10n::t_("System A — Unit State Controller"))
         .mut_arg("debug", |a| a.help(l10n::t_("Enable debug-level logging.")))
+        .mut_arg("log_file", |a| {
+            a.help(l10n::t_(
+                "Log file to append to; without it, nothing is written to a file.",
+            ))
+        })
         .mut_arg("log_level", |a| {
             a.help(l10n::t_("Log level (trace, debug, info, warn, error)."))
         })
@@ -252,8 +258,10 @@ async fn main() -> Result<()> {
         .unwrap_or(&ColorChoice::Auto);
 
     let level = if debug { "debug" } else { log_level };
-    init_tracing(level);
-    sysa::paths::debug_dump(sysa::paths::instance().log_dir);
+    // Tool policy: stderr only with -D/--debug, a file only with an
+    // explicit --log-file (see the logging module).
+    let log_file = matches.get_one::<std::path::PathBuf>("log_file").cloned();
+    sysa::logging::init_tool("systema-unitstatectl", log_file, level, debug);
 
     // In `--user` mode a missing socket means the per-user instance was
     // never started — and a *stale* socket file (left behind by a crash or

@@ -37,6 +37,12 @@ struct Args {
     )]
     log_level: String,
 
+    #[arg(
+        long,
+        help = "Path of this process's log file (\"-\" writes to stderr only)"
+    )]
+    log_file: Option<std::path::PathBuf>,
+
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
 
@@ -58,6 +64,11 @@ async fn main() -> Result<()> {
             .about(sysa::l10n::t_("System A — System Allocator"))
             .mut_arg("debug", |a| {
                 a.help(sysa::l10n::t_("Enable debug-level logging."))
+            })
+            .mut_arg("log_file", |a| {
+                a.help(sysa::l10n::t_(
+                    "Path of this process's log file (\"-\" writes to stderr only).",
+                ))
             })
             .mut_arg("log_level", |a| {
                 a.help(sysa::l10n::t_(
@@ -83,8 +94,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let log_level = if args.debug { "debug" } else { &args.log_level };
-    // Self-managed logging: <log-dir>/<name>.log, or stderr for "-".
-    sysa::logging::init(sysa::paths::instance().log_dir, "systema-sysa", log_level);
+    // Self-managed logging: stderr always, plus the file resolved from
+    // --log-file / SYSTEMA_LOG_FILE / the built-in default.
+    sysa::logging::init_daemon("systema-sysa", args.log_file.clone(), log_level);
 
     info!("System A (System Allocator) starting up");
 

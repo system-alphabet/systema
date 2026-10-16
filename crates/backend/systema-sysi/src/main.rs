@@ -86,9 +86,9 @@ struct Args {
 
     #[arg(
         long,
-        help = "Directory for per-process log files (systema-sysa.log, systema-syss.log, ...)"
+        help = "Path of this process's log file; child processes receive <dir>/<binary>.log (\"-\" writes to stderr only)"
     )]
-    log_dir: PathBuf,
+    log_file: Option<PathBuf>,
 
     #[arg(
         long,
@@ -276,11 +276,10 @@ async fn main() -> Result<()> {
                     "Time to wait for System A / a worker to report ready before aborting.",
                 ))
             })
-            .mut_arg("log_dir", |a| {
+            .mut_arg("log_file", |a| {
                 a.help(sysa::l10n::t_(
-                    "Directory for per-process log files (systema-sysa.log, ...).",
+                    "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only.",
                 ))
-                .default_value(sysa::paths::instance().log_dir)
             })
             .mut_arg("powerctl", |a| {
                 a.help(sysa::l10n::t_(
@@ -318,10 +317,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let log_level = if args.debug { "debug" } else { &args.log_level };
-    // SysAInit's own log: <log-dir>/systema-sysi.log, stderr for "-".
-    // Workers resolve SYSTEMA_LOG_DIR the same way (see logging module).
-    let log_dir_str = args.log_dir.to_string_lossy().into_owned();
-    sysa::logging::init(&log_dir_str, "systema-sysi", log_level);
+    // SysAInit's own log: stderr always, plus the file resolved from
+    // --log-file / SYSTEMA_LOG_FILE / the built-in default.  Each worker
+    // receives `--log-file <dir>/<binary>.log` derived from this target
+    // (see the logging module).
+    let log_target = sysa::logging::init_daemon("systema-sysi", args.log_file.clone(), log_level);
     info!("SysAInit starting (PID {})", std::process::id());
 
     // Like systemd's `mount_setup()`, SysAInit mounts the API filesystems
@@ -392,7 +392,7 @@ async fn main() -> Result<()> {
         &args.log_level,
         Duration::from_secs(args.shutdown_timeout),
         Duration::from_secs(args.ready_timeout),
-        &args.log_dir,
+        &log_target,
         &extra_flags,
         args.powerctl,
     )
@@ -436,7 +436,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let args = Args::parse_from([
             "systema-sysi",
-            "--log-dir",
+            "--log-file",
             "-",
             "--worker-flags",
             "--global",
@@ -452,7 +452,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         std::env::set_var("SYSTEMA_SYSA_FLAGS", "--env-specific");
         std::env::set_var("SYSTEMA_WORKERS_FLAGS", "--env-global");
-        let args = Args::parse_from(["systema-sysi", "--log-dir", "-"]);
+        let args = Args::parse_from(["systema-sysi", "--log-file", "-"]);
         // Specific env beats global env; unrelated workers get the global one.
         assert_eq!(resolve_flags(&args, "sysa"), vec!["--env-specific"]);
         assert_eq!(resolve_flags(&args, "syst"), vec!["--env-global"]);
@@ -466,7 +466,7 @@ mod tests {
         std::env::set_var("SYSTEMA_SYSK_FLAGS", "--from-env");
         let args = Args::parse_from([
             "systema-sysi",
-            "--log-dir",
+            "--log-file",
             "-",
             "--sysk-flags",
             "--from-arg",
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn resolve_flags_none_by_default() {
         let _guard = env_lock().lock().unwrap();
-        let args = Args::parse_from(["systema-sysi", "--log-dir", "-"]);
+        let args = Args::parse_from(["systema-sysi", "--log-file", "-"]);
         assert!(resolve_flags(&args, "sysd").is_empty());
     }
 }

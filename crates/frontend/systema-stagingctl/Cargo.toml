@@ -19,5 +19,4 @@ serde_json.workspace = true
 regex.workspace = true
 colored.workspace = true
 tokio.workspace = true
-tracing-subscriber.workspace = true
 libc = "0.2"

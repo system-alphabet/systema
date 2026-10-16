@@ -25,9 +25,6 @@ pub struct Paths {
     /// `systemd/system` under this path on startup so that units can
     /// reference `/run/systemd/system`.
     pub runstatedir: &'static str,
-    /// Base directory for log files (e.g. `/var/log`).  SysAInit writes its
-    /// own log and the per-worker logs (`systema-sysa.log`, ...) here.
-    pub log_dir: &'static str,
     pub unit_search_paths: Vec<String>,
     pub generator_search_paths: Vec<String>,
     /// Search paths for System F finder executables.  The `systema-sysf`
@@ -79,7 +76,6 @@ fn compute_paths() -> Paths {
         ),
         locale_dir: resolve("SYSTEMA_LOCALE_DIR", builtin::LOCALE_DIR),
         runstatedir: resolve("SYSTEMA_RUNSTATEDIR", builtin::RUNSTATEDIR),
-        log_dir: resolve("SYSTEMA_LOG_DIR", builtin::LOG_DIR),
         unit_search_paths: resolve_list("SYSTEMA_UNIT_PATH", builtin::UNIT_SEARCH_PATHS),
         generator_search_paths: resolve_list(
             "SYSTEMA_GENERATOR_PATH",
@@ -103,6 +99,16 @@ pub fn init() {
 
 pub fn instance() -> &'static Paths {
     INSTANCE.get_or_init(compute_paths)
+}
+
+/// The compiled-in base directory for per-process log files
+/// (`<dir>/<name>.log`, default `/var/log/systema`).
+///
+/// Only the default file's *directory* is baked in at build time; the
+/// runtime override names a file: `--log-file` > `SYSTEMA_LOG_FILE`
+/// (see [`crate::logging`]).
+pub fn builtin_log_dir() -> &'static str {
+    builtin::LOG_DIR
 }
 
 /// The compile-time path defaults baked in by build.rs, as
@@ -184,16 +190,19 @@ pub fn user_control_socket() -> String {
 /// Log every effective path value at debug level (`-D` /
 /// `--log-level debug`).  System A runs in volatile environments:
 /// `SYSTEMA_*` / `SYSTEMD_*` env vars and CLI flags (e.g.
-/// `systema-sysi --log-dir`) may change paths between runs, so each
+/// `systema-sysi --log-file`) may change paths between runs, so each
 /// startup records what this run actually resolved.
 ///
-/// `log_dir` is the log directory this process really uses — usually
-/// [`Paths::log_dir`], or a CLI override of it.
-pub fn debug_dump(log_dir: &str) {
+/// `log_file` is the log file this process really resolved — usually
+/// `<builtin_log_dir()>/<name>.log`, or a CLI/env override of it; `-`
+/// when everything goes to stderr alone.  (The `--full-version` record
+/// shows the build-time `SYSTEMA_LOG_DIR` base directory instead.)
+pub fn debug_dump(log_file: &str) {
     let p = instance();
     let list = |items: &[String]| items.join(":");
     // Same names and order as `builtin_defaults()` so a run's log can be
-    // compared against `--full-version` line by line.
+    // compared against `--full-version` line by line (except the log slot:
+    // the runtime knob names a file, not the build-time directory).
     let values = [
         ("SYSTEMD_LIB_UNIT_DIR", p.systemd_lib_unit_dir.to_string()),
         (
@@ -215,7 +224,7 @@ pub fn debug_dump(log_dir: &str) {
             p.systema_socket_handler_path.to_string(),
         ),
         ("SYSTEMA_LOCALE_DIR", p.locale_dir.to_string()),
-        ("SYSTEMA_LOG_DIR", log_dir.to_string()),
+        ("SYSTEMA_LOG_FILE", log_file.to_string()),
         ("SYSTEMA_RELOAD_SOCKET", p.reload_socket.to_string()),
         ("SYSTEMA_UNIT_PATH", list(&p.unit_search_paths)),
         ("SYSTEMA_GENERATOR_PATH", list(&p.generator_search_paths)),

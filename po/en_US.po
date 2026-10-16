@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-10 19:22+0800\n"
+        "POT-Creation-Date: 2026-10-12 14:59+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -174,17 +174,6 @@ msgstr  "failed to decode ack"
 msgid   "unknown method: {other}"
 msgstr  "unknown method: {other}"
 #
-# File: ../crates/libsysa/src/logging.rs, line: 165
-# File: ../crates/libsysa/src/logging.rs, line: 262
-#, rust-format
-msgid   "Cannot open log file {path} ({e}); falling back to stderr"
-msgstr  "Cannot open log file {path} ({e}); falling back to stderr"
-#
-# File: ../crates/libsysa/src/logging.rs, line: 237
-#, rust-format
-msgid   "Invalid log level '{level}' ({e}); using info"
-msgstr  "Invalid log level '{level}' ({e}); using info"
-#
 # File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
 msgid   "System A disconnected before unit-state EOF."
 msgstr  "System A disconnected before unit-state EOF."
@@ -201,6 +190,17 @@ msgstr  "Failed to decode UnitStateEof"
 #, rust-format
 msgid   "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
 msgstr  "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
+#
+# File: ../crates/libsysa/src/logging.rs, line: 165
+# File: ../crates/libsysa/src/logging.rs, line: 262
+#, rust-format
+msgid   "Cannot open log file {path} ({e}); falling back to stderr"
+msgstr  "Cannot open log file {path} ({e}); falling back to stderr"
+#
+# File: ../crates/libsysa/src/logging.rs, line: 237
+#, rust-format
+msgid   "Invalid log level '{level}' ({e}); using info"
+msgstr  "Invalid log level '{level}' ({e}); using info"
 #
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 130
 #, rust-format
@@ -682,6 +682,23 @@ msgstr  "System A — System Allocator"
 # File: ../crates/frontend/systema-unitstatectl/src/main.rs, line: 167
 msgid   "Enable debug-level logging."
 msgstr  "Enable debug-level logging."
+#
+# File: ../crates/backend/systema-sysa/src/main.rs, line: 70
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 86
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 69
+# File: ../crates/backend/systema-sysk/src/main.rs, line: 53
+# File: ../crates/backend/systema-sysm/systema-sysm.unix/src/main.rs, line: 54
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/linux.rs, line: 63
+# File: ../crates/backend/systema-syss/src/main.rs, line: 72
+# File: ../crates/backend/systema-syst/src/main.rs, line: 59
+# File: ../crates/backend/systema-sysc/src/main.rs, line: 63
+# File: ../crates/backend/systema-sysd/src/main.rs, line: 68
+# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 58
+# File: ../crates/backend/systema-syse/src/main.rs, line: 64
+# File: ../crates/backend/systema-sysn/src/main.rs, line: 67
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 62
+msgid   "Path of this process's log file (\"-\" writes to stderr only)."
+msgstr  "Path of this process's log file (\"-\" writes to stderr only)."
 #
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 55
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 71
@@ -1798,6 +1815,11 @@ msgstr  "reboot(2) for power action '{action}' failed: {err} (are we running as 
 msgid   "power action '{action}' not supported: no power backend available"
 msgstr  "power action '{action}' not supported: no power backend available"
 #
+# File: ../crates/backend/systema-sysi/src/workers.rs, line: 207
+#, rust-format
+msgid   "unknown worker name '{unknown}'"
+msgstr  "unknown worker name '{unknown}'"
+#
 # File: ../crates/backend/systema-sysi/src/supervise.rs, line: 188
 msgid   "System A closed the connection during hello"
 msgstr  "System A closed the connection during hello"
@@ -1845,11 +1867,6 @@ msgstr  "manager.list_units failed: {message}"
 msgid   "manager.start_units failed"
 msgstr  "manager.start_units failed"
 #
-# File: ../crates/backend/systema-sysi/src/workers.rs, line: 207
-#, rust-format
-msgid   "unknown worker name '{unknown}'"
-msgstr  "unknown worker name '{unknown}'"
-#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 233
 msgid   "SysAInit — System Alphabet init"
 msgstr  "SysAInit — System Alphabet init"
@@ -1874,9 +1891,10 @@ msgstr  "Grace period in seconds before SIGKILL during shutdown."
 msgid   "Time to wait for System A / a worker to report ready before aborting."
 msgstr  "Time to wait for System A / a worker to report ready before aborting."
 #
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 272
-msgid   "Directory for per-process log files (systema-sysa.log, ...)."
-msgstr  "Directory for per-process log files (systema-sysa.log, ...)."
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 281
+# File: ../crates/backend/systema-sysu/src/main.rs, line: 146
+msgid   "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
+msgstr  "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 278
 msgid   "Power control policy: auto (only when PID 1), always, never."
@@ -2086,11 +2104,6 @@ msgstr  "control session ended — reconnect required"
 msgid   "System Wrapper — systemd D-Bus bridge"
 msgstr  "System Wrapper — systemd D-Bus bridge"
 #
-# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
-#, rust-format
-msgid   "systema-sysu reaper error: {e}"
-msgstr  "systema-sysu reaper error: {e}"
-#
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 113
 msgid   "System U — per-user instance launcher"
 msgstr  "System U — per-user instance launcher"
@@ -2132,11 +2145,6 @@ msgstr  "Per-user instance already running (pid {pid})."
 #. A answers: still an instance — do not start a second one.
 msgid   "Per-user instance already running."
 msgstr  "Per-user instance already running."
-#
-# File: ../crates/backend/systema-sysu/src/main.rs, line: 340
-#, rust-format
-msgid   "Cannot open {path}."
-msgstr  "Cannot open {path}."
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 354
 #, rust-format
@@ -2182,6 +2190,11 @@ msgstr  "Per-user instance (pid {pid}) did not stop within {secs}s."
 #, rust-format
 msgid   "setsid failed: {e}."
 msgstr  "setsid failed: {e}."
+#
+# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
+#, rust-format
+msgid   "systema-sysu reaper error: {e}"
+msgstr  "systema-sysu reaper error: {e}"
 #
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 89
 msgid   "Failed to parse units JSON."
@@ -2230,6 +2243,11 @@ msgstr  "System A — Staging Area Controller"
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 290
 msgid   "Output in JSON format."
 msgstr  "Output in JSON format."
+#
+# File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 315
+# File: ../crates/frontend/systema-unitstatectl/src/main.rs, line: 192
+msgid   "Log file to append to; without it, nothing is written to a file."
+msgstr  "Log file to append to; without it, nothing is written to a file."
 #
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 296
 # File: ../crates/frontend/systema-unitstatectl/src/main.rs, line: 172
@@ -2318,10 +2336,23 @@ msgid   "failed to spawn pager '{pager}': {error}"
 msgstr  "failed to spawn pager '{pager}': {error}"
 #
 #
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 272
+#~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
+#~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
+#
+# File: ../crates/backend/systema-sysu/src/main.rs, line: 340
+#, rust-format
+#~ msgid        "Cannot open {path}."
+#~ msgstr       "Cannot open {path}."
+#
+#
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2332,10 +2363,12 @@ msgstr  "failed to spawn pager '{pager}': {error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #

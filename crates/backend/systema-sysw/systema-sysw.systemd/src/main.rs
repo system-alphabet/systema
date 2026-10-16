@@ -26,6 +26,12 @@ struct Args {
     )]
     log_level: String,
 
+    #[arg(
+        long,
+        help = "Path of this process's log file (\"-\" writes to stderr only)"
+    )]
+    log_file: Option<std::path::PathBuf>,
+
     #[arg(long, help = "D-Bus address to use (default: the system bus)")]
     bus_address: Option<String>,
 
@@ -50,6 +56,11 @@ async fn main() -> Result<()> {
             .about(sysa::l10n::t_("System Wrapper — systemd D-Bus bridge"))
             .mut_arg("debug", |a| {
                 a.help(sysa::l10n::t_("Enable debug-level logging."))
+            })
+            .mut_arg("log_file", |a| {
+                a.help(sysa::l10n::t_(
+                    "Path of this process's log file (\"-\" writes to stderr only).",
+                ))
             })
             .mut_arg("log_level", |a| {
                 a.help(sysa::l10n::t_(
@@ -92,13 +103,9 @@ async fn main() -> Result<()> {
         None => None,
     };
     let log_level = if args.debug { "debug" } else { &args.log_level };
-    // Self-managed logging: <log-dir>/<name>.log, or stderr when the log
-    // file cannot be opened — same contract as the other daemons.
-    sysa::logging::init(
-        sysa::paths::instance().log_dir,
-        "systema-sysw.systemd",
-        log_level,
-    );
+    // Self-managed logging: stderr always, plus the file resolved from
+    // --log-file / SYSTEMA_LOG_FILE / the built-in default.
+    sysa::logging::init_daemon("systema-sysw.systemd", args.log_file.clone(), log_level);
 
     // Reconnect loop: keep serving D-Bus across control-session restarts.
     // A SIGTERM/SIGINT request (from System Init or a console) ends it.

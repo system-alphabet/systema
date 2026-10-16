@@ -1404,7 +1404,6 @@ dependencies = [
  "sysa",
  "sysa-pager",
  "tokio",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1770,7 +1769,6 @@ dependencies = [
  "sysa",
  "sysa-pager",
  "tokio",
- "tracing-subscriber",
 ]
 
 [[package]]

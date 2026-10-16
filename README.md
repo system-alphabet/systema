@@ -101,8 +101,12 @@ operational CLIs, not daemons.
 
 All binaries run single-threaded async: `#[tokio::main(flavor = "current_thread")]`.
 
-Every daemon writes `<log-dir>/<name>.log` (default `/var/log/systema`) and mirrors to
-`/dev/console`.
+Every daemon logs each record to **both** stderr and a log file.  The file path
+resolves as `--log-file` > `SYSTEMA_LOG_FILE` > `/var/log/systema/<name>.log`
+(`-` = stderr only); spawning parents pass each child
+`--log-file <dir>/<binary>.log` derived from their own file.  The interactive
+CLIs (`stagingctl`, `unitstatectl`) log only with `--debug` (stderr) and/or an
+explicit `--log-file`.
 
 ## Sockets
 

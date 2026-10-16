@@ -116,7 +116,11 @@ pub fn matrix() -> Vec<(&'static str, String)> {
         // apart there too.
         ("SYSTEMA_NOTIFY_DIR", format!("{runtime}/systema/notify")),
         ("SYSTEMA_RELOAD_SOCKET", format!("{runtime}/sysf.sock")),
-        ("SYSTEMA_LOG_DIR", log_dir.clone()),
+        // The launcher's own log file — and the anchor the whole instance
+        // derives from: every worker is spawned with
+        // `--log-file {log_dir}/<binary>.log` (argv beats this inherited
+        // value; it only names sysu's own file).
+        ("SYSTEMA_LOG_FILE", format!("{log_dir}/systema-sysu.log")),
         ("SYSTEMA_SERVICE_LOG_DIR", format!("{log_dir}/services")),
         ("SYSTEMA_UNIT_PATH", unit_path()),
         (
@@ -305,7 +309,10 @@ mod tests {
             &[("XDG_STATE_HOME", Some("/state")), ("HOME", None)],
             || {
                 let m = matrix();
-                assert_eq!(get(&m, "SYSTEMA_LOG_DIR"), "/state/systema/log");
+                assert_eq!(
+                    get(&m, "SYSTEMA_LOG_FILE"),
+                    "/state/systema/log/systema-sysu.log"
+                );
                 assert_eq!(
                     get(&m, "SYSTEMA_SERVICE_LOG_DIR"),
                     "/state/systema/log/services"
