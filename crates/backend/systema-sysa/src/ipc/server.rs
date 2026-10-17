@@ -20,9 +20,10 @@ use sysa::event_bus::Event;
 use sysa::ipc::{frame_stream, make_envelope, recv_envelope, send_envelope};
 use sysa::proto::{
     AdminStagingOp, AdminStagingResult, CgroupMetricsUpdate, CommitUnits, Envelope, EventSubscribe,
-    EventUnsubscribe, MethodResult, PathFired, RegisterAck, RegisterUnits, StagingAreaEntry,
-    StagingQuery, StagingQueryResult, TimerFired, UnitDefineResult, UnitRegistrationAck,
-    UnitStateUpdate, UnitStateUpdateAck, UnitSyncReport, WorkerExit, WorkerRegistration,
+    EventUnsubscribe, MethodResult, PathFired, RegisterAck, RegisterUnits, ResourcePrepareResult,
+    StagingAreaEntry, StagingQuery, StagingQueryResult, TimerFired, UnitDefineResult,
+    UnitRegistrationAck, UnitStateUpdate, UnitStateUpdateAck, UnitSyncReport, WorkerExit,
+    WorkerRegistration,
 };
 
 use crate::events::load_unit_sync;
@@ -327,6 +328,7 @@ async fn handle_worker_session(
                 worker_id: worker_id.clone(),
                 unit_types: unit_types.clone(),
                 supports_unit_define: reg.supports_unit_define,
+                supports_resource_prepare: reg.supports_resource_prepare,
                 ready: false,
                 envelope_tx,
             },
@@ -566,6 +568,32 @@ async fn handle_worker_session(
                             drop(state);
                             debug!(
                                 "unit.define_result from worker '{}' with unknown request_id {} — ignoring",
+                                worker_id_recv, qid
+                            );
+                        }
+                        continue;
+                    }
+
+                    if env.method == "resource.prepare_result" {
+                        let qid = env.request_id;
+                        let result = match ResourcePrepareResult::decode(env.payload.as_slice()) {
+                            Ok(r) => r,
+                            Err(e) => ResourcePrepareResult {
+                                success: false,
+                                error: sysa::l10n::fmt(
+                                    sysa::l10n::t_("decode failed: {e}"),
+                                    &[("e", &e.to_string())],
+                                ),
+                                placement_path: String::new(),
+                            },
+                        };
+                        let mut state = alloc_for_recv.write();
+                        if let Some(tx) = state.resource_prepare_txs.remove(&qid) {
+                            let _ = tx.send(result);
+                        } else {
+                            drop(state);
+                            debug!(
+                                "resource.prepare_result from worker '{}' with unknown request_id {} — ignoring",
                                 worker_id_recv, qid
                             );
                         }
@@ -2006,6 +2034,7 @@ mod tests {
             worker_id: "system-t-1".to_string(),
             unit_types: vec!["timer".to_string()],
             supports_unit_define: false,
+            supports_resource_prepare: false,
         };
         let reg_env = make_envelope(7, "system-t-1", "system-a", "worker.register", reg).unwrap();
 

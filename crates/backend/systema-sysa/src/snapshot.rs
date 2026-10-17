@@ -36,6 +36,9 @@ fn rc_to_proto(rc: &ResourceControl) -> ResourceConfig {
         tasks_max: rc.tasks_max,
         allowed_cpus: rc.allowed_cpus.clone(),
         allowed_memory_nodes: rc.allowed_memory_nodes.clone(),
+        delegate: rc.delegate,
+        delegate_controllers: rc.delegate_controllers.clone(),
+        delegate_subgroup: rc.delegate_subgroup.clone(),
     }
 }
 

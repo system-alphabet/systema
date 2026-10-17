@@ -57,6 +57,16 @@ use crate::state::{ServiceRegistry, ServiceState};
 const FORCED_SERVICE_ENV: &[(&str, &str)] =
     &[("SYSTEMCTL_FORCE_BUS", "1"), ("SYSTEMD_OFFLINE", "0")];
 
+/// Whether [`FORCED_SERVICE_ENV`] applies to a service running as `user`
+/// (empty `User=`, `root` or uid `0` all mean the system domain's root).
+///
+/// User-land services must not get the forced system-bus environment —
+/// their `systemctl` talks to a user manager, not the system bus (see the
+/// call site in the spawn path for the user@.service failure mode).
+fn forced_bus_env_applies(user: &str) -> bool {
+    user.is_empty() || user == "root" || user == "0"
+}
+
 /// Directory where per-service stdout/stderr logs are captured.
 ///
 /// `/var/log/services` in the system domain.  The per-user instance
@@ -317,9 +327,19 @@ pub async fn start_service(
     }
     // Force systemctl/systemd in the child to use the live bus (applied last
     // so it cannot be overridden by the unit's Environment= settings).
-    for (key, val) in FORCED_SERVICE_ENV {
-        if let (Ok(k), Ok(v)) = (CString::new(*key), CString::new(*val)) {
-            child_envs.push((k, v));
+    //
+    // Root services only: a user-land service's `systemctl` must reach its
+    // own user manager via the private socket / user bus.  Forcing the
+    // system bus there stalls the caller — inside the user manager this
+    // poisons the `ExecStartPost=systemctl --user set-environment` of
+    // Debian's dbus.socket/ssh-agent.socket, whose stuck start jobs then
+    // block basic.target and keep `systemd --user` from ever reporting
+    // READY=1 (every start job times out).
+    if forced_bus_env_applies(&svc.user) {
+        for (key, val) in FORCED_SERVICE_ENV {
+            if let (Ok(k), Ok(v)) = (CString::new(*key), CString::new(*val)) {
+                child_envs.push((k, v));
+            }
         }
     }
     // Type=notify / notify-reload: point sd_notify(3) at the shared
@@ -358,8 +378,10 @@ pub async fn start_service(
 
     // Env injection + socket activation: hand listener fds to the child as
     // 3..3+N and set LISTEN_FDS / LISTEN_PID (checked by sd_listen_fds()).
+    // A non-empty UnitConfig.cgroup_path (Delegate= prepared by System R)
+    // moves the child into its delegated cgroup while still root, and
     // User=/Group= credentials are applied last, in the child.
-    let sa_pre_exec = build_pre_exec(child_envs, &listen_fds, creds);
+    let sa_pre_exec = build_pre_exec(child_envs, &listen_fds, creds, config.cgroup_path.clone());
     let merged = match (tty_pre_exec, sa_pre_exec) {
         (Some(mut a), Some(mut b)) => Some(Box::new(move || {
             a()?;
@@ -665,9 +687,16 @@ fn pid_is_zombie(_pid: u32) -> bool {
 /// socket-activation fds: each fd is dup2'ed to 3..3+N with CLOEXEC
 /// cleared, the originals are CLOEXEC-flagged (they must not leak past
 /// exec), sets `LISTEN_PID` / `LISTEN_FDS` (the pid is only known in the
-/// child; `sd_listen_fds()` verifies `LISTEN_PID` against `getpid()`), and
-/// finally switches credentials (`initgroups`/`setgid`/`setuid`) when
-/// `creds` is set — mirroring systemd's `apply_credentials()`.
+/// child; `sd_listen_fds()` verifies `LISTEN_PID` against `getpid()`),
+/// moves the process into `cgroup_path` (Delegate= placement; empty =
+/// untouched) while it is still root, and finally switches credentials
+/// (`initgroups`/`setgid`/`setuid`) when `creds` is set — mirroring
+/// systemd's `apply_credentials()`.
+///
+/// The placement must run before the credential switch: the source
+/// cgroup's `cgroup.procs` is root-owned, so a post-setuid self-move would
+/// be EACCES even though the target cgroup is already chowned to the unit's
+/// user.
 ///
 /// The returned hook is always Some: the forced environment must reach the
 /// child even when there are no listener fds.  This only works when the
@@ -679,6 +708,7 @@ fn build_pre_exec(
     child_envs: Vec<(CString, CString)>,
     listen_fds: &[RawFd],
     creds: Option<Creds>,
+    cgroup_path: String,
 ) -> Option<PreExecFn> {
     let fds = listen_fds.to_vec();
     Some(Box::new(move || {
@@ -731,6 +761,41 @@ fn build_pre_exec(
             })?;
             unsafe {
                 libc::setenv(c"LISTEN_FDS".as_ptr(), n_fds.as_ptr(), 1);
+            }
+        }
+        // Delegate= placement: move this process into the unit's prepared,
+        // delegated cgroup while still root — before the credential switch
+        // below (writing the source cgroup's root-owned cgroup.procs as the
+        // final uid would be EACCES).  An empty path means the unit does not
+        // delegate (or no cgroup backend answered): the process stays in its
+        // current cgroup, exactly as before delegation existed.
+        if !cgroup_path.is_empty() {
+            let procs = format!("{cgroup_path}/cgroup.procs");
+            let c_procs = CString::new(procs.as_str()).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    sysa::l10n::t_("NUL in cgroup path"),
+                )
+            })?;
+            let pid = unsafe { libc::getpid() }.to_string();
+            unsafe {
+                let fd = libc::open(c_procs.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+                if fd < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let rc = libc::write(fd, pid.as_ptr().cast(), pid.len());
+                let write_err = std::io::Error::last_os_error();
+                libc::close(fd);
+                if rc != pid.len() as isize {
+                    return Err(if rc < 0 {
+                        write_err
+                    } else {
+                        std::io::Error::new(
+                            std::io::ErrorKind::WriteZero,
+                            sysa::l10n::t_("short write to cgroup.procs"),
+                        )
+                    });
+                }
             }
         }
         if let Some(creds) = &creds {
@@ -1957,6 +2022,15 @@ mod tests {
         let vars: HashMap<&str, &str> = FORCED_SERVICE_ENV.iter().copied().collect();
         assert_eq!(vars.get("SYSTEMCTL_FORCE_BUS"), Some(&"1"));
         assert_eq!(vars.get("SYSTEMD_OFFLINE"), Some(&"0"));
+    }
+
+    #[test]
+    fn forced_env_applies_only_to_root_services() {
+        assert!(forced_bus_env_applies(""));
+        assert!(forced_bus_env_applies("root"));
+        assert!(forced_bus_env_applies("0"));
+        assert!(!forced_bus_env_applies("user"));
+        assert!(!forced_bus_env_applies("1000"));
     }
 
     #[test]

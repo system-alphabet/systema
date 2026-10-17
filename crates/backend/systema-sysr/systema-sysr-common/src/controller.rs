@@ -145,6 +145,26 @@ pub trait ResourceController: Send + Sync {
     /// `path` is expected to have been prepared with [`Self::ensure`].
     fn attach(&self, path: &str, pid: u32) -> Result<(), ResourceError>;
 
+    /// Idempotently apply `Delegate=` semantics to the (already ensured)
+    /// cgroup at `path`: resolve `owner_user`/`owner_group` to a uid/gid via
+    /// the platform's user database, chown the whole subtree — including the
+    /// pre-existing `cgroup.*` control files — to that owner, enable the
+    /// controllers delegated below it in its own `cgroup.subtree_control`,
+    /// mark the directory with the delegate xattrs, and create the optional
+    /// `cfg.delegate_subgroup` child directory (owned the same way).
+    ///
+    /// `owner_user`/`owner_group` are the verbatim `User=`/`Group=` values;
+    /// an empty value keeps that dimension's current owner (0/0 default).
+    /// Only called for units that carry `Delegate=` in their resource
+    /// configuration (`cfg.delegate`), so the backend may assume it.
+    fn delegate(
+        &self,
+        path: &str,
+        owner_user: &str,
+        owner_group: &str,
+        cfg: &ResourceConfig,
+    ) -> Result<(), ResourceError>;
+
     /// List the PIDs directly present in `path` (not its child cgroups).
     fn processes(&self, path: &str) -> Vec<u32>;
 
@@ -195,6 +215,16 @@ impl ResourceController for NoopController {
     }
 
     fn attach(&self, _path: &str, _pid: u32) -> Result<(), ResourceError> {
+        Ok(())
+    }
+
+    fn delegate(
+        &self,
+        _path: &str,
+        _owner_user: &str,
+        _owner_group: &str,
+        _cfg: &ResourceConfig,
+    ) -> Result<(), ResourceError> {
         Ok(())
     }
 

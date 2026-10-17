@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use prost::Message as ProstMessage;
-use sysa::proto::{Envelope, UnitDefineRequest, UnitDefineResult, UnitResourceEvent, UserSessionEvent};
+use sysa::proto::{Envelope, ResourcePrepareResult, UnitDefineRequest, UnitDefineResult, UnitResourceEvent, UserSessionEvent};
 use sysa::worker_ipc::{EventPublisher, WorkerIpc};
 use tracing::{debug, warn};
 
@@ -62,6 +62,7 @@ pub async fn run() -> Result<()> {
 
     let result = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
         .supports_unit_define()
+        .supports_resource_prepare()
         .run(
             move |event_pub| {
                 let worker =
@@ -99,6 +100,10 @@ pub async fn run() -> Result<()> {
                 }
                 if env.method == "unit.define" {
                     handle_unit_define_envelope(env, event_pub);
+                    return Ok(true);
+                }
+                if env.method == "resource.prepare" {
+                    handle_resource_prepare_envelope(env, &current_for_handler, event_pub);
                     return Ok(true);
                 }
                 Ok(false)
@@ -193,6 +198,60 @@ fn handle_user_sessions_envelope(
         }
         None => warn!("user.sessions for uid {} before worker initialised", event.uid),
     }
+}
+
+/// Handle a `resource.prepare` request: run the pre-start preparation
+/// (ensure the cgroup hierarchy, apply Delegate=) through the current
+/// worker and reply with the placement path, echoing the request_id.  A
+/// decode error or an uninitialised worker answers with a failure instead
+/// of staying silent, so System A's start job fails fast rather than
+/// waiting for its prepare timeout.
+fn handle_resource_prepare_envelope(
+    env: &Envelope,
+    current: &Arc<Mutex<Option<ResourceWorker>>>,
+    event_pub: &EventPublisher,
+) {
+    let event = match UnitResourceEvent::decode(env.payload.as_slice()) {
+        Ok(e) => e,
+        Err(e) => {
+            warn!("Cannot decode resource.prepare UnitResourceEvent from System A: {e}");
+            event_pub.send_reply(
+                env.request_id,
+                "resource.prepare_result",
+                ResourcePrepareResult {
+                    success: false,
+                    error: sysa::l10n::fmt(
+                        sysa::l10n::t_("decode failed: {e}"),
+                        &[("e", &e.to_string())],
+                    ),
+                    placement_path: String::new(),
+                },
+            );
+            return;
+        }
+    };
+
+    let worker = current.lock().unwrap();
+    let result = match worker.as_ref() {
+        Some(worker) => match worker.prepare(&event) {
+            Ok(placement_path) => ResourcePrepareResult {
+                success: true,
+                error: String::new(),
+                placement_path,
+            },
+            Err(error) => ResourcePrepareResult {
+                success: false,
+                error,
+                placement_path: String::new(),
+            },
+        },
+        None => ResourcePrepareResult {
+            success: false,
+            error: sysa::l10n::t_("resource worker not initialised").to_string(),
+            placement_path: String::new(),
+        },
+    };
+    event_pub.send_reply(env.request_id, "resource.prepare_result", result);
 }
 
 /// Handle a `unit.define` request: synthesize the definition (and parent

@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-12 14:59+0800\n"
+        "POT-Creation-Date: 2026-10-17 13:32+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -147,33 +147,6 @@ msgstr  "期望“admin.staging.result”，实际“{method}”"
 msgid   "Failed to decode AdminStagingResult"
 msgstr  "无法解码 AdminStagingResult"
 #
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
-#, rust-format
-msgid   "Cannot connect to {path}."
-msgstr  "无法连接到 {path}。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
-msgid   "System A closed connection before ack."
-msgstr  "System A 在 ack 之前关闭了连接。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
-#, rust-format
-msgid   "Registration rejected: {message}."
-msgstr  "注册被拒绝：{message}。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
-msgid   "Write to System A socket."
-msgstr  "写入 System A 套接字。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
-msgid   "failed to decode ack"
-msgstr  "无法解码 ACK"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
-#, rust-format
-msgid   "unknown method: {other}"
-msgstr  "未知的方法：{other}"
-#
 # File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
 msgid   "System A disconnected before unit-state EOF."
 msgstr  "System A 在 unit-state EOF 之前断开连接。"
@@ -201,6 +174,33 @@ msgstr  "无法打开日志文件 {path}（{e}）；回退到 stderr"
 #, rust-format
 msgid   "Invalid log level '{level}' ({e}); using info"
 msgstr  "无效的日志级别“{level}”（{e}）；使用 info"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
+#, rust-format
+msgid   "Cannot connect to {path}."
+msgstr  "无法连接到 {path}。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
+msgid   "System A closed connection before ack."
+msgstr  "System A 在 ack 之前关闭了连接。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
+#, rust-format
+msgid   "Registration rejected: {message}."
+msgstr  "注册被拒绝：{message}。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
+msgid   "Write to System A socket."
+msgstr  "写入 System A 套接字。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
+msgid   "failed to decode ack"
+msgstr  "无法解码 ACK"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
+#, rust-format
+msgid   "unknown method: {other}"
+msgstr  "未知的方法：{other}"
 #
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 130
 #, rust-format
@@ -493,6 +493,23 @@ msgstr  "没有名为“{name}”的暂存区"
 msgid   "unknown admin staging op '{other}'"
 msgstr  "未知的管理暂存操作“{other}”"
 #
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
+msgid   "Transaction order is cyclic"
+msgstr  "事务顺序存在循环"
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 155
+msgid   "Transaction contains conflicting jobs"
+msgstr  "事务包含冲突的作业"
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 158
+msgid   "Transaction is destructive"
+msgstr  "事务具有破坏性"
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 163
+#, rust-format
+msgid   "Unit {u} is not loaded"
+msgstr  "单元 {u} 未加载"
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 66
 msgid   "--job-mode=triggering is only valid for stop."
 msgstr  "--job-mode=triggering 仅对 stop 有效。"
@@ -537,6 +554,26 @@ msgstr  "工作进程“{worker_id}”拒绝了 unit.define（单元：{names}�
 msgid   "Failed to deserialize unit.define result from '{worker_id}': {e}"
 msgstr  "无法反序列化来自“{worker_id}”的 unit.define 结果：{e}"
 #
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 544
+#, rust-format
+msgid   "No resource worker '{worker}' connected; cannot prepare the unit cgroup."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 555
+#, rust-format
+msgid   "Resource worker '{worker}' disconnected while preparing the unit."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 572
+#, rust-format
+msgid   "Resource worker '{worker}' dropped the prepare reply."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 581
+#, rust-format
+msgid   "resource.prepare timed out for '{worker}' after {RESOURCE_PREPARE_TIMEOUT}"
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 539
 #, rust-format
 msgid   "Unit '{name}' is not a valid .power transition; cannot execute it."
@@ -572,6 +609,11 @@ msgstr  "单元 {unit_name} 的作业已存在（kind={kind}, id={existing_id}�
 msgid   "No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."
 msgstr  "单元类型“{unit_type}”没有注册的工作进程（单元：{unit_name}）。无法处理“{name}”的依赖链。"
 #
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1511
+#, rust-format
+msgid   "resource projection for {unit} unavailable"
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
 msgid   "Worker disconnected"
 msgstr  "工作进程已断开连接"
@@ -592,23 +634,6 @@ msgstr  "已超过 TimeoutStopSec"
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 2241
 msgid   "Reload timeout exceeded"
 msgstr  "重新加载超时"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
-msgid   "Transaction order is cyclic"
-msgstr  "事务顺序存在循环"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 155
-msgid   "Transaction contains conflicting jobs"
-msgstr  "事务包含冲突的作业"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 158
-msgid   "Transaction is destructive"
-msgstr  "事务具有破坏性"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 163
-#, rust-format
-msgid   "Unit {u} is not loaded"
-msgstr  "单元 {u} 未加载"
 #
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 258
 #, rust-format
@@ -644,20 +669,6 @@ msgstr  "在搜索路径中找不到 systema-sysf 二进制文件：{paths}"
 #, rust-format
 msgid   "failed: {msg}"
 msgstr  "失败：{msg}"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
-msgid   "Root Slice"
-msgstr  "根 Slice"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
-#, rust-format
-msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-msgstr  "无效的暂存区名称“{name}”：长度最多为 64 个字符，且只能包含字母、下划线、斜杠、反斜杠或连字符"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
-#, rust-format
-msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
-msgstr  "无法创建新单元“{id}”：缺少必需字段“unit_type”"
 #
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 49
 msgid   "System A — System Allocator"
@@ -762,6 +773,20 @@ msgstr  "打印版本信息并退出。"
 msgid   "Print full version: build options and compile-time paths."
 msgstr  "打印完整版本：构建选项与编译期路径。"
 #
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
+msgid   "Root Slice"
+msgstr  "根 Slice"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
+#, rust-format
+msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+msgstr  "无效的暂存区名称“{name}”：长度最多为 64 个字符，且只能包含字母、下划线、斜杠、反斜杠或连字符"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
+#, rust-format
+msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
+msgstr  "无法创建新单元“{id}”：缺少必需字段“unit_type”"
+#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 65
 msgid   "System F — System Finder Worker"
 msgstr  "System F — 系统查找器工作进程"
@@ -817,6 +842,15 @@ msgstr  "无法绑定重新加载套接字 {path}。"
 #, rust-format
 msgid   "Scanning {dir} ..."
 msgstr  "正在扫描 {dir} ..."
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
+msgid   "System F — systemd finder"
+msgstr  "System F — systemd 查找器"
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
+#, rust-format
+msgid   "Staging failed: {message}."
+msgstr  "暂存失败：{message}。"
 #
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 40
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/parser.rs, line: 55
@@ -914,15 +948,6 @@ msgstr  "正在解析 {name} 的 [Scope] 段 ..."
 #, rust-format
 msgid   "Parsing [Device] section of {name} ..."
 msgstr  "正在解析 {name} 的 [Device] 段 ..."
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
-msgid   "System F — systemd finder"
-msgstr  "System F — systemd 查找器"
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
-#, rust-format
-msgid   "Staging failed: {message}."
-msgstr  "暂存失败：{message}。"
 #
 # File: ../crates/backend/systema-sysk/src/controller.rs, line: 83
 msgid   "no SocketConfig in UnitConfig"
@@ -1317,97 +1342,6 @@ msgstr  "服务进程（PID {pid}）在获取 D-Bus 名称“{bus_name}”之前
 msgid   "TimeoutStartSec exceeded waiting for D-Bus name '{bus_name}'."
 msgstr  "等待 D-Bus 名称“{bus_name}”时超过 TimeoutStartSec。"
 #
-# File: ../crates/backend/systema-syss/src/process.rs, line: 120
-#, rust-format
-msgid   "No [Service] config for {unit_name}."
-msgstr  "没有 {unit_name} 的 [Service] 配置。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 127
-#, rust-format
-msgid   "ExecStart is empty for {unit_name}."
-msgstr  "{unit_name} 的 ExecStart 为空。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 154
-msgid   "Credential lookup task failed"
-msgstr  "凭据查找任务失败"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 157
-#, rust-format
-msgid   "Failed to resolve credentials for {unit_name}."
-msgstr  "无法解析 {unit_name} 的凭据。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 374
-#, rust-format
-msgid   "Failed to spawn {program}."
-msgstr  "无法启动 {program}。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 381
-#, rust-format
-msgid   "Failed to get PID for {unit_name}."
-msgstr  "无法获取 {unit_name} 的 PID。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 443
-msgid   "Starting services is not supported on this platform."
-msgstr  "此平台不支持启动服务。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 577
-#, rust-format
-msgid   "lookup of group '{g}' failed"
-msgstr  "查找组“{g}”失败"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 583
-#, rust-format
-msgid   "group '{g}' not found"
-msgstr  "未找到组“{g}”"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 595
-#, rust-format
-msgid   "lookup of user '{u}' failed"
-msgstr  "查找用户“{u}”失败"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 605
-#, rust-format
-msgid   "lookup of uid '{n}' failed"
-msgstr  "查找 UID“{n}”失败"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 615
-#, rust-format
-msgid   "user '{u}' not found"
-msgstr  "未找到用户“{u}”"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 698
-msgid   "NUL in LISTEN_PID"
-msgstr  "LISTEN_PID 中存在 NUL"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 705
-msgid   "NUL in pid string"
-msgstr  "pid 字符串中存在 NUL"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 714
-msgid   "NUL in LISTEN_FDS"
-msgstr  "LISTEN_FDS 中存在 NUL"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 731
-msgid   "NUL in username"
-msgstr  "用户名中存在 NUL"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 781
-#, rust-format
-msgid   "Failed to duplicate TTY fd: {e}."
-msgstr  "无法复制 TTY fd：{e}。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 935
-msgid   "Empty ExecStart command."
-msgstr  "ExecStart 命令为空。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 944
-msgid   "Empty ExecStart command after prefix stripping."
-msgstr  "去除前缀后 ExecStart 命令为空。"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 958
-msgid   "@ prefix requires at least two tokens (argv0 program)."
-msgstr  "@ 前缀至少需要两个标记（argv0 和程序）。"
-#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 161
 #, rust-format
 msgid   "cannot load libpam: {e}"
@@ -1514,6 +1448,105 @@ msgstr  "要使用的 D-Bus 地址（默认：系统总线）。"
 #, rust-format
 msgid   "invalid --bus-address: {err}"
 msgstr  "无效的 --bus-address：{err}"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 120
+#, rust-format
+msgid   "No [Service] config for {unit_name}."
+msgstr  "没有 {unit_name} 的 [Service] 配置。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 127
+#, rust-format
+msgid   "ExecStart is empty for {unit_name}."
+msgstr  "{unit_name} 的 ExecStart 为空。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 154
+msgid   "Credential lookup task failed"
+msgstr  "凭据查找任务失败"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 157
+#, rust-format
+msgid   "Failed to resolve credentials for {unit_name}."
+msgstr  "无法解析 {unit_name} 的凭据。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 374
+#, rust-format
+msgid   "Failed to spawn {program}."
+msgstr  "无法启动 {program}。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 381
+#, rust-format
+msgid   "Failed to get PID for {unit_name}."
+msgstr  "无法获取 {unit_name} 的 PID。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 443
+msgid   "Starting services is not supported on this platform."
+msgstr  "此平台不支持启动服务。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 577
+#, rust-format
+msgid   "lookup of group '{g}' failed"
+msgstr  "查找组“{g}”失败"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 583
+#, rust-format
+msgid   "group '{g}' not found"
+msgstr  "未找到组“{g}”"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 595
+#, rust-format
+msgid   "lookup of user '{u}' failed"
+msgstr  "查找用户“{u}”失败"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 605
+#, rust-format
+msgid   "lookup of uid '{n}' failed"
+msgstr  "查找 UID“{n}”失败"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 615
+#, rust-format
+msgid   "user '{u}' not found"
+msgstr  "未找到用户“{u}”"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 698
+msgid   "NUL in LISTEN_PID"
+msgstr  "LISTEN_PID 中存在 NUL"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 705
+msgid   "NUL in pid string"
+msgstr  "pid 字符串中存在 NUL"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 714
+msgid   "NUL in LISTEN_FDS"
+msgstr  "LISTEN_FDS 中存在 NUL"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 758
+msgid   "NUL in cgroup path"
+msgstr  ""
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 776
+msgid   "short write to cgroup.procs"
+msgstr  ""
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 731
+msgid   "NUL in username"
+msgstr  "用户名中存在 NUL"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 781
+#, rust-format
+msgid   "Failed to duplicate TTY fd: {e}."
+msgstr  "无法复制 TTY fd：{e}。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 935
+msgid   "Empty ExecStart command."
+msgstr  "ExecStart 命令为空。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 944
+msgid   "Empty ExecStart command after prefix stripping."
+msgstr  "去除前缀后 ExecStart 命令为空。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 958
+msgid   "@ prefix requires at least two tokens (argv0 program)."
+msgstr  "@ 前缀至少需要两个标记（argv0 和程序）。"
 #
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
@@ -1639,21 +1672,40 @@ msgstr  "cgroup {path} 不为空"
 msgid   "cannot apply resource-control value to {path}: {message}"
 msgstr  "无法将资源控制值应用到 {path}：{message}"
 #
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 392
+#, rust-format
+msgid   "lookup of user '{user}' failed: {e}"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 404
+#, rust-format
+msgid   "user '{user}' not found"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 415
+#, rust-format
+msgid   "lookup of group '{group}' failed: {e}"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 428
+#, rust-format
+msgid   "group '{group}' not found"
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 435
 # File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 465
 # File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 512
 msgid   "path is outside the cgroup v2 hierarchy"
 msgstr  "路径位于 cgroup v2 层级之外"
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
-#, rust-format
-msgid   "cannot synthesize definitions for non-slice units: {invalid}"
-msgstr  "无法为非 slice 单元合成定义：{invalid}"
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 645
+msgid   "cannot delegate the cgroup root"
+msgstr  ""
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 694
 #, rust-format
-msgid   "cannot serialise synthesized definitions: {e}"
-msgstr  "无法序列化合成定义：{e}"
+msgid   "DelegateSubgroup '{subgroup}' must be a single directory name"
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysr/systema-sysr/src/register.rs, line: 47
 #. / Description of the static user container (systemd: "User and Session
@@ -1692,6 +1744,20 @@ msgstr  "System A 拒绝了提交：{message}"
 msgid   "System R — System Resource Worker"
 msgstr  "System R — 系统资源工作进程"
 #
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
+msgid   "resource worker not initialised"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
+#, rust-format
+msgid   "cannot synthesize definitions for non-slice units: {invalid}"
+msgstr  "无法为非 slice 单元合成定义：{invalid}"
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
+#, rust-format
+msgid   "cannot serialise synthesized definitions: {e}"
+msgstr  "无法序列化合成定义：{e}"
+#
 # File: ../crates/backend/systema-syse/src/cgroup.rs, line: 32
 #, rust-format
 msgid   "cannot read {cgroup_path} cgroup.procs"
@@ -1701,6 +1767,10 @@ msgstr  "无法读取 {cgroup_path} cgroup.procs"
 #, rust-format
 msgid   "cannot write {cgroup_path} cgroup.kill"
 msgstr  "无法写入 {cgroup_path} cgroup.kill"
+#
+# File: ../crates/backend/systema-syse/src/main.rs, line: 43
+msgid   "System E — System External Process Worker"
+msgstr  "System E — 系统外部进程工作进程"
 #
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 183
 #, rust-format
@@ -1720,10 +1790,6 @@ msgstr  "Scope {unit_name} 没有 cgroup。"
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 267
 msgid   "Scopes cannot be reloaded."
 msgstr  "Scope 无法重新加载。"
-#
-# File: ../crates/backend/systema-syse/src/main.rs, line: 43
-msgid   "System E — System External Process Worker"
-msgstr  "System E — 系统外部进程工作进程"
 #
 # File: ../crates/backend/systema-sysi/src/mount_setup.rs, line: 184
 #, rust-format
@@ -2335,9 +2401,11 @@ msgid   "failed to spawn pager '{pager}': {error}"
 msgstr  "无法启动分页器“{pager}”：{error}"
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
 #
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 340
@@ -2347,10 +2415,12 @@ msgstr  "无法启动分页器“{pager}”：{error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
 #
 #
 #
@@ -2363,10 +2433,12 @@ msgstr  "无法启动分页器“{pager}”：{error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
 #
 #
 #

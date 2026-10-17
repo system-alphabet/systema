@@ -65,6 +65,15 @@ impl CgroupV2Controller {
     /// is enabled in the parent's subtree_control, so this is called on every
     /// ancestor before the child directories are created.
     fn enable_controllers(&self, dir: &Path) {
+        self.enable_controllers_list(dir, &CONTROLLERS);
+    }
+
+    /// Enable each of `names` in `dir`'s `cgroup.subtree_control`.
+    ///
+    /// Same best-effort policy as [`Self::enable_controllers`]: a controller
+    /// that cannot be enabled (not compiled in, already bound elsewhere) is
+    /// logged and skipped.
+    fn enable_controllers_list(&self, dir: &Path, names: &[&str]) {
         let current = match read_file(&dir.join("cgroup.subtree_control")) {
             Ok(s) => s,
             Err(e) => {
@@ -81,7 +90,7 @@ impl CgroupV2Controller {
             .filter_map(|t| t.strip_prefix('+'))
             .collect();
 
-        let to_enable: Vec<String> = CONTROLLERS
+        let to_enable: Vec<String> = names
             .iter()
             .filter(|c| !enabled.contains(**c))
             .map(|c| format!("+{c}"))
@@ -361,6 +370,146 @@ fn write_file(path: &Path, value: &str) -> std::io::Result<()> {
     fs::write(path, value)
 }
 
+/// Resolve verbatim `User=`/`Group=` values into a `(uid, gid)` pair.
+///
+/// Mirrors System S's credential resolution so both sides agree on the
+/// owner: names resolve through nss, a numeric value falls back to the
+/// uid/gid directly (`User=1000` works without an /etc/passwd name match,
+/// like systemd's `get_user_creds()`), a user without an explicit group
+/// takes the user's primary group, and an empty pair resolves to the
+/// cgroup's current (root) owner.  A name that matches nothing is an error
+/// — failing the start job visibly beats spawning a unit into a cgroup
+/// whose owner could not be established.
+fn resolve_owner(user: &str, group: &str) -> Result<(u32, u32), String> {
+    use nix::unistd::{Gid, Group, Uid, User};
+
+    let mut uid: u32 = 0;
+    let mut gid: u32 = 0;
+
+    if !user.is_empty() {
+        let found = User::from_name(user).map_err(|e| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("lookup of user '{user}' failed: {e}"),
+                &[("user", &user.to_string()), ("e", &e.to_string())],
+            )
+        })?;
+        let usr = found
+            .or_else(|| {
+                user.parse::<u32>()
+                    .ok()
+                    .and_then(|n| User::from_uid(Uid::from_raw(n)).ok().flatten())
+            })
+            .ok_or_else(|| {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("user '{user}' not found"),
+                    &[("user", &user.to_string())],
+                )
+            })?;
+        uid = usr.uid.as_raw();
+        gid = usr.gid.as_raw();
+    }
+
+    if !group.is_empty() {
+        let found = Group::from_name(group).map_err(|e| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("lookup of group '{group}' failed: {e}"),
+                &[("group", &group.to_string()), ("e", &e.to_string())],
+            )
+        })?;
+        let grp = found
+            .or_else(|| {
+                group
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(|n| Group::from_gid(Gid::from_raw(n)).ok().flatten())
+            })
+            .ok_or_else(|| {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("group '{group}' not found"),
+                    &[("group", &group.to_string())],
+                )
+            })?;
+        gid = grp.gid.as_raw();
+    }
+
+    Ok((uid, gid))
+}
+
+/// Chown `path` to `uid:gid` through raw `chown(2)` (std has no portable
+/// owner setter; the path comes from the cgroup hierarchy and never holds
+/// interior NULs).
+fn chown_one(path: &Path, uid: u32, gid: u32) -> Result<(), ResourceError> {
+    let cpath = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| {
+        ResourceError::Io {
+            path: path.display().to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "NUL in cgroup path"),
+        }
+    })?;
+    if unsafe { libc::chown(cpath.as_ptr(), uid, gid) } != 0 {
+        return Err(ResourceError::Io {
+            path: path.display().to_string(),
+            source: std::io::Error::last_os_error(),
+        });
+    }
+    Ok(())
+}
+
+/// Recursively chown the cgroup directory `path` to `uid:gid`.
+///
+/// Everything inside must be chowned too: the `cgroup.procs`,
+/// `cgroup.subtree_control` & co control files are created root-owned by
+/// the kernel, and chowning only the directory would leave them
+/// inaccessible to the delegate.
+fn chown_recursive(path: &Path, uid: u32, gid: u32) -> Result<(), ResourceError> {
+    chown_one(path, uid, gid)?;
+    let entries = fs::read_dir(path).map_err(|source| ResourceError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| ResourceError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        let child = entry.path();
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            chown_recursive(&child, uid, gid)?;
+        } else {
+            chown_one(&child, uid, gid)?;
+        }
+    }
+    Ok(())
+}
+
+/// Mark `dir` as a delegated cgroup with both delegate xattr spellings
+/// (`user.delegate`, `trusted.delegate`) — the markers systemd and the
+/// OCI tooling look for.  Best-effort: a kernel without cgroup xattr
+/// support only loses the marker, never the ownership above.
+fn set_delegate_xattrs(dir: &Path) {
+    let Ok(cpath) = std::ffi::CString::new(dir.as_os_str().as_encoded_bytes()) else {
+        return;
+    };
+    for attr in [c"user.delegate", c"trusted.delegate"] {
+        let rc = unsafe {
+            libc::setxattr(
+                cpath.as_ptr(),
+                attr.as_ptr(),
+                b"1".as_ptr().cast(),
+                b"1".len(),
+                0,
+            )
+        };
+        if rc != 0 {
+            warn!(
+                "Cannot set {} on {}: {}",
+                attr.to_string_lossy(),
+                dir.display(),
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+}
+
 /// Every cgroup directory at and below `root`, as paths relative to it, with
 /// the root itself as `""`.  Parents come before their children.
 fn walk_cgroups(root: &Path) -> Vec<String> {
@@ -475,6 +624,99 @@ impl ResourceController for CgroupV2Controller {
                 source,
             }
         })?;
+        Ok(())
+    }
+
+    fn delegate(
+        &self,
+        path: &str,
+        owner_user: &str,
+        owner_group: &str,
+        cfg: &ResourceConfig,
+    ) -> Result<(), ResourceError> {
+        let rel = self.rel(path).ok_or_else(|| ResourceError::Invalid {
+            path: path.to_string(),
+            message: sysa::l10n::t_("path is outside the cgroup v2 hierarchy").to_string(),
+        })?;
+        if rel.as_os_str().is_empty() {
+            // The hierarchy root must never change hands.
+            return Err(ResourceError::Invalid {
+                path: path.to_string(),
+                message: sysa::l10n::t_("cannot delegate the cgroup root").to_string(),
+            });
+        }
+        let full = self.full(&rel);
+
+        // 1. Resolve the owner.  The User=/Group= strings arrive verbatim
+        //    from System A; nss runs here, at the point of use.
+        let (uid, gid) = resolve_owner(owner_user, owner_group).map_err(|message| {
+            ResourceError::Invalid {
+                path: path.to_string(),
+                message,
+            }
+        })?;
+
+        // 2. Chown the whole subtree, including the cgroup.* control files
+        //    that already exist: chowning the directory alone would leave
+        //    them root-owned and the delegate could not read them.
+        chown_recursive(&full, uid, gid)?;
+
+        // 3. DelegateSubgroup=: a single child directory created and owned
+        //    like the delegated root (user@.service: init.scope).  With a
+        //    subgroup the main process runs in the child, so the unit root
+        //    only distributes resources.
+        let subgroup = cfg.delegate_subgroup.trim();
+        let mut subgroup_created = false;
+        if !subgroup.is_empty() {
+            if subgroup == "." || subgroup == ".." || subgroup.contains('/') {
+                return Err(ResourceError::Invalid {
+                    path: path.to_string(),
+                    message: sysa::l10n::fmt(
+                        sysa::l10n::t_(
+                            "DelegateSubgroup '{subgroup}' must be a single directory name"
+                        ),
+                        &[("subgroup", &subgroup.to_string())],
+                    ),
+                });
+            }
+            let child = full.join(subgroup);
+            if !child.exists() {
+                fs::create_dir(&child).map_err(|source| ResourceError::Io {
+                    path: child.display().to_string(),
+                    source,
+                })?;
+            }
+            chown_recursive(&child, uid, gid)?;
+            subgroup_created = true;
+        }
+
+        // 4. Enable the delegated controllers in the unit root's own
+        //    subtree_control so the delegate can create child cgroups that
+        //    use them — but only when a subgroup took the main process.
+        //    The kernel's no-internal-process rule rejects enabling domain
+        //    controllers on a cgroup that still hosts processes (EBUSY);
+        //    without a subgroup the service starts in the unit root, and
+        //    the delegate enables controllers itself once it moves its own
+        //    processes into children.
+        if subgroup_created {
+            if cfg.delegate_controllers.is_empty() {
+                self.enable_controllers(&full);
+            } else {
+                let names: Vec<&str> = cfg
+                    .delegate_controllers
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                self.enable_controllers_list(&full, &names);
+            }
+        }
+
+        // 5. Mark the directory as delegated (best-effort: the xattr is a
+        //    marker for tooling; the ownership above is what enforces
+        //    delegation).
+        set_delegate_xattrs(&full);
+
+        debug!("Delegated {path} to uid {uid} gid {gid}");
         Ok(())
     }
 
@@ -1008,5 +1250,21 @@ mod tests {
     fn noop_controller_has_nothing_to_restore() {
         assert!(NoopController.snapshot().is_none());
         assert!(NoopController.restore(&CgroupBaseline::default()).is_ok());
+    }
+
+    #[test]
+    fn resolve_owner_defaults_names_and_numeric() {
+        // Neither User= nor Group=: the cgroup keeps its root owner.
+        assert_eq!(resolve_owner("", "").unwrap(), (0, 0));
+        // Names resolve through nss; a user without Group= takes its
+        // primary group.
+        assert_eq!(resolve_owner("root", "").unwrap(), (0, 0));
+        assert_eq!(resolve_owner("", "root").unwrap(), (0, 0));
+        // Numeric values resolve like systemd's get_user_creds fallback.
+        assert_eq!(resolve_owner("0", "").unwrap(), (0, 0));
+        // Nothing matches: an error, so the start job fails visibly instead
+        // of spawning the unit into a cgroup with an unresolvable owner.
+        assert!(resolve_owner("no-such-user-systema-test", "").is_err());
+        assert!(resolve_owner("", "no-such-group-systema-test").is_err());
     }
 }

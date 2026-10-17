@@ -1701,6 +1701,7 @@ mod tests {
                 worker_id: "system-s-1".to_string(),
                 unit_types: vec!["service".to_string()],
                 supports_unit_define: false,
+                supports_resource_prepare: false,
                 ready: false,
                 envelope_tx: tx,
             },

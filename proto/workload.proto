@@ -24,6 +24,11 @@ message WorkerRegistration {
     // (System R: slice parent chains).  Workers without this flag are never
     // asked for definitions.
     bool supports_unit_define = 3;
+    // True when this worker implements the `resource.prepare` protocol: it
+    // answers pre-start requests that ensure a unit's cgroup hierarchy,
+    // apply Delegate= ownership and return the placement path (System R).
+    // System A only gates Delegate= start jobs on workers with this flag.
+    bool supports_resource_prepare = 4;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -251,6 +256,27 @@ message UnitResourceEvent {
     // Scopes wrap externally-created processes, so this may carry several
     // PIDs at once (from the transient `PIDs=` property).
     repeated uint32 pids = 6;
+    // Owner of a Delegate= unit's cgroup, verbatim from User=/Group=.
+    // Carried so System R — the single point that resolves owner
+    // credentials — can nss-resolve them when applying Delegate= (empty for
+    // units without User=/Group=; the cgroup keeps its default owner).
+    string owner_user = 7;
+    string owner_group = 8;
+}
+
+// Reply to a `resource.prepare` request (System R → System A), echoed on the
+// same request_id.  Sent before the start job is dispatched so the unit's
+// cgroup hierarchy exists, is owned per Delegate= and carries the delegate
+// markers by the time the spawned process starts running.
+message ResourcePrepareResult {
+    bool success = 1;
+    // Human-readable error message (empty on success).
+    string error = 2;
+    // Absolute cgroup path the spawned process must be placed into before
+    // exec.  Empty when no placement is needed (unit does not delegate, or
+    // no cgroup backend is available — placement is then skipped and the
+    // unit starts exactly as it did before delegation existed).
+    string placement_path = 3;
 }
 
 // Periodic cgroup runtime metrics pushed by System R to System A.

@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-12 14:59+0800\n"
+        "POT-Creation-Date: 2026-10-17 13:32+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -147,33 +147,6 @@ msgstr  "Expected 'admin.staging.result', got '{method}'"
 msgid   "Failed to decode AdminStagingResult"
 msgstr  "Failed to decode AdminStagingResult"
 #
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
-#, rust-format
-msgid   "Cannot connect to {path}."
-msgstr  "Cannot connect to {path}."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
-msgid   "System A closed connection before ack."
-msgstr  "System A closed connection before ack."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
-#, rust-format
-msgid   "Registration rejected: {message}."
-msgstr  "Registration rejected: {message}."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
-msgid   "Write to System A socket."
-msgstr  "Write to System A socket."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
-msgid   "failed to decode ack"
-msgstr  "failed to decode ack"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
-#, rust-format
-msgid   "unknown method: {other}"
-msgstr  "unknown method: {other}"
-#
 # File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
 msgid   "System A disconnected before unit-state EOF."
 msgstr  "System A disconnected before unit-state EOF."
@@ -201,6 +174,33 @@ msgstr  "Cannot open log file {path} ({e}); falling back to stderr"
 #, rust-format
 msgid   "Invalid log level '{level}' ({e}); using info"
 msgstr  "Invalid log level '{level}' ({e}); using info"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
+#, rust-format
+msgid   "Cannot connect to {path}."
+msgstr  "Cannot connect to {path}."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
+msgid   "System A closed connection before ack."
+msgstr  "System A closed connection before ack."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
+#, rust-format
+msgid   "Registration rejected: {message}."
+msgstr  "Registration rejected: {message}."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
+msgid   "Write to System A socket."
+msgstr  "Write to System A socket."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
+msgid   "failed to decode ack"
+msgstr  "failed to decode ack"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
+#, rust-format
+msgid   "unknown method: {other}"
+msgstr  "unknown method: {other}"
 #
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 130
 #, rust-format
@@ -493,6 +493,23 @@ msgstr  "no staging area with name '{name}'"
 msgid   "unknown admin staging op '{other}'"
 msgstr  "unknown admin staging op '{other}'"
 #
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
+msgid   "Transaction order is cyclic"
+msgstr  "Transaction order is cyclic"
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 155
+msgid   "Transaction contains conflicting jobs"
+msgstr  "Transaction contains conflicting jobs"
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 158
+msgid   "Transaction is destructive"
+msgstr  "Transaction is destructive"
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 163
+#, rust-format
+msgid   "Unit {u} is not loaded"
+msgstr  "Unit {u} is not loaded"
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 66
 msgid   "--job-mode=triggering is only valid for stop."
 msgstr  "--job-mode=triggering is only valid for stop."
@@ -537,6 +554,26 @@ msgstr  "Worker '{worker_id}' refused unit.define (units: {names}): {error}"
 msgid   "Failed to deserialize unit.define result from '{worker_id}': {e}"
 msgstr  "Failed to deserialize unit.define result from '{worker_id}': {e}"
 #
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 544
+#, rust-format
+msgid   "No resource worker '{worker}' connected; cannot prepare the unit cgroup."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 555
+#, rust-format
+msgid   "Resource worker '{worker}' disconnected while preparing the unit."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 572
+#, rust-format
+msgid   "Resource worker '{worker}' dropped the prepare reply."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 581
+#, rust-format
+msgid   "resource.prepare timed out for '{worker}' after {RESOURCE_PREPARE_TIMEOUT}"
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 539
 #, rust-format
 msgid   "Unit '{name}' is not a valid .power transition; cannot execute it."
@@ -572,6 +609,11 @@ msgstr  "Job already exists for unit {unit_name} (kind={kind}, id={existing_id})
 msgid   "No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."
 msgstr  "No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."
 #
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1511
+#, rust-format
+msgid   "resource projection for {unit} unavailable"
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
 msgid   "Worker disconnected"
 msgstr  "Worker disconnected"
@@ -592,23 +634,6 @@ msgstr  "TimeoutStopSec exceeded"
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 2241
 msgid   "Reload timeout exceeded"
 msgstr  "Reload timeout exceeded"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
-msgid   "Transaction order is cyclic"
-msgstr  "Transaction order is cyclic"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 155
-msgid   "Transaction contains conflicting jobs"
-msgstr  "Transaction contains conflicting jobs"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 158
-msgid   "Transaction is destructive"
-msgstr  "Transaction is destructive"
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 163
-#, rust-format
-msgid   "Unit {u} is not loaded"
-msgstr  "Unit {u} is not loaded"
 #
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 258
 #, rust-format
@@ -644,20 +669,6 @@ msgstr  "systema-sysf binary not found in search paths: {paths}"
 #, rust-format
 msgid   "failed: {msg}"
 msgstr  "failed: {msg}"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
-msgid   "Root Slice"
-msgstr  "Root Slice"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
-#, rust-format
-msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-msgstr  "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
-#, rust-format
-msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
-msgstr  "cannot create new unit \"{id}\": missing required field \"unit_type\""
 #
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 49
 msgid   "System A — System Allocator"
@@ -762,6 +773,20 @@ msgstr  "Print version information and exit."
 msgid   "Print full version: build options and compile-time paths."
 msgstr  "Print full version: build options and compile-time paths."
 #
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
+msgid   "Root Slice"
+msgstr  "Root Slice"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
+#, rust-format
+msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+msgstr  "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
+#, rust-format
+msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
+msgstr  "cannot create new unit \"{id}\": missing required field \"unit_type\""
+#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 65
 msgid   "System F — System Finder Worker"
 msgstr  "System F — System Finder Worker"
@@ -817,6 +842,15 @@ msgstr  "Failed to bind reload socket {path}."
 #, rust-format
 msgid   "Scanning {dir} ..."
 msgstr  "Scanning {dir} ..."
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
+msgid   "System F — systemd finder"
+msgstr  "System F — systemd finder"
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
+#, rust-format
+msgid   "Staging failed: {message}."
+msgstr  "Staging failed: {message}."
 #
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 40
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/parser.rs, line: 55
@@ -915,15 +949,6 @@ msgstr  "Parsing [Scope] section of {name} ..."
 #, rust-format
 msgid   "Parsing [Device] section of {name} ..."
 msgstr  "Parsing [Device] section of {name} ..."
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
-msgid   "System F — systemd finder"
-msgstr  "System F — systemd finder"
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
-#, rust-format
-msgid   "Staging failed: {message}."
-msgstr  "Staging failed: {message}."
 #
 # File: ../crates/backend/systema-sysk/src/controller.rs, line: 83
 msgid   "no SocketConfig in UnitConfig"
@@ -1318,97 +1343,6 @@ msgstr  "Service process (PID {pid}) exited before acquiring D-Bus name '{bus_na
 msgid   "TimeoutStartSec exceeded waiting for D-Bus name '{bus_name}'."
 msgstr  "TimeoutStartSec exceeded waiting for D-Bus name '{bus_name}'."
 #
-# File: ../crates/backend/systema-syss/src/process.rs, line: 120
-#, rust-format
-msgid   "No [Service] config for {unit_name}."
-msgstr  "No [Service] config for {unit_name}."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 127
-#, rust-format
-msgid   "ExecStart is empty for {unit_name}."
-msgstr  "ExecStart is empty for {unit_name}."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 154
-msgid   "Credential lookup task failed"
-msgstr  "Credential lookup task failed"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 157
-#, rust-format
-msgid   "Failed to resolve credentials for {unit_name}."
-msgstr  "Failed to resolve credentials for {unit_name}."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 374
-#, rust-format
-msgid   "Failed to spawn {program}."
-msgstr  "Failed to spawn {program}."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 381
-#, rust-format
-msgid   "Failed to get PID for {unit_name}."
-msgstr  "Failed to get PID for {unit_name}."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 443
-msgid   "Starting services is not supported on this platform."
-msgstr  "Starting services is not supported on this platform."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 577
-#, rust-format
-msgid   "lookup of group '{g}' failed"
-msgstr  "lookup of group '{g}' failed"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 583
-#, rust-format
-msgid   "group '{g}' not found"
-msgstr  "group '{g}' not found"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 595
-#, rust-format
-msgid   "lookup of user '{u}' failed"
-msgstr  "lookup of user '{u}' failed"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 605
-#, rust-format
-msgid   "lookup of uid '{n}' failed"
-msgstr  "lookup of uid '{n}' failed"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 615
-#, rust-format
-msgid   "user '{u}' not found"
-msgstr  "user '{u}' not found"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 698
-msgid   "NUL in LISTEN_PID"
-msgstr  "NUL in LISTEN_PID"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 705
-msgid   "NUL in pid string"
-msgstr  "NUL in pid string"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 714
-msgid   "NUL in LISTEN_FDS"
-msgstr  "NUL in LISTEN_FDS"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 731
-msgid   "NUL in username"
-msgstr  "NUL in username"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 781
-#, rust-format
-msgid   "Failed to duplicate TTY fd: {e}."
-msgstr  "Failed to duplicate TTY fd: {e}."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 935
-msgid   "Empty ExecStart command."
-msgstr  "Empty ExecStart command."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 944
-msgid   "Empty ExecStart command after prefix stripping."
-msgstr  "Empty ExecStart command after prefix stripping."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 958
-msgid   "@ prefix requires at least two tokens (argv0 program)."
-msgstr  "@ prefix requires at least two tokens (argv0 program)."
-#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 161
 #, rust-format
 msgid   "cannot load libpam: {e}"
@@ -1515,6 +1449,105 @@ msgstr  "D-Bus address to use (default: the system bus)."
 #, rust-format
 msgid   "invalid --bus-address: {err}"
 msgstr  "invalid --bus-address: {err}"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 120
+#, rust-format
+msgid   "No [Service] config for {unit_name}."
+msgstr  "No [Service] config for {unit_name}."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 127
+#, rust-format
+msgid   "ExecStart is empty for {unit_name}."
+msgstr  "ExecStart is empty for {unit_name}."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 154
+msgid   "Credential lookup task failed"
+msgstr  "Credential lookup task failed"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 157
+#, rust-format
+msgid   "Failed to resolve credentials for {unit_name}."
+msgstr  "Failed to resolve credentials for {unit_name}."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 374
+#, rust-format
+msgid   "Failed to spawn {program}."
+msgstr  "Failed to spawn {program}."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 381
+#, rust-format
+msgid   "Failed to get PID for {unit_name}."
+msgstr  "Failed to get PID for {unit_name}."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 443
+msgid   "Starting services is not supported on this platform."
+msgstr  "Starting services is not supported on this platform."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 577
+#, rust-format
+msgid   "lookup of group '{g}' failed"
+msgstr  "lookup of group '{g}' failed"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 583
+#, rust-format
+msgid   "group '{g}' not found"
+msgstr  "group '{g}' not found"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 595
+#, rust-format
+msgid   "lookup of user '{u}' failed"
+msgstr  "lookup of user '{u}' failed"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 605
+#, rust-format
+msgid   "lookup of uid '{n}' failed"
+msgstr  "lookup of uid '{n}' failed"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 615
+#, rust-format
+msgid   "user '{u}' not found"
+msgstr  "user '{u}' not found"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 698
+msgid   "NUL in LISTEN_PID"
+msgstr  "NUL in LISTEN_PID"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 705
+msgid   "NUL in pid string"
+msgstr  "NUL in pid string"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 714
+msgid   "NUL in LISTEN_FDS"
+msgstr  "NUL in LISTEN_FDS"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 758
+msgid   "NUL in cgroup path"
+msgstr  ""
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 776
+msgid   "short write to cgroup.procs"
+msgstr  ""
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 731
+msgid   "NUL in username"
+msgstr  "NUL in username"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 781
+#, rust-format
+msgid   "Failed to duplicate TTY fd: {e}."
+msgstr  "Failed to duplicate TTY fd: {e}."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 935
+msgid   "Empty ExecStart command."
+msgstr  "Empty ExecStart command."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 944
+msgid   "Empty ExecStart command after prefix stripping."
+msgstr  "Empty ExecStart command after prefix stripping."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 958
+msgid   "@ prefix requires at least two tokens (argv0 program)."
+msgstr  "@ prefix requires at least two tokens (argv0 program)."
 #
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
@@ -1640,21 +1673,40 @@ msgstr  "cgroup {path} is not empty"
 msgid   "cannot apply resource-control value to {path}: {message}"
 msgstr  "cannot apply resource-control value to {path}: {message}"
 #
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 392
+#, rust-format
+msgid   "lookup of user '{user}' failed: {e}"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 404
+#, rust-format
+msgid   "user '{user}' not found"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 415
+#, rust-format
+msgid   "lookup of group '{group}' failed: {e}"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 428
+#, rust-format
+msgid   "group '{group}' not found"
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 435
 # File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 465
 # File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 512
 msgid   "path is outside the cgroup v2 hierarchy"
 msgstr  "path is outside the cgroup v2 hierarchy"
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
-#, rust-format
-msgid   "cannot synthesize definitions for non-slice units: {invalid}"
-msgstr  "cannot synthesize definitions for non-slice units: {invalid}"
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 645
+msgid   "cannot delegate the cgroup root"
+msgstr  ""
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
+# File: ../crates/backend/systema-sysr/systema-sysr.linux/src/cgroup_v2.rs, line: 694
 #, rust-format
-msgid   "cannot serialise synthesized definitions: {e}"
-msgstr  "cannot serialise synthesized definitions: {e}"
+msgid   "DelegateSubgroup '{subgroup}' must be a single directory name"
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysr/systema-sysr/src/register.rs, line: 47
 #. / Description of the static user container (systemd: "User and Session
@@ -1693,6 +1745,20 @@ msgstr  "System A refused the commit: {message}"
 msgid   "System R — System Resource Worker"
 msgstr  "System R — System Resource Worker"
 #
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
+msgid   "resource worker not initialised"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
+#, rust-format
+msgid   "cannot synthesize definitions for non-slice units: {invalid}"
+msgstr  "cannot synthesize definitions for non-slice units: {invalid}"
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
+#, rust-format
+msgid   "cannot serialise synthesized definitions: {e}"
+msgstr  "cannot serialise synthesized definitions: {e}"
+#
 # File: ../crates/backend/systema-syse/src/cgroup.rs, line: 32
 #, rust-format
 msgid   "cannot read {cgroup_path} cgroup.procs"
@@ -1702,6 +1768,10 @@ msgstr  "cannot read {cgroup_path} cgroup.procs"
 #, rust-format
 msgid   "cannot write {cgroup_path} cgroup.kill"
 msgstr  "cannot write {cgroup_path} cgroup.kill"
+#
+# File: ../crates/backend/systema-syse/src/main.rs, line: 43
+msgid   "System E — System External Process Worker"
+msgstr  "System E — System External Process Worker"
 #
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 183
 #, rust-format
@@ -1721,10 +1791,6 @@ msgstr  "Scope {unit_name} has no cgroup."
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 267
 msgid   "Scopes cannot be reloaded."
 msgstr  "Scopes cannot be reloaded."
-#
-# File: ../crates/backend/systema-syse/src/main.rs, line: 43
-msgid   "System E — System External Process Worker"
-msgstr  "System E — System External Process Worker"
 #
 # File: ../crates/backend/systema-sysi/src/mount_setup.rs, line: 184
 #, rust-format
@@ -2336,9 +2402,11 @@ msgid   "failed to spawn pager '{pager}': {error}"
 msgstr  "failed to spawn pager '{pager}': {error}"
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 340
@@ -2348,10 +2416,12 @@ msgstr  "failed to spawn pager '{pager}': {error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2364,10 +2434,12 @@ msgstr  "failed to spawn pager '{pager}': {error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #

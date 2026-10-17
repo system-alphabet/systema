@@ -270,6 +270,7 @@ pub struct WorkerIpc {
     worker_id: String,
     unit_types: Vec<String>,
     supports_unit_define: bool,
+    supports_resource_prepare: bool,
     on_shutdown: Option<Arc<dyn Fn() -> ShutdownCleanup + Send + Sync>>,
     /// Test-only override of System A's socket path, so the fake System A in
     /// the tests need not live at the compiled-in `/run/...` location.
@@ -287,6 +288,7 @@ impl WorkerIpc {
             worker_id: worker_id.to_string(),
             unit_types: unit_types.iter().map(|s| s.to_string()).collect(),
             supports_unit_define: false,
+            supports_resource_prepare: false,
             on_shutdown: None,
             #[cfg(test)]
             socket_path: None,
@@ -324,6 +326,14 @@ impl WorkerIpc {
     /// System R answers slice-name requests with the parent-slice chain).
     pub fn supports_unit_define(mut self) -> Self {
         self.supports_unit_define = true;
+        self
+    }
+
+    /// Declare support for the `resource.prepare` protocol: System A may ask
+    /// this worker to ensure a unit's cgroup hierarchy and apply Delegate=
+    /// ownership before the start job is dispatched (System R).
+    pub fn supports_resource_prepare(mut self) -> Self {
+        self.supports_resource_prepare = true;
         self
     }
 
@@ -545,6 +555,7 @@ impl WorkerIpc {
             worker_id: self.worker_id.clone(),
             unit_types: self.unit_types.clone(),
             supports_unit_define: self.supports_unit_define,
+            supports_resource_prepare: self.supports_resource_prepare,
         };
         let env = make_envelope(0, &self.worker_id, "system-a", "worker.register", reg)?;
         send_envelope(&mut framed, &env).await?;

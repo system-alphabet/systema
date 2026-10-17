@@ -1029,6 +1029,15 @@ pub struct ResourceControl {
     pub allowed_cpus: String,
     /// Memory nodes this unit may use (`AllowedMemoryNodes=`).
     pub allowed_memory_nodes: String,
+    /// The unit takes ownership of its cgroup subtree (`Delegate=`): the
+    /// cgroup is chowned to the unit's User=/Group= and marked delegated.
+    pub delegate: bool,
+    /// Controllers left enabled below the unit's cgroup when delegating
+    /// (`DelegateControllers=`); empty = all currently enabled ones.
+    pub delegate_controllers: Vec<String>,
+    /// Subdirectory created (and owned by the delegate) under the unit's
+    /// cgroup at delegation time (`DelegateSubgroup=`), e.g. `init.scope`.
+    pub delegate_subgroup: String,
 }
 
 // ---------------------------------------------------------------------------

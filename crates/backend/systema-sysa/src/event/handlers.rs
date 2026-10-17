@@ -309,6 +309,18 @@ pub fn build_unit_resource_event(
             .get(unit_name)
             .map(|s| s.pids.clone())
             .unwrap_or_default(),
+        // Delegate= owner, verbatim from User=/Group= (System R resolves it
+        // through nss at the point of use).
+        owner_user: unit
+            .service
+            .as_ref()
+            .map(|s| s.user.clone())
+            .unwrap_or_default(),
+        owner_group: unit
+            .service
+            .as_ref()
+            .map(|s| s.group.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -397,6 +409,9 @@ fn sd_resource_control_to_proto(
         tasks_max: rc.tasks_max,
         allowed_cpus: rc.allowed_cpus.clone(),
         allowed_memory_nodes: rc.allowed_memory_nodes.clone(),
+        delegate: rc.delegate,
+        delegate_controllers: rc.delegate_controllers.clone(),
+        delegate_subgroup: rc.delegate_subgroup.clone(),
     }
 }
 

@@ -263,6 +263,10 @@ pub struct WorkerEntry {
     /// Whether the worker implements the `unit.define` protocol and may be
     /// asked to synthesize definitions for dynamic units of its types.
     pub supports_unit_define: bool,
+    /// Whether the worker implements the `resource.prepare` protocol: it
+    /// answers pre-start requests that ensure a Delegate= unit's cgroup
+    /// hierarchy before the start job is dispatched (System R).
+    pub supports_resource_prepare: bool,
     /// Whether the worker declared itself ready (`worker.ready` envelope).
     pub ready: bool,
     /// Channel to send pre-encoded envelopes (method calls, etc.).
@@ -327,6 +331,13 @@ pub struct AllocatorState {
     /// request_id of the envelope sent to the worker.  The IPC receiver
     /// completes the channel when the worker's `unit.define_result` arrives.
     pub unit_define_txs: HashMap<u64, tokio::sync::oneshot::Sender<sysa::proto::UnitDefineResult>>,
+    /// Completion senders for pending `resource.prepare` requests — keyed
+    /// by the request_id of the envelope sent to System R.  The IPC
+    /// receiver completes the channel when `resource.prepare_result`
+    /// arrives, letting the start-job dispatcher gate the dispatch on the
+    /// prepared Delegate= placement path.
+    pub resource_prepare_txs:
+        HashMap<u64, tokio::sync::oneshot::Sender<sysa::proto::ResourcePrepareResult>>,
     /// Restart rate-limiting state, keyed by unit name.
     pub start_limit_state: HashMap<String, StartLimitState>,
     /// In-process event bus for pub/sub event distribution.
@@ -410,6 +421,7 @@ impl AllocatorState {
             job_new_tx: None,
             serial_completion_txs: HashMap::new(),
             unit_define_txs: HashMap::new(),
+            resource_prepare_txs: HashMap::new(),
             start_limit_state: HashMap::new(),
             event_bus: Arc::new(TokioRwLock::new(EventBus::new())),
             staging_areas: HashMap::new(),
@@ -981,6 +993,9 @@ fn resource_control_to_section(
         tasks_max: rc.tasks_max,
         allowed_cpus: rc.allowed_cpus.clone(),
         allowed_memory_nodes: rc.allowed_memory_nodes.clone(),
+        delegate: rc.delegate,
+        delegate_controllers: rc.delegate_controllers.clone(),
+        delegate_subgroup: rc.delegate_subgroup.clone(),
     }
 }
 

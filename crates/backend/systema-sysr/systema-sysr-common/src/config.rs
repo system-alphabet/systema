@@ -56,6 +56,13 @@ pub struct ResourceConfig {
     pub allowed_cpus: String,
     /// `AllowedMemoryNodes=` — e.g. `"0"`.
     pub allowed_memory_nodes: String,
+    /// `Delegate=` — the unit takes ownership of its cgroup subtree.
+    pub delegate: bool,
+    /// `DelegateControllers=` — controllers left enabled below the cgroup.
+    pub delegate_controllers: Vec<String>,
+    /// `DelegateSubgroup=` — subdirectory created (and owned by the
+    /// delegate) under the unit's cgroup at delegation time.
+    pub delegate_subgroup: String,
 }
 
 impl Default for ResourceConfig {
@@ -80,6 +87,9 @@ impl Default for ResourceConfig {
             tasks_max: DEFAULT_TASKS_MAX,
             allowed_cpus: String::new(),
             allowed_memory_nodes: String::new(),
+            delegate: false,
+            delegate_controllers: Vec::new(),
+            delegate_subgroup: String::new(),
         }
     }
 }
@@ -117,6 +127,9 @@ impl ResourceConfig {
             },
             allowed_cpus: p.allowed_cpus.clone(),
             allowed_memory_nodes: p.allowed_memory_nodes.clone(),
+            delegate: p.delegate,
+            delegate_controllers: p.delegate_controllers.clone(),
+            delegate_subgroup: p.delegate_subgroup.clone(),
         }
     }
 

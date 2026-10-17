@@ -251,6 +251,14 @@ pub async fn enqueue_job_type(
 /// section 4.1 suggests consistency with job timeouts).
 const UNIT_DEFINE_TIMEOUT: Duration = Duration::from_secs(60);
 
+// Delegate= preparation (resource.prepare)
+// ---------------------------------------------------------------------------
+
+/// How long System A waits for System R's `resource.prepare_result` before
+/// failing the start job.  The round trip is a local cgroupfs ensure + chown;
+/// the bound only exists so a wedged worker cannot hang the start forever.
+const RESOURCE_PREPARE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Upper bound for the per-transaction `unit.define` materialisation
 /// rounds.  Dependency chains can be arbitrarily deep, but each round
 /// loads the exact missing unit, so a handful of rounds covers realistic
@@ -493,6 +501,95 @@ pub async fn request_unit_definition(allocator: AllocatorHandle, missing: &[Stri
     }
 
     Ok(())
+}
+
+/// Ask the resource worker to prepare a unit's cgroup (`resource.prepare`)
+/// before its start job is dispatched, returning the Delegate= placement
+/// path System S must place the spawned process into (empty = no placement).
+///
+/// The request carries the same [`sysa::proto::UnitResourceEvent`] projection
+/// the event flow uses (slice parent, resource limits, verbatim User=/Group=);
+/// System R resolves the owner, ensures the hierarchy, applies the delegation
+/// and answers with the path.  Fails — like [`request_unit_definition`] — when
+/// the worker refuses, does not answer within [`RESOURCE_PREPARE_TIMEOUT`], or
+/// drops the reply channel; the caller turns the error into a failed job.
+pub async fn prepare_unit_cgroup(
+    allocator: AllocatorHandle,
+    worker_id: &str,
+    event: sysa::proto::UnitResourceEvent,
+) -> Result<String> {
+    let request_id = next_request_id();
+    let (tx, rx) = tokio::sync::oneshot::channel::<sysa::proto::ResourcePrepareResult>();
+    {
+        let mut state = allocator.write();
+        state.resource_prepare_txs.insert(request_id, tx);
+    }
+
+    let env = sysa::ipc::make_envelope(
+        request_id,
+        "system-a",
+        worker_id,
+        "resource.prepare",
+        event,
+    )?;
+    let envelope_tx = {
+        let state = allocator.read();
+        state.workers.get(worker_id).map(|w| w.envelope_tx.clone())
+    };
+    let Some(envelope_tx) = envelope_tx else {
+        let mut state = allocator.write();
+        state.resource_prepare_txs.remove(&request_id);
+        bail!(sysa::l10n::fmt(
+            sysa::l10n::t_(
+                "No resource worker '{worker}' connected; cannot prepare the unit cgroup."
+            ),
+            &[("worker", &worker_id.to_string())]
+        ));
+    };
+    let mut buf = bytes::BytesMut::new();
+    env.encode(&mut buf)?;
+    if envelope_tx.send(buf.freeze()).await.is_err() {
+        let mut state = allocator.write();
+        state.resource_prepare_txs.remove(&request_id);
+        bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("Resource worker '{worker}' disconnected while preparing the unit."),
+            &[("worker", &worker_id.to_string())]
+        ));
+    }
+
+    match tokio::time::timeout(RESOURCE_PREPARE_TIMEOUT, rx).await {
+        Ok(Ok(result)) => {
+            if result.success {
+                Ok(result.placement_path)
+            } else {
+                bail!(result.error);
+            }
+        }
+        Ok(Err(_)) => {
+            let mut state = allocator.write();
+            state.resource_prepare_txs.remove(&request_id);
+            bail!(sysa::l10n::fmt(
+                sysa::l10n::t_("Resource worker '{worker}' dropped the prepare reply."),
+                &[("worker", &worker_id.to_string())]
+            ));
+        }
+        Err(_) => {
+            let mut state = allocator.write();
+            state.resource_prepare_txs.remove(&request_id);
+            bail!(sysa::l10n::fmt(
+                sysa::l10n::t_(
+                    "resource.prepare timed out for '{worker}' after {RESOURCE_PREPARE_TIMEOUT}"
+                ),
+                &[
+                    ("worker", &worker_id.to_string()),
+                    (
+                        "RESOURCE_PREPARE_TIMEOUT",
+                        &format!("{:?}", RESOURCE_PREPARE_TIMEOUT)
+                    )
+                ]
+            ));
+        }
+    }
 }
 
 /// Dispatch one `power`-type unit step by forwarding it to System Init.
@@ -1379,6 +1476,70 @@ pub async fn enqueue_job(
             }
         }
 
+        // --- Delegate= gate: `resource.prepare` before the start goes out ---
+        // The prepared placement path rides in UnitConfig.cgroup_path and
+        // System S inserts the spawned process into that cgroup inside its
+        // pre_exec hook (as root, before the credentials drop), so the unit
+        // starts inside an already-delegated hierarchy.  A failed prepare
+        // fails the job through the normal result machinery (dependency
+        // propagation, OnFailure=, state revert) instead of dispatching a
+        // unit that would die later on its own cgroup operations.
+        let mut cgroup_path = String::new();
+        if matches!(step_kind, JobKind::Start | JobKind::Restart)
+            && unit_file.as_ref().is_some_and(|uf| unit_delegates(uf))
+        {
+            let prepare_worker = {
+                let state = allocator.read();
+                state
+                    .workers
+                    .values()
+                    .find(|w| w.supports_resource_prepare)
+                    .map(|w| w.worker_id.clone())
+            };
+            match prepare_worker {
+                Some(worker_id) => {
+                    let prepared = match crate::event::build_unit_resource_event(
+                        &allocator,
+                        &name,
+                        "activating",
+                        0,
+                    ) {
+                        Some(event) => {
+                            prepare_unit_cgroup(allocator.clone(), &worker_id, event).await
+                        }
+                        None => Err(anyhow::anyhow!(sysa::l10n::fmt(
+                            sysa::l10n::t_("resource projection for {unit} unavailable"),
+                            &[("unit", &name)]
+                        ))),
+                    };
+                    match prepared {
+                        Ok(path) => cgroup_path = path,
+                        Err(e) => {
+                            warn!("resource.prepare failed for {name}: {e}");
+                            handle_task_result(
+                                allocator.clone(),
+                                task_id,
+                                false,
+                                &e.to_string(),
+                                &name,
+                                step_kind,
+                            );
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    // Capability gap (System R absent or pre-protocol): keep
+                    // today's behaviour — the unit starts, its cgroup just is
+                    // not delegated — and make the gap visible.
+                    warn!(
+                        "Delegate= unit {}: no worker implements resource.prepare; starting without cgroup delegation",
+                        name
+                    );
+                }
+            }
+        }
+
         // Build MethodCall envelope for this job.
         let method_name = match step_kind {
             JobKind::Start => "start",
@@ -1393,7 +1554,7 @@ pub async fn enqueue_job(
             let state = allocator.read();
             unit_file
                 .as_ref()
-                .map(|uf| build_unit_config(uf, &state.units))
+                .map(|uf| build_unit_config(uf, &state.units, &cgroup_path))
         };
         let mut args = Vec::new();
         if let Some(ref config) = unit_config {
@@ -1603,6 +1764,18 @@ pub fn handle_task_result(
     unit_name: &str,
     kind: JobKind,
 ) {
+    // A failed task is otherwise invisible in the logs (job status changes
+    // are not printed): surface the unit, kind and worker message so
+    // failures like a specifier-expanded User= that resolves to nothing are
+    // diagnosable without strace.
+    if !success {
+        if message.is_empty() {
+            warn!("Task failed for {unit_name} ({kind:?})");
+        } else {
+            warn!("Task failed for {unit_name} ({kind:?}): {message}");
+        }
+    }
+
     let mut post_actions: Vec<PostAction> = Vec::new();
 
     let task_restart_info: Option<(RestartPolicy, ExitKind)> = {
@@ -1923,7 +2096,23 @@ enum PostAction {
     Start(String),
 }
 
-fn build_unit_config(uf: &UnitFile, all_units: &HashMap<String, UnitFile>) -> UnitConfig {
+/// Whether the unit's own section carries `Delegate=` — the signal that its
+/// cgroup must be prepared (and handed over) before it starts.  Only the
+/// unit kinds that own a cgroup sub-tree can delegate.
+fn unit_delegates(uf: &UnitFile) -> bool {
+    match uf.kind {
+        UnitKind::Service => uf.service.as_ref().is_some_and(|s| s.rc.delegate),
+        UnitKind::Slice => uf.slice.as_ref().is_some_and(|s| s.rc.delegate),
+        UnitKind::Scope => uf.scope.as_ref().is_some_and(|s| s.rc.delegate),
+        _ => false,
+    }
+}
+
+fn build_unit_config(
+    uf: &UnitFile,
+    all_units: &HashMap<String, UnitFile>,
+    cgroup_path: &str,
+) -> UnitConfig {
     let service = uf.service.as_ref().map(|svc| ServiceConfig {
         // Only the first ExecStart command is sent to the worker.
         // Multiple ExecStart directives (Type=oneshot) will be supported in Phase 2.
@@ -2085,6 +2274,10 @@ fn build_unit_config(uf: &UnitFile, all_units: &HashMap<String, UnitFile>) -> Un
     UnitConfig {
         unit_name: uf.name.clone(),
         description: uf.unit.description.clone(),
+        // Delegate= placement path prepared via `resource.prepare` before
+        // dispatch; empty = the unit does not delegate and System S must
+        // leave the spawned process's cgroup alone.
+        cgroup_path: cgroup_path.to_string(),
         service,
         socket,
         mount,
@@ -2719,6 +2912,35 @@ mod tests {
     }
 
     #[test]
+    fn test_unit_delegates() {
+        let mut uf = make_unit("plain.service");
+        uf.service = Some(crate::unit::types::ServiceSection::default());
+        assert!(!unit_delegates(&uf));
+        uf.service.as_mut().unwrap().rc.delegate = true;
+        assert!(unit_delegates(&uf));
+
+        let mut sl = make_unit("app.slice");
+        sl.slice = Some(crate::unit::types::SliceSection::default());
+        sl.slice.as_mut().unwrap().rc.delegate = true;
+        assert!(unit_delegates(&sl));
+
+        // A unit kind without its own cgroup sub-tree never delegates.
+        assert!(!unit_delegates(&make_unit("multi-user.target")));
+    }
+
+    #[test]
+    fn test_build_unit_config_carries_cgroup_path() {
+        let uf = make_unit("plain.service");
+        let path = "/sys/fs/cgroup/system.slice/plain.service";
+        let cfg = build_unit_config(&uf, &HashMap::new(), path);
+        assert_eq!(cfg.cgroup_path, path);
+        // No delegation (or no placement): the field stays empty so System
+        // S leaves the spawned process's cgroup untouched.
+        let cfg = build_unit_config(&uf, &HashMap::new(), "");
+        assert_eq!(cfg.cgroup_path, "");
+    }
+
+    #[test]
     fn test_socket_config_service_resolution() {
         // No Service= directive: derive "foo.socket" -> "foo.service".
         let mut uf = make_unit("foo.socket");
@@ -2726,7 +2948,7 @@ mod tests {
             listen_netlink: vec!["kobject-uevent".to_string()],
             ..Default::default()
         });
-        let cfg = build_unit_config(&uf, &HashMap::new());
+        let cfg = build_unit_config(&uf, &HashMap::new(), "");
         assert_eq!(cfg.socket.as_ref().unwrap().service, "foo.service");
 
         // Explicit Service= wins over the derived name.
@@ -2736,7 +2958,7 @@ mod tests {
             service: "custom-daemon.service".to_string(),
             ..Default::default()
         });
-        let cfg = build_unit_config(&uf, &HashMap::new());
+        let cfg = build_unit_config(&uf, &HashMap::new(), "");
         assert_eq!(
             cfg.socket.as_ref().unwrap().service,
             "custom-daemon.service"
@@ -2856,7 +3078,7 @@ mod tests {
         let uf = make_unit("test.service");
         let mut uf = uf;
         uf.service = Some(crate::unit::types::ServiceSection::default());
-        let config = build_unit_config(&uf, &HashMap::new());
+        let config = build_unit_config(&uf, &HashMap::new(), "");
         assert!(config.service.is_some());
     }
 
@@ -2878,7 +3100,7 @@ mod tests {
         });
         let mut units = HashMap::new();
         units.insert(mount.name.clone(), mount);
-        let config = build_unit_config(&auto, &units);
+        let config = build_unit_config(&auto, &units, "");
         let mount_cfg = config.mount.expect("companion mount config preloaded");
         assert_eq!(mount_cfg.what, "/dev/sdb1");
         assert_eq!(mount_cfg.r#where, "/mnt/data");
@@ -3006,6 +3228,7 @@ mod tests {
                 worker_id: "test-worker".to_string(),
                 unit_types: vec!["service".to_string()],
                 supports_unit_define: false,
+                supports_resource_prepare: false,
                 ready: false,
                 envelope_tx: tx,
             },
@@ -3608,6 +3831,7 @@ mod tests {
                     worker_id: "test-worker".to_string(),
                     unit_types: vec!["service".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: tx,
                 },
@@ -3921,6 +4145,7 @@ mod tests {
                     worker_id: "system-e-1".to_string(),
                     unit_types: vec!["scope".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: scope_tx,
                 },
@@ -3932,6 +4157,7 @@ mod tests {
                     worker_id: "system-r-1".to_string(),
                     unit_types: vec!["slice".to_string()],
                     supports_unit_define: true,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: slice_tx,
                 },
@@ -3950,6 +4176,7 @@ mod tests {
                     worker_id: "system-r-1".to_string(),
                     unit_types: vec!["slice".to_string()],
                     supports_unit_define: true,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: slice_tx,
                 },
@@ -4037,6 +4264,7 @@ mod tests {
                     worker_id: "system-e-1".to_string(),
                     unit_types: vec!["scope".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: scope_tx,
                 },
@@ -4052,6 +4280,7 @@ mod tests {
                     worker_id: "system-r-1".to_string(),
                     unit_types: vec!["slice".to_string()],
                     supports_unit_define: true,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: slice_tx,
                 },
@@ -4136,6 +4365,7 @@ mod tests {
                     worker_id: "system-e-1".to_string(),
                     unit_types: vec!["scope".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: scope_tx,
                 },
@@ -4150,6 +4380,7 @@ mod tests {
                     worker_id: "system-r-1".to_string(),
                     unit_types: vec!["slice".to_string()],
                     supports_unit_define: true,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: slice_tx,
                 },
@@ -4210,6 +4441,7 @@ mod tests {
                     worker_id: "system-e-1".to_string(),
                     unit_types: vec!["scope".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: scope_tx,
                 },
@@ -4252,6 +4484,7 @@ mod tests {
                     worker_id: "system-e-1".to_string(),
                     unit_types: vec!["scope".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: scope_tx,
                 },
@@ -4266,6 +4499,7 @@ mod tests {
                     worker_id: "system-r-1".to_string(),
                     unit_types: vec!["slice".to_string()],
                     supports_unit_define: true,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: slice_tx,
                 },
@@ -4324,6 +4558,7 @@ mod tests {
                     worker_id: "system-e-1".to_string(),
                     unit_types: vec!["scope".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: scope_tx,
                 },
@@ -4338,6 +4573,7 @@ mod tests {
                     worker_id: "system-s-1".to_string(),
                     unit_types: vec!["service".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: service_tx,
                 },
@@ -4504,6 +4740,7 @@ mod tests {
                     worker_id: "test-worker".to_string(),
                     unit_types: vec!["service".to_string()],
                     supports_unit_define: false,
+                    supports_resource_prepare: false,
                     ready: false,
                     envelope_tx: tx,
                 },

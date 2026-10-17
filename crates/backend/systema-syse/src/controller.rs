@@ -292,6 +292,7 @@ mod tests {
         let cfg = UnitConfig {
             unit_name: "test.scope".to_string(),
             description: String::new(),
+            cgroup_path: String::new(),
             service: None,
             socket: None,
             mount: None,

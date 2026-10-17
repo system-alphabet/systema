@@ -251,6 +251,17 @@ message ResourceConfig {
     string allowed_cpus = 18;
     // AllowedMemoryNodes= — e.g. "0".
     string allowed_memory_nodes = 19;
+    // Delegate= — the unit takes ownership of its cgroup subtree: System R
+    // chowns the unit's cgroup to the unit's User=/Group= and marks it
+    // delegated so the owner can manage it (systemd's Delegate= semantics).
+    bool delegate = 20;
+    // DelegateControllers= — controllers left enabled below the unit's
+    // cgroup when delegating (empty = all currently enabled ones).
+    repeated string delegate_controllers = 21;
+    // DelegateSubgroup= — subdirectory created (and owned by the delegate)
+    // under the unit's cgroup at delegation time, e.g. "init.scope" for
+    // user@.service.
+    string delegate_subgroup = 22;
 }
 
 // One unit's cgroup metrics snapshot.
@@ -311,6 +322,10 @@ message UnitConfig {
     // The service worker requests their listener fds (LISTEN_FDS) from the
     // socket worker when starting the process (socket activation).
     repeated string socket_units = 11;
+    // Absolute cgroup path the worker must place the spawned process into
+    // before exec (filled by System A after a successful `resource.prepare`
+    // for Delegate= units; empty = no placement, cgroup untouched).
+    string cgroup_path = 12;
 }
 
 message ServiceConfig {

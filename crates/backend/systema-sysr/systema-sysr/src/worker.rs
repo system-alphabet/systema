@@ -155,8 +155,18 @@ impl ResourceWorker {
                     } else {
                         event.pids.clone()
                     };
+                    // Delegate= units with DelegateSubgroup= keep their main
+                    // process in the child cgroup (the unit root distributes
+                    // the controllers): attach there so the event flow agrees
+                    // with the pre-exec placement System S performed.
+                    let subgroup = config.delegate_subgroup.trim();
+                    let attach_path = if config.delegate && !subgroup.is_empty() {
+                        format!("{cgroup_path}/{subgroup}")
+                    } else {
+                        cgroup_path.clone()
+                    };
                     for pid in pids {
-                        if let Err(e) = self.controller.attach(&cgroup_path, pid) {
+                        if let Err(e) = self.controller.attach(&attach_path, pid) {
                             warn!(
                                 "Cannot move pid {} into {}: {}",
                                 pid, event.unit_name, e
@@ -200,6 +210,57 @@ impl ResourceWorker {
     /// are never torn down.
     fn release_unit(&self, unit_name: &str) {
         self.registry.lock().unwrap().remove(unit_name);
+    }
+
+    /// Handle a `resource.prepare` request: ensure the unit's cgroup
+    /// hierarchy and — for `Delegate=` units — apply the delegation (nss
+    /// owner resolution, recursive chown incl. the `cgroup.*` control
+    /// files, delegate xattrs, `DelegateSubgroup=` child) *before* the
+    /// start job is dispatched, then return the absolute path System S
+    /// must place the spawned process into before exec.
+    ///
+    /// Unlike the event flow this is not best-effort: a failed prepare
+    /// fails the start job with a visible message instead of letting the
+    /// unit start unconstrained and die later on its own cgroup
+    /// operations.  The empty path means "no placement": there is no cgroup
+    /// backend here, or the unit does not delegate — the unit then starts
+    /// exactly as it did before delegation existed.
+    pub fn prepare(&self, event: &UnitResourceEvent) -> Result<String, String> {
+        if !self.available() {
+            debug!(
+                "resource.prepare for {}: no cgroup backend — starting without placement",
+                event.unit_name
+            );
+            return Ok(String::new());
+        }
+        let config = match &event.resource {
+            Some(resource) => ResourceConfig::from_proto(resource),
+            None => ResourceConfig::default(),
+        };
+        let cgroup_path = Self::cgroup_path(&event.unit_name, &event.slice);
+        self.controller
+            .ensure(&cgroup_path, &config)
+            .map_err(|e| e.to_string())?;
+        if !config.delegate {
+            // Defensive: only Delegate= units get a placement path, so a
+            // mis-routed prepare can never move a process somewhere new.
+            debug!("resource.prepare for {}: no Delegate= — no placement", event.unit_name);
+            return Ok(String::new());
+        }
+        self.controller
+            .delegate(&cgroup_path, &event.owner_user, &event.owner_group, &config)
+            .map_err(|e| e.to_string())?;
+        // With DelegateSubgroup= the main process belongs in the child
+        // (user@.service: the manager runs in init.scope); without one the
+        // unit root hosts it directly.
+        let subgroup = config.delegate_subgroup.trim();
+        let placement = if subgroup.is_empty() {
+            cgroup_path
+        } else {
+            format!("{cgroup_path}/{subgroup}")
+        };
+        debug!("Prepared delegated cgroup for {} at {placement}", event.unit_name);
+        Ok(placement)
     }
 
 /// Apply a [`UserSessionEvent`] whose slice units were already committed to
@@ -495,7 +556,7 @@ fn diff_metrics(
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use systema_sysr_common::NoopController;
+    use systema_sysr_common::{CgroupBaseline, NoopController, ResourceError};
     use sysa::proto::ResourceConfig as ProtoResourceConfig;
 
     fn dummy_publisher() -> EventPublisher {
@@ -527,6 +588,8 @@ mod tests {
             }),
             main_pid: 0,
             pids: vec![],
+            owner_user: String::new(),
+            owner_group: String::new(),
         }
     }
 
@@ -704,5 +767,201 @@ mod tests {
         assert!(!reg.contains_key("user-1000.slice"));
         assert!(reg.contains_key("user-2000.slice"));
         assert!(reg.contains_key("user.slice"));
+    }
+
+    // -----------------------------------------------------------------------
+    // resource.prepare (Delegate= pre-start preparation)
+    // -----------------------------------------------------------------------
+
+    /// Controller that records what `prepare` asked it to do.
+    #[derive(Default)]
+    struct RecordingController {
+        ensured: Mutex<Vec<String>>,
+        delegated: Mutex<Vec<(String, String, String, String)>>,
+        attached: Mutex<Vec<String>>,
+        fail_ensure: bool,
+    }
+
+    impl ResourceController for RecordingController {
+        fn available(&self) -> bool {
+            true
+        }
+
+        fn ensure(&self, path: &str, _cfg: &ResourceConfig) -> Result<(), ResourceError> {
+            self.ensured.lock().unwrap().push(path.to_string());
+            if self.fail_ensure {
+                Err(ResourceError::Unavailable("ensure boom".to_string()))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn delegate(
+            &self,
+            path: &str,
+            owner_user: &str,
+            owner_group: &str,
+            cfg: &ResourceConfig,
+        ) -> Result<(), ResourceError> {
+            self.delegated.lock().unwrap().push((
+                path.to_string(),
+                owner_user.to_string(),
+                owner_group.to_string(),
+                cfg.delegate_subgroup.clone(),
+            ));
+            Ok(())
+        }
+
+        fn attach(&self, path: &str, _pid: u32) -> Result<(), ResourceError> {
+            self.attached.lock().unwrap().push(path.to_string());
+            Ok(())
+        }
+
+        fn processes(&self, _path: &str) -> Vec<u32> {
+            Vec::new()
+        }
+
+        fn has_child_cgroups(&self, _path: &str) -> bool {
+            false
+        }
+
+        fn remove(&self, _path: &str) -> Result<(), ResourceError> {
+            Ok(())
+        }
+
+        fn metrics(&self, _path: &str) -> CgroupMetrics {
+            CgroupMetrics::default()
+        }
+
+        fn snapshot(&self) -> Option<CgroupBaseline> {
+            None
+        }
+
+        fn restore(&self, _baseline: &CgroupBaseline) -> Result<(), ResourceError> {
+            Ok(())
+        }
+    }
+
+    fn recording_worker() -> (ResourceWorker, Arc<RecordingController>) {
+        let ctrl = Arc::new(RecordingController::default());
+        let w = ResourceWorker::new(
+            ctrl.clone(),
+            new_registry(),
+            new_user_sessions(),
+            dummy_publisher(),
+        );
+        (w, ctrl)
+    }
+
+    #[test]
+    fn prepare_delegates_and_returns_placement_path() {
+        let (w, ctrl) = recording_worker();
+        let mut ev = resource_event("plain.service", "web.slice", false);
+        {
+            let r = ev.resource.as_mut().unwrap();
+            r.delegate = true;
+            r.delegate_subgroup = "init.scope".to_string();
+        }
+        ev.owner_user = "1000".to_string();
+        ev.owner_group = "users".to_string();
+
+        let path = w.prepare(&ev).unwrap();
+        let expected = ResourceWorker::cgroup_path("plain.service", "web.slice");
+        // The main process belongs in the subgroup, not the unit root.
+        assert_eq!(path, format!("{expected}/init.scope"));
+        // Delegation includes the owner strings and subgroup, verbatim.
+        assert_eq!(
+            *ctrl.delegated.lock().unwrap(),
+            vec![(
+                expected.clone(),
+                "1000".to_string(),
+                "users".to_string(),
+                "init.scope".to_string()
+            )]
+        );
+        // The hierarchy was ensured first — with the same path.
+        assert_eq!(*ctrl.ensured.lock().unwrap(), vec![expected]);
+    }
+
+    #[test]
+    fn prepare_without_subgroup_places_at_the_unit_root() {
+        let (w, _ctrl) = recording_worker();
+        let mut ev = resource_event("plain.service", "web.slice", false);
+        ev.resource.as_mut().unwrap().delegate = true;
+        ev.owner_user = "1000".to_string();
+        ev.owner_group = "users".to_string();
+
+        let path = w.prepare(&ev).unwrap();
+        assert_eq!(
+            path,
+            ResourceWorker::cgroup_path("plain.service", "web.slice")
+        );
+    }
+
+    #[test]
+    fn active_event_attaches_into_the_subgroup_for_delegate_units() {
+        let (w, ctrl) = recording_worker();
+        let mut ev = resource_event("plain.service", "web.slice", true);
+        ev.pids = vec![4242];
+        {
+            let r = ev.resource.as_mut().unwrap();
+            r.delegate = true;
+            r.delegate_subgroup = "init.scope".to_string();
+        }
+        w.handle_resource_event(&ev);
+        let expected = ResourceWorker::cgroup_path("plain.service", "web.slice");
+        assert_eq!(
+            *ctrl.attached.lock().unwrap(),
+            vec![format!("{expected}/init.scope")]
+        );
+    }
+
+    #[test]
+    fn active_event_attaches_at_the_unit_root_without_subgroup() {
+        let (w, ctrl) = recording_worker();
+        let mut ev = resource_event("plain.service", "web.slice", true);
+        ev.pids = vec![4242];
+        ev.resource.as_mut().unwrap().delegate = true;
+        w.handle_resource_event(&ev);
+        let expected = ResourceWorker::cgroup_path("plain.service", "web.slice");
+        assert_eq!(*ctrl.attached.lock().unwrap(), vec![expected]);
+    }
+
+    #[test]
+    fn prepare_without_delegate_ensures_but_places_nothing() {
+        let (w, ctrl) = recording_worker();
+        let ev = resource_event("plain.service", "", false);
+        assert_eq!(w.prepare(&ev), Ok(String::new()));
+        assert_eq!(ctrl.ensured.lock().unwrap().len(), 1);
+        assert!(ctrl.delegated.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn prepare_surfaces_controller_errors() {
+        let ctrl = Arc::new(RecordingController {
+            fail_ensure: true,
+            ..Default::default()
+        });
+        let w = ResourceWorker::new(
+            ctrl,
+            new_registry(),
+            new_user_sessions(),
+            dummy_publisher(),
+        );
+        let mut ev = resource_event("plain.service", "", false);
+        ev.resource.as_mut().unwrap().delegate = true;
+        let err = w.prepare(&ev).unwrap_err();
+        assert!(err.contains("ensure boom"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn prepare_without_backend_yields_no_placement() {
+        // NoopController is unavailable: the unit would start exactly as
+        // before delegation existed — no placement, no failure.
+        let w = worker();
+        let mut ev = resource_event("plain.service", "", false);
+        ev.resource.as_mut().unwrap().delegate = true;
+        ev.owner_user = "1000".to_string();
+        assert_eq!(w.prepare(&ev), Ok(String::new()));
     }
 }

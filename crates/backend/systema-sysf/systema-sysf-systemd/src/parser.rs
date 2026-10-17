@@ -776,6 +776,23 @@ fn get_bool(config: &Ini, section: &str, key: &str, default: bool) -> bool {
     }
 }
 
+/// Parse a `Delegate=` value the way systemd does.
+///
+/// The directive takes a boolean, or a whitespace-separated controller
+/// list: a list enables delegation *and* delegates exactly those
+/// controllers (systemd's older `Delegate=<controllers>` spelling of
+/// `Delegate=yes` plus `DelegateControllers=`).  An empty value means
+/// "yes".  Returns `(delegate, controllers-carried-by-the-list)`; the
+/// caller keeps an explicit `DelegateControllers=` over the list.
+fn parse_delegate(value: Option<&str>) -> (bool, Option<Vec<String>>) {
+    match value.map(str::trim) {
+        None => (false, None),
+        Some("") | Some("yes") | Some("true") | Some("1") => (true, None),
+        Some("no") | Some("false") | Some("0") => (false, None),
+        Some(list) => (true, Some(split_vec(list))),
+    }
+}
+
 /// Get a u32 value, returning `default` if absent or unparseable.
 fn get_u32(config: &Ini, section: &str, key: &str, default: u32) -> u32 {
     config
@@ -1077,11 +1094,15 @@ fn parse_service_section(config: &Ini, svc: &mut ServiceSection, name: &str) -> 
 
     svc.working_directory =
         expand_specifiers(&get_str(config, "service", "workingdirectory"), name);
-    svc.user = get_str(config, "service", "user");
-    svc.group = get_str(config, "service", "group");
-    svc.pam_name = get_str(config, "service", "pamname");
-    svc.pid_file = get_str(config, "service", "pidfile");
-    svc.bus_name = get_str(config, "service", "busname");
+    // Specifiers (%i, %n, ...) are expanded at parse time with the unit's
+    // own name, so an instantiated template (user@1000.service parsed from
+    // user@.service) yields the instance values (User=1000), like
+    // systemd's manager_load_unit_from_path() + unit_full_printf().
+    svc.user = expand_specifiers(&get_str(config, "service", "user"), name);
+    svc.group = expand_specifiers(&get_str(config, "service", "group"), name);
+    svc.pam_name = expand_specifiers(&get_str(config, "service", "pamname"), name);
+    svc.pid_file = expand_specifiers(&get_str(config, "service", "pidfile"), name);
+    svc.bus_name = expand_specifiers(&get_str(config, "service", "busname"), name);
 
     // Sockets= lists socket units for socket activation (distinct from
     // Requires=/BindsTo= which create hard dependencies).
@@ -1340,6 +1361,15 @@ fn parse_resource_control(config: &Ini, section: &str, rc: &mut ResourceControl)
     rc.tasks_max = get_u32(config, section, "tasksmax", u32::MAX);
     rc.allowed_cpus = get_str(config, section, "allowedcpus");
     rc.allowed_memory_nodes = get_str(config, section, "allowedmemorynodes");
+    let (delegate, delegate_list) = parse_delegate(config.get(section, "delegate").as_deref());
+    rc.delegate = delegate;
+    rc.delegate_controllers = split_vec(&get_str(config, section, "delegatecontrollers"));
+    if rc.delegate_controllers.is_empty() {
+        if let Some(list) = delegate_list {
+            rc.delegate_controllers = list;
+        }
+    }
+    rc.delegate_subgroup = get_str(config, section, "delegatesubgroup");
 }
 
 /// Apply resource-control directives present in a drop-in onto `rc`.
@@ -1403,6 +1433,21 @@ fn apply_dropin_resource_control(config: &Ini, section: &str, rc: &mut ResourceC
     }
     if let Some(v) = config.get(section, "allowedmemorynodes") {
         rc.allowed_memory_nodes = v.clone();
+    }
+    if let Some(v) = config.get(section, "delegate") {
+        let (delegate, delegate_list) = parse_delegate(Some(&v));
+        rc.delegate = delegate;
+        if let Some(list) = delegate_list {
+            // The list form carries the controller set too; an explicit
+            // DelegateControllers= later in the same drop-in still wins.
+            rc.delegate_controllers = list;
+        }
+    }
+    if let Some(v) = config.get(section, "delegatecontrollers") {
+        rc.delegate_controllers = split_vec(&v);
+    }
+    if let Some(v) = config.get(section, "delegatesubgroup") {
+        rc.delegate_subgroup = v.clone();
     }
 }
 
@@ -2278,6 +2323,108 @@ AllowedCPUs=0-3
         assert_eq!(slice.rc.tasks_max, 256);
         assert_eq!(slice.rc.memory_max, "1G");
         assert_eq!(slice.rc.cpu_quota, "50%");
+    }
+
+    // -----------------------------------------------------------------------
+    // Delegate= (resource-control delegation)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_delegate_service() {
+        let content = "[Service]\nExecStart=/usr/bin/foo\nDelegate=yes\nDelegateControllers=cpu memory pids\nDelegateSubgroup=init.scope\n";
+        let unit = parse_unit("deleg.service", content).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(rc.delegate);
+        assert_eq!(rc.delegate_controllers, vec!["cpu", "memory", "pids"]);
+        assert_eq!(rc.delegate_subgroup, "init.scope");
+    }
+
+    #[test]
+    fn test_delegate_defaults_off() {
+        let content = "[Service]\nExecStart=/usr/bin/foo\n";
+        let unit = parse_unit("plain.service", content).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(!rc.delegate);
+        assert!(rc.delegate_controllers.is_empty());
+        assert_eq!(rc.delegate_subgroup, "");
+    }
+
+    #[test]
+    fn test_delegate_controller_list_form() {
+        // user@.service's exact shape: a controller list means "delegate
+        // with exactly these controllers" — not "false".
+        let content = "[Service]\nExecStart=/usr/lib/systemd/systemd --user\nDelegate=pids memory cpu\nDelegateSubgroup=init.scope\n";
+        let unit = parse_unit("user@.service", content).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(rc.delegate);
+        assert_eq!(rc.delegate_controllers, vec!["pids", "memory", "cpu"]);
+        assert_eq!(rc.delegate_subgroup, "init.scope");
+    }
+
+    #[test]
+    fn test_delegate_empty_value_is_yes() {
+        let content = "[Service]\nExecStart=/usr/bin/foo\nDelegate=\n";
+        let unit = parse_unit("foo.service", content).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(rc.delegate);
+        assert!(rc.delegate_controllers.is_empty());
+    }
+
+    #[test]
+    fn test_delegate_list_yields_to_explicit_controllers_key() {
+        let content =
+            "[Service]\nExecStart=/usr/bin/foo\nDelegate=pids memory\nDelegateControllers=cpu\n";
+        let unit = parse_unit("foo.service", content).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(rc.delegate);
+        assert_eq!(rc.delegate_controllers, vec!["cpu"]);
+    }
+
+    #[test]
+    fn test_dropin_delegate_overrides() {
+        let base = "[Service]\nExecStart=/usr/bin/foo\nDelegate=no\n";
+        let mut unit = parse_unit("foo.service", base).unwrap();
+        let dropin = "[Service]\nDelegate=yes\nDelegateSubgroup=init.scope\n";
+        apply_dropin_content(&mut unit, dropin).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(rc.delegate);
+        assert_eq!(rc.delegate_subgroup, "init.scope");
+    }
+
+    #[test]
+    fn test_dropin_delegate_list_form() {
+        let base = "[Service]\nExecStart=/usr/bin/foo\nDelegate=no\n";
+        let mut unit = parse_unit("foo.service", base).unwrap();
+        let dropin = "[Service]\nDelegate=pids memory\n";
+        apply_dropin_content(&mut unit, dropin).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(rc.delegate);
+        assert_eq!(rc.delegate_controllers, vec!["pids", "memory"]);
+    }
+
+    #[test]
+    fn test_dropin_delegate_absent_keeps_base() {
+        let base = "[Service]\nExecStart=/usr/bin/foo\nDelegate=yes\nDelegateControllers=cpu\n";
+        let mut unit = parse_unit("foo.service", base).unwrap();
+        let dropin = "[Service]\nCPUWeight=200\n";
+        apply_dropin_content(&mut unit, dropin).unwrap();
+        let rc = &unit.service.unwrap().rc;
+        assert!(rc.delegate);
+        assert_eq!(rc.delegate_controllers, vec!["cpu"]);
+    }
+
+    #[test]
+    fn test_specifier_expands_in_user_group() {
+        // The systemd user manager instance: %i must resolve per instance,
+        // otherwise User=%i arrives at the nss lookup verbatim and the unit
+        // can never start.
+        let content =
+            "[Service]\nExecStart=/usr/lib/systemd/systemd --user\nUser=%i\nGroup=%i\nPIDFile=/run/%n.pid\n";
+        let unit = parse_unit("user@1000.service", content).unwrap();
+        let svc = unit.service.unwrap();
+        assert_eq!(svc.user, "1000");
+        assert_eq!(svc.group, "1000");
+        assert_eq!(svc.pid_file, "/run/user@1000.service.pid");
     }
 
     // -----------------------------------------------------------------------

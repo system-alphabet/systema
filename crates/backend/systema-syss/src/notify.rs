@@ -42,7 +42,7 @@ use nix::sys::socket::{
 // `LOCAL_CREDS` socket option nor an `SCM_CREDS` control message.
 #[cfg(not(target_os = "openbsd"))]
 use nix::sys::socket::UnixCredentials;
-use nix::sys::stat::{fchmod, Mode};
+use std::os::unix::fs::PermissionsExt;
 use tracing::{debug, info, warn};
 
 use crate::process::{is_alive, pid_is_zombie};
@@ -230,8 +230,12 @@ impl NotifyManager {
         }
 
         // 0777 so unprivileged service processes can connect; the sender
-        // is authorized via SCM_CREDENTIALS below.
-        if let Err(e) = fchmod(fd.as_raw_fd(), Mode::from_bits_truncate(0o777)) {
+        // is authorized via SCM_CREDENTIALS below.  The mode must be set
+        // through the path: fchmod(2) on an AF_UNIX socket descriptor is
+        // a silent no-op on Linux (returns success, mode unchanged), which
+        // left unprivileged sd_notify senders (e.g. systemd --user) with
+        // EACCES and every start job timing out on READY=1.
+        if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777)) {
             warn!("Failed to chmod sd_notify socket '{path}': {e}");
         }
 
@@ -664,6 +668,11 @@ mod tests {
         let sock_path = format!("/tmp/opencode/sd-notify-test-{}.sock", std::process::id());
         let _ = std::fs::remove_file(&sock_path);
         let manager = NotifyManager::setup_at(&sock_path).expect("socket setup must succeed");
+        // Regression: fchmod(2) on an AF_UNIX socket fd is a silent no-op
+        // on Linux; the mode must be world-writable via the path or every
+        // unprivileged service (systemd --user) gets EACCES sending READY.
+        let mode = std::fs::metadata(&sock_path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o777, "notify socket must be world-writable");
         let pid = std::process::id();
         manager.register_start("svc.service", pid);
 
