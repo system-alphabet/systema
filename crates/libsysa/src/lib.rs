@@ -1,31 +1,25 @@
 //! Common library shared by System A and all System Workers.
 //!
-//! Provides:
-//! - Protobuf-generated IPC message types
-//! - IPC framing utilities (length-delimited codec over Unix sockets)
-//! - Shared error types
+//! The IPC kernel lives in the separate `sysa-ipc` crate and is
+//! re-exported here unchanged, so tree-wide `sysa::ipc`/`sysa::proto`/
+//! `sysa::worker_ipc` paths keep working: every binary and worker keeps
+//! depending on this crate alone.
+//!
+//! Owned here (binary infrastructure and server-side policy):
+//! - Shared logging bootstrap for every binary
+//! - The notify broadcast channel (human-visible boot progress)
+//! - Event bus topics (server-side dispatch of unit state)
+//! - Mount-point jurisdiction policy and unit name helpers
+//! - `--version` / `--full-version` output
 
-pub mod controller;
+pub use sysa_ipc::{
+    controller, finder, ipc, l10n, paths, proto, signals, staging_admin, unitstate_admin,
+    worker_ipc,
+};
+
 pub mod event_bus;
-pub mod finder;
-pub mod ipc;
-pub mod l10n;
 pub mod logging;
 pub mod mounts;
 pub mod notify;
-pub mod paths;
-pub mod signals;
-pub mod staging_admin;
 pub mod unit_name;
-pub mod unitstate_admin;
 pub mod version;
-pub mod worker_ipc;
-pub mod proto {
-    //! Generated protobuf types for the IPC protocol.
-    //!
-    //! prost emits one file per proto package, so the three sources under
-    //! `proto/` (`common`, `workload`, `control`) land in a single flat
-    //! module here.  The split is enforced at `protoc` level: each plane
-    //! only imports `common.proto` and cannot name the other's types.
-    include!(concat!(env!("OUT_DIR"), "/ipc.rs"));
-}

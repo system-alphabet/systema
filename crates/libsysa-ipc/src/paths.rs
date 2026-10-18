@@ -106,7 +106,7 @@ pub fn instance() -> &'static Paths {
 ///
 /// Only the default file's *directory* is baked in at build time; the
 /// runtime override names a file: `--log-file` > `SYSTEMA_LOG_FILE`
-/// (see [`crate::logging`]).
+/// (see the `logging` module in `libsysa`).
 pub fn builtin_log_dir() -> &'static str {
     builtin::LOG_DIR
 }

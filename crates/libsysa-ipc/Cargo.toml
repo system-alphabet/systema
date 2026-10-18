@@ -1,0 +1,25 @@
+[package]
+name = "sysa-ipc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+prost.workspace = true
+bytes.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+gettext-rs.workspace = true
+libc = "0.2"
+
+[features]
+default = []
+l10n_debug = []
+
+[build-dependencies]
+prost-build = "0.13"

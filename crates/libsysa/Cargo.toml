@@ -6,22 +6,10 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-prost.workspace = true
+sysa-ipc = { path = "../libsysa-ipc" }
+async-trait.workspace = true
 bytes.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
-anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-futures.workspace = true
-async-trait.workspace = true
-libc = "0.2"
-gettext-rs.workspace = true
 colored.workspace = true
-
-[features]
-default = []
-l10n_debug = []
-
-[build-dependencies]
-prost-build = "0.13"
