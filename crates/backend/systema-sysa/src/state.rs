@@ -4,7 +4,7 @@
 //! registered workers, and in-flight jobs. It is protected by a `RwLock` and
 //! accessed via `AllocatorHandle` (an `Arc<RwLock<AllocatorState>>`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -707,19 +707,34 @@ impl AllocatorState {
     /// graph only ever deal with canonical names.
     pub(crate) fn rebuild_alias_map(&mut self) {
         self.aliases.clear();
-        // Collect declared aliases first to avoid borrow conflicts.
-        let mut declared: Vec<(String, String)> = Vec::new();
+        // Collect declared aliases first to avoid borrow conflicts.  Group by
+        // alias so a collision between several declarants gets one decision,
+        // and keep both maps name-sorted so every decision is deterministic.
+        let mut declared: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (name, unit) in &self.units {
             for alias in &unit.install.alias {
-                declared.push((alias.clone(), name.clone()));
+                // A real unit's name is not an alias — the real unit wins.
+                if alias == name || self.units.contains_key(alias) {
+                    continue;
+                }
+                declared
+                    .entry(alias.clone())
+                    .or_default()
+                    .insert(name.clone());
             }
         }
-        for (alias, canonical) in declared {
-            // A real unit's name is not an alias — the real unit wins.
-            if alias == canonical || self.units.contains_key(&alias) {
-                continue;
+        let fs_lookup = |name: &str| -> Option<String> {
+            systema_sysf_systemd::loader::discover_one(name)
+                .ok()
+                .flatten()
+                .map(|uf| uf.name)
+        };
+        for (alias, declarants) in declared {
+            if let Some(canonical) =
+                pick_alias_canonical(&alias, &declarants, &self.units, &fs_lookup)
+            {
+                self.aliases.insert(alias, canonical);
             }
-            self.aliases.entry(alias).or_insert(canonical);
         }
         // Rewrite every reference from an alias to its canonical name.
         for unit in self.units.values_mut() {
@@ -791,6 +806,45 @@ impl AllocatorState {
 }
 
 /// Replace every name in `names` that is an alias with its canonical name.
+/// Decide which canonical unit owns `alias` during
+/// [`AllocatorState::rebuild_alias_map`].
+///
+/// Normal case: exactly one unit declares the alias through `[Install]
+/// Alias=`, and that unit owns it.  Collision case: several unit files
+/// declare the same alias — on the test image both `lightdm.service` and
+/// `ddm.service` declare `Alias=display-manager.service`.  `[Install]` is
+/// install-time metadata and carries no runtime authority, so the collision
+/// is resolved the way the loader resolves any unit name: by search-path
+/// lookup of a unit file named exactly like the alias (`/etc/systemd/system/
+/// display-manager.service -> lightdm.service`).  This used to be an
+/// `or_insert` over a `HashMap` iteration, so the winner was whichever
+/// canonical name the hash order happened to visit first — lightdm on some
+/// boots, ddm on others, silently replacing the display manager.
+fn pick_alias_canonical(
+    alias: &str,
+    declarants: &BTreeSet<String>,
+    units: &HashMap<String, UnitFile>,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if declarants.len() == 1 {
+        return declarants.iter().next().cloned();
+    }
+    // Filesystem evidence first: the unit file with the alias's exact name
+    // decides which declarant wins, mirroring systemd's alias handling.
+    if let Some(canonical) = lookup(alias) {
+        if declarants.contains(&canonical) && units.contains_key(&canonical) {
+            return Some(canonical);
+        }
+    }
+    // No filesystem evidence either way (a collision that only exists as
+    // `[Install]` hints): fall back to a deterministic loaded declarant
+    // instead of letting hash-map iteration order choose per boot.
+    declarants
+        .iter()
+        .find(|canonical| units.contains_key(*canonical))
+        .cloned()
+}
+
 fn rewrite_alias_refs(names: &mut HashSet<String>, aliases: &HashMap<String, String>) {
     if names.is_empty() || aliases.is_empty() {
         return;
@@ -954,6 +1008,14 @@ fn service_config_to_section(
         pam_name: cfg.pam_name.clone(),
         environment: cfg.environment.clone(),
         environment_file: cfg.environment_file.clone(),
+        state_directory: cfg.state_directory.clone(),
+        state_directory_mode: cfg.state_directory_mode,
+        logs_directory: cfg.logs_directory.clone(),
+        logs_directory_mode: cfg.logs_directory_mode,
+        runtime_directory: cfg.runtime_directory.clone(),
+        runtime_directory_mode: cfg.runtime_directory_mode,
+        configuration_directory: cfg.configuration_directory.clone(),
+        configuration_directory_mode: cfg.configuration_directory_mode,
         restart: restart_policy_from_ir(&cfg.restart_policy),
         restart_sec: cfg.restart_sec,
         timeout_start_sec: cfg.timeout_start_sec,
@@ -1477,6 +1539,108 @@ mod tests {
             "display-manager.service"
         );
         assert!(state.units.contains_key("display-manager.service"));
+    }
+
+    #[test]
+    fn colliding_alias_resolves_by_filesystem_authority() {
+        // Both lightdm.service and ddm.service declare
+        // `Alias=display-manager.service` on the test image.  The unit file
+        // with the alias's exact name (/etc/systemd/system/
+        // display-manager.service -> lightdm.service) decides the winner.
+        let mut lightdm = UnitFile::new("lightdm.service");
+        lightdm
+            .install
+            .alias
+            .push("display-manager.service".to_string());
+        let mut ddm = UnitFile::new("ddm.service");
+        ddm.install
+            .alias
+            .push("display-manager.service".to_string());
+        let mut units = HashMap::new();
+        units.insert("lightdm.service".to_string(), lightdm);
+        units.insert("ddm.service".to_string(), ddm);
+        let declarants: BTreeSet<String> = ["lightdm.service", "ddm.service"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let pick = |name: &str| -> Option<String> {
+            if name == "display-manager.service" {
+                Some("lightdm.service".to_string())
+            } else {
+                None
+            }
+        };
+        assert_eq!(
+            pick_alias_canonical("display-manager.service", &declarants, &units, &pick),
+            Some("lightdm.service".to_string())
+        );
+        // The disk is the only authority: pointing it at ddm flips the world
+        // (that is what `systemctl enable ddm` would have produced).
+        let pick_ddm = |name: &str| -> Option<String> {
+            if name == "display-manager.service" {
+                Some("ddm.service".to_string())
+            } else {
+                None
+            }
+        };
+        assert_eq!(
+            pick_alias_canonical("display-manager.service", &declarants, &units, &pick_ddm),
+            Some("ddm.service".to_string())
+        );
+    }
+
+    #[test]
+    fn colliding_alias_without_filesystem_evidence_is_deterministic() {
+        // No unit file carries the alias name (a collision that exists only
+        // as clashing `[Install]` hints): the winner must not depend on
+        // HashMap iteration order — the lexicographically first loaded
+        // declarant wins, every boot.
+        let mut a = UnitFile::new("alpha.service");
+        a.install.alias.push("phantom.service".to_string());
+        let mut z = UnitFile::new("zeta.service");
+        z.install.alias.push("phantom.service".to_string());
+        let mut units = HashMap::new();
+        units.insert("zeta.service".to_string(), z);
+        units.insert("alpha.service".to_string(), a);
+        let declarants: BTreeSet<String> = ["zeta.service", "alpha.service"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        for _ in 0..32 {
+            assert_eq!(
+                pick_alias_canonical("phantom.service", &declarants, &units, &|_| None),
+                Some("alpha.service".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn commit_resolves_colliding_aliases_deterministically() {
+        // End-to-end through commit: two declarants fight over one alias
+        // with no backing unit file on disk — the resolved alias must be
+        // stable (deterministic), never a per-boot flip.
+        let mut state = AllocatorState::new();
+        let mut first = UnitFile::new("zz-late.service");
+        first
+            .install
+            .alias
+            .push("allocator-alias-collision.service".to_string());
+        let mut second = UnitFile::new("aa-early.service");
+        second
+            .install
+            .alias
+            .push("allocator-alias-collision.service".to_string());
+        state.units.insert("zz-late.service".to_string(), first);
+        state.units.insert("aa-early.service".to_string(), second);
+
+        stage(&mut state, 7, vec![mount_ir("tmp.mount", "/tmp")]);
+        state.commit_staging(7, "test").unwrap();
+        assert_eq!(
+            state.resolve_unit_name("allocator-alias-collision.service"),
+            "aa-early.service"
+        );
     }
 
     /// Build a `UnitIR` for a target unit with the given wants set, exactly

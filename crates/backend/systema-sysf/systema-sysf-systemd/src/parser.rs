@@ -131,7 +131,13 @@ fn unit_ini() -> Ini {
 }
 
 fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
-    let processed = merge_append_keys(&preprocess_content(content));
+    // Keep the PREPROCESSED text around: the [Unit] reconcile below folds
+    // per assignment in file order (empty assignment = reset), so it must
+    // read the raw repeated lines — the merged text has already collapsed
+    // them, and the reset would be indistinguishable from a value-less
+    // union.
+    let preprocessed = preprocess_content(content);
+    let processed = merge_append_keys(&preprocessed);
     let mut config = unit_ini();
     config.read(processed.clone()).map_err(|e| {
         anyhow::anyhow!(sysa::l10n::fmt(
@@ -150,7 +156,93 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
         || config.get("unit", "requires").is_some()
         || config.get("unit", "wants").is_some()
     {
+        // systemd drop-in semantics (systemd.unit(5), "Adding drop-in config
+        // snippets"): list-typed dependency settings ACCUMULATE over the main
+        // unit file and its drop-ins; an EMPTY assignment RESETS the
+        // accumulated list; keys absent from the drop-in keep the base value.
+        // `parse_unit_section` rewrites every [Unit] field from the drop-in's
+        // config only, so a `[Unit] After=…`-only drop-in erased the base
+        // file's Requires=/After= — on the deepin image the
+        // user@.service.d/10-login-barrier.conf drop-in reduced user@<uid>
+        // to after=[systemd-user-sessions.service] with NO Requires=
+        // user-runtime-dir@%i.service edge, the user manager started before
+        // its runtime-dir prerequisite and /run/user/<uid> was missing.
+        // Snapshot the base section, parse, then reconcile per key below.
+        let base = unit.unit.clone();
         parse_unit_section(&config, &mut unit.unit, &unit.name)?;
+
+        let has_unit_key =
+            |section: &str, key: &str| !collect_key_lines(&preprocessed, section, key).is_empty();
+        for (key, base_set, parsed_set) in [
+            ("requires", &base.requires, &mut unit.unit.requires),
+            ("wants", &base.wants, &mut unit.unit.wants),
+            ("conflicts", &base.conflicts, &mut unit.unit.conflicts),
+            ("before", &base.before, &mut unit.unit.before),
+            ("after", &base.after, &mut unit.unit.after),
+            ("partof", &base.part_of, &mut unit.unit.part_of),
+            ("bindsto", &base.binds_to, &mut unit.unit.binds_to),
+            ("requisite", &base.requisite, &mut unit.unit.requisite),
+            ("upholds", &base.upholds, &mut unit.unit.upholds),
+            ("onsuccess", &base.on_success, &mut unit.unit.on_success),
+            ("onfailure", &base.on_failure, &mut unit.unit.on_failure),
+            (
+                "propagatesreloadto",
+                &base.propagates_reload_to,
+                &mut unit.unit.propagates_reload_to,
+            ),
+        ] {
+            let lines = collect_key_lines(&preprocessed, "unit", key);
+            if lines.is_empty() {
+                // Key absent from the drop-in: keep the base set.
+                *parsed_set = base_set.clone();
+                continue;
+            }
+            // Fold this drop-in's assignments in the file order systemd
+            // applies them: empty value ⇒ reset the accumulated list;
+            // non-empty ⇒ union its tokens in.  The raw (unmerged) lines
+            // are used precisely so the reset stays observable here.
+            let mut set = base_set.clone();
+            for value in lines {
+                if value.is_empty() {
+                    set.clear();
+                } else {
+                    set.extend(split_list(&expand_specifiers(&value, &unit.name)));
+                }
+            }
+            *parsed_set = set;
+        }
+
+        // Scalar settings: a drop-in overrides them only when it actually
+        // provides the key; otherwise the base value survives (a re-parse
+        // from the drop-in-only config would otherwise reset them to their
+        // defaults).
+        if !has_unit_key("unit", "description") {
+            unit.unit.description = base.description.clone();
+        }
+        if !has_unit_key("unit", "slice") {
+            unit.unit.slice = base.slice.clone();
+        }
+        if !has_unit_key("unit", "defaultdependencies") {
+            unit.unit.default_dependencies = base.default_dependencies;
+        }
+        if !has_unit_key("unit", "allowisolate") {
+            unit.unit.allow_isolate = base.allow_isolate;
+        }
+        if !has_unit_key("unit", "startlimitintervalsec")
+            && !has_unit_key("service", "startlimitintervalsec")
+        {
+            unit.unit.start_limit_interval_sec = base.start_limit_interval_sec;
+        }
+        if !has_unit_key("unit", "startlimitburst") && !has_unit_key("service", "startlimitburst") {
+            unit.unit.start_limit_burst = base.start_limit_burst;
+        }
+        if !has_unit_key("unit", "startlimitaction") && !has_unit_key("service", "startlimitaction")
+        {
+            unit.unit.start_limit_action = base.start_limit_action;
+        }
+        if !has_unit_key("unit", "successaction") {
+            unit.unit.success_action = base.success_action;
+        }
     }
     if config.get("install", "wantedby").is_some() {
         parse_install_section(&config, &mut unit.install)?;
@@ -183,6 +275,55 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
                         svc.environment_file
                             .push(expand_specifiers(&val, &unit.name));
                     }
+                }
+
+                // Directory directives: repeated directives accumulate and an
+                // empty value resets the list (systemd semantics for the
+                // directory family); a mode present in the drop-in overrides
+                // the base value, one absent keeps it.
+                for val in collect_key_lines(&processed, "service", "statedirectory") {
+                    if val.is_empty() {
+                        svc.state_directory.clear();
+                    } else {
+                        svc.state_directory
+                            .extend(split_vec(&expand_specifiers(&val, &unit.name)));
+                    }
+                }
+                if let Some(v) = config.get("service", "statedirectorymode") {
+                    svc.state_directory_mode = parse_dir_mode(v);
+                }
+                for val in collect_key_lines(&processed, "service", "logsdirectory") {
+                    if val.is_empty() {
+                        svc.logs_directory.clear();
+                    } else {
+                        svc.logs_directory
+                            .extend(split_vec(&expand_specifiers(&val, &unit.name)));
+                    }
+                }
+                if let Some(v) = config.get("service", "logsdirectorymode") {
+                    svc.logs_directory_mode = parse_dir_mode(v);
+                }
+                for val in collect_key_lines(&processed, "service", "runtimedirectory") {
+                    if val.is_empty() {
+                        svc.runtime_directory.clear();
+                    } else {
+                        svc.runtime_directory
+                            .extend(split_vec(&expand_specifiers(&val, &unit.name)));
+                    }
+                }
+                if let Some(v) = config.get("service", "runtimedirectorymode") {
+                    svc.runtime_directory_mode = parse_dir_mode(v);
+                }
+                for val in collect_key_lines(&processed, "service", "configurationdirectory") {
+                    if val.is_empty() {
+                        svc.configuration_directory.clear();
+                    } else {
+                        svc.configuration_directory
+                            .extend(split_vec(&expand_specifiers(&val, &unit.name)));
+                    }
+                }
+                if let Some(v) = config.get("service", "configurationdirectorymode") {
+                    svc.configuration_directory_mode = parse_dir_mode(v);
                 }
 
                 // Scalar keys in drop-ins override the base value. Unlike the
@@ -369,7 +510,17 @@ fn merge_append_keys(content: &str) -> String {
     }
 
     for ((_section, key), (idx, values)) in merged {
-        out[idx] = format!("{key} = {}", values.join(" "));
+        // systemd fold semantics for append-only keys (systemd.unit(5)):
+        // an EMPTY assignment RESETS the accumulated list, swallowing the
+        // assignments before it; non-empty assignments union their tokens
+        // in.  Encode the same result in the merged assignment: only the
+        // values after the LAST empty one survive (`After=a\nAfter=\nAfter=b`
+        // must collapse to `After=b`, `…After=` alone to an empty reset).
+        let surviving: &[String] = match values.iter().rposition(|v| v.is_empty()) {
+            Some(last_empty) => &values[last_empty + 1..],
+            None => &values[..],
+        };
+        out[idx] = format!("{key} = {}", surviving.join(" "));
     }
     out.join("\n")
 }
@@ -793,6 +944,20 @@ fn parse_delegate(value: Option<&str>) -> (bool, Option<Vec<String>>) {
     }
 }
 
+/// Parse a directory-mode directive value (`*DirectoryMode=`).
+///
+/// Octal like the unit file literal (`0700`); an empty/absent value yields
+/// 0 (= unset — the worker applies its own 0755 default); anything
+/// non-octal likewise collapses to 0 instead of failing the unit, matching
+/// how the tolerant scalar getters behave for other keys.
+fn parse_dir_mode(value: String) -> u32 {
+    if value.is_empty() {
+        0
+    } else {
+        u32::from_str_radix(value.trim(), 8).unwrap_or(0)
+    }
+}
+
 /// Get a u32 value, returning `default` if absent or unparseable.
 fn get_u32(config: &Ini, section: &str, key: &str, default: u32) -> u32 {
     config
@@ -1165,6 +1330,49 @@ fn parse_service_section(config: &Ini, svc: &mut ServiceSection, name: &str) -> 
     if !env_file.is_empty() {
         svc.environment_file.push(env_file);
     }
+
+    // Directory directives (systemd.exec(5)): whitespace-separated path
+    // fragments below the per-type base (/var/lib, /var/log, /run, /etc);
+    // repeated directives accumulate and an empty value resets the list,
+    // matching the ExecStart= handling.  Modes stay 0 ("unset") so the
+    // worker applies its own default (0755) when the unit does not set one.
+    let statedir = get_str(config, "service", "statedirectory");
+    if config.get("service", "statedirectory").is_some() {
+        if statedir.is_empty() {
+            svc.state_directory.clear();
+        } else {
+            svc.state_directory.extend(split_vec(&statedir));
+        }
+    }
+    svc.state_directory_mode = parse_dir_mode(get_str(config, "service", "statedirectorymode"));
+    let logdir = get_str(config, "service", "logsdirectory");
+    if config.get("service", "logsdirectory").is_some() {
+        if logdir.is_empty() {
+            svc.logs_directory.clear();
+        } else {
+            svc.logs_directory.extend(split_vec(&logdir));
+        }
+    }
+    svc.logs_directory_mode = parse_dir_mode(get_str(config, "service", "logsdirectorymode"));
+    let rundir = get_str(config, "service", "runtimedirectory");
+    if config.get("service", "runtimedirectory").is_some() {
+        if rundir.is_empty() {
+            svc.runtime_directory.clear();
+        } else {
+            svc.runtime_directory.extend(split_vec(&rundir));
+        }
+    }
+    svc.runtime_directory_mode = parse_dir_mode(get_str(config, "service", "runtimedirectorymode"));
+    let cfgdir = get_str(config, "service", "configurationdirectory");
+    if config.get("service", "configurationdirectory").is_some() {
+        if cfgdir.is_empty() {
+            svc.configuration_directory.clear();
+        } else {
+            svc.configuration_directory.extend(split_vec(&cfgdir));
+        }
+    }
+    svc.configuration_directory_mode =
+        parse_dir_mode(get_str(config, "service", "configurationdirectorymode"));
 
     svc.watchdog_sec = get_u32(config, "service", "watchdogusec", 0);
 
@@ -2259,6 +2467,117 @@ DeviceName=/dev/sda
         assert_eq!(svc.exec_start[0].program, "/usr/bin/foo");
     }
 
+    // Incident regression: the deepin image ships
+    // user@.service.d/10-login-barrier.conf containing only
+    // `After=systemd-user-sessions.service`.  With replacement semantics the
+    // user@<uid> unit lost Requires=user-runtime-dir@%i.service and its other
+    // After targets, started before /run/user/<uid> was mounted and the user
+    // manager exited without READY=1 (black screen after login).  systemd's
+    // drop-in semantics instead ACCUMULATE dependency lists.
+    #[test]
+    fn test_dropin_dep_lists_accumulate_over_base() {
+        let base = concat!(
+            "[Unit]\n",
+            "After=user-runtime-dir@%i.service dbus.service systemd-oomd.service\n",
+            "Requires=user-runtime-dir@%i.service\n",
+            "[Service]\nExecStart=/usr/lib/systemd/systemd --user\n",
+        );
+        let mut unit = parse_unit("user@1000.service", base).unwrap();
+        let dropin = "[Unit]\n# login barrier\nAfter=systemd-user-sessions.service\n";
+        apply_dropin_content(&mut unit, dropin).unwrap();
+        // Every accumulated edge survives:
+        assert!(
+            unit.unit.after.contains("user-runtime-dir@1000.service"),
+            "after lost the base edge: {:?}",
+            unit.unit.after
+        );
+        assert!(unit.unit.after.contains("dbus.service"));
+        assert!(unit.unit.after.contains("systemd-oomd.service"));
+        assert!(unit.unit.after.contains("systemd-user-sessions.service"));
+        assert!(unit.unit.requires.contains("user-runtime-dir@1000.service"));
+    }
+
+    // systemd: an EMPTY dependency assignment resets the accumulated list,
+    // with later assignments in the same file setting fresh values.
+    #[test]
+    fn test_dropin_empty_assignment_resets_list() {
+        let base = "[Unit]\nAfter=a.service b.service\nRequires=a.service\n";
+        let mut unit = parse_unit("reset.service", base).unwrap();
+        let dropin = "[Unit]\nAfter=\nAfter=c.service\n";
+        apply_dropin_content(&mut unit, dropin).unwrap();
+        assert_eq!(unit.unit.after.len(), 1);
+        assert!(unit.unit.after.contains("c.service"));
+        // Requires untouched by the drop-in keeps its base value.
+        assert!(unit.unit.requires.contains("a.service"));
+    }
+
+    // The same reset rule applies INSIDE one unit file: repeated
+    // assignments accumulate, an empty assignment clears everything before
+    // it (`merge_append_keys` must not lose the empty assignment).
+    #[test]
+    fn test_empty_assignment_within_one_file_resets() {
+        // reset in the middle: only the tail survives.
+        let unit = parse_unit(
+            "m.service",
+            "[Unit]\nAfter=a.service\nAfter=\nAfter=b.service\n",
+        )
+        .unwrap();
+        assert_eq!(unit.unit.after.len(), 1);
+        assert!(unit.unit.after.contains("b.service"));
+
+        let unit = parse_unit(
+            "m2.service",
+            "[Unit]\nAfter=a.service\nAfter=b.service\nAfter=\n",
+        )
+        .unwrap();
+        assert!(unit.unit.after.is_empty(), "trailing reset kept values");
+
+        // No empty assignment: repeated values union (merge_append_keys).
+        let unit = parse_unit("m3.service", "[Unit]\nAfter=a.service\nAfter=b.service\n").unwrap();
+        assert!(unit.unit.after.contains("a.service"));
+        assert!(unit.unit.after.contains("b.service"));
+    }
+
+    // A drop-in that first RESETS then re-adds must NOT keep the base
+    // values: the empty assignment clears base ∪ drop-in, then rebuilds.
+    #[test]
+    fn test_dropin_reset_then_readd_discards_base() {
+        let base = "[Unit]\nAfter=a.service b.service\n";
+        let mut unit = parse_unit("rr.service", base).unwrap();
+        let dropin = "[Unit]\nAfter=\nAfter=c.service\n";
+        apply_dropin_content(&mut unit, dropin).unwrap();
+        assert_eq!(unit.unit.after.len(), 1);
+        assert!(unit.unit.after.contains("c.service"));
+        assert!(!unit.unit.after.contains("a.service"));
+    }
+
+    // A [Service]-shaped drop-in must not clobber [Unit] data, and a [Unit]
+    //-shaped drop-in must not reset scalars it does not mention.
+    #[test]
+    fn test_dropin_absent_dep_and_scalars_untouched() {
+        let base = concat!(
+            "[Unit]\n",
+            "Description=User Manager\n",
+            "Slice=user-%i.slice\n",
+            "After=dbus.service\n",
+            "[Service]\nExecStart=/usr/bin/stay\n",
+        );
+        let mut unit = parse_unit("u@1.service", base).unwrap();
+        let deployin = "[Service]\nEnvironment=K=1\n";
+        apply_dropin_content(&mut unit, deployin).unwrap();
+        assert_eq!(unit.unit.description, "User Manager");
+        assert_eq!(unit.unit.slice, "user-1.slice");
+        assert!(unit.unit.after.contains("dbus.service"));
+
+        let mut unit = parse_unit("u@2.service", base).unwrap();
+        let unitdropin = "[Unit]\nAfter=logind.service\n";
+        apply_dropin_content(&mut unit, unitdropin).unwrap();
+        assert_eq!(unit.unit.description, "User Manager");
+        assert_eq!(unit.unit.slice, "user-2.slice");
+        assert!(unit.unit.after.contains("logind.service"));
+        assert!(unit.unit.after.contains("dbus.service"));
+    }
+
     #[test]
     fn test_dropin_standard_input_overrides() {
         let base = "[Service]\nExecStart=/usr/bin/foo\nStandardOutput=tty\n";
@@ -2323,6 +2642,61 @@ AllowedCPUs=0-3
         assert_eq!(slice.rc.tasks_max, 256);
         assert_eq!(slice.rc.memory_max, "1G");
         assert_eq!(slice.rc.cpu_quota, "50%");
+    }
+
+    // -----------------------------------------------------------------------
+    // Directory directives (systemd.exec(5))
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_service_directory_directives_parse() {
+        let content = "[Service]\n\
+                       ExecStart=/usr/bin/foo\n\
+                       StateDirectory=foo bar/baz\n\
+                       StateDirectoryMode=0700\n\
+                       LogsDirectory=deepin\n\
+                       LogsDirectoryMode=0750\n";
+        let unit = parse_unit("dird.service", content).unwrap();
+        let svc = unit.service.unwrap();
+        // Whitespace-split fragments; repeated values accumulate.
+        assert_eq!(svc.state_directory, vec!["foo", "bar/baz"]);
+        assert_eq!(svc.state_directory_mode, 0o700);
+        assert_eq!(svc.logs_directory, vec!["deepin"]);
+        assert_eq!(svc.logs_directory_mode, 0o750);
+        // Untouched families stay empty with mode 0 (= worker default 0755).
+        assert!(svc.runtime_directory.is_empty());
+        assert_eq!(svc.runtime_directory_mode, 0);
+        assert!(svc.configuration_directory.is_empty());
+        assert_eq!(svc.configuration_directory_mode, 0);
+    }
+
+    #[test]
+    fn test_dropin_directory_directives_merge() {
+        // The real regression shape: dde-dconfig-daemon declares
+        // LogsDirectory=deepin + StateDirectory=dde-dconfig-daemon (Mode=0700)
+        // and stock systemd synthesizes $LOGS_DIRECTORY/$STATE_DIRECTORY from
+        // them.
+        let base = "[Service]\n\
+                    ExecStart=/usr/bin/dde-dconfig-daemon\n\
+                    LogsDirectory=deepin\n\
+                    StateDirectory=dde-dconfig-daemon\n\
+                    StateDirectoryMode=0700\n";
+        let mut unit = parse_unit("dde-dconfig-daemon.service", base).unwrap();
+
+        // Empty value in a drop-in resets the accumulated list.
+        apply_dropin_content(&mut unit, "[Service]\nStateDirectory=\n").unwrap();
+        {
+            let svc = unit.service.as_ref().unwrap();
+            assert!(svc.state_directory.is_empty());
+            // Untouched keys keep the base values through the drop-in.
+            assert_eq!(svc.logs_directory, vec!["deepin"]);
+        }
+
+        // A non-empty drop-in value unions its fragments in.
+        apply_dropin_content(&mut unit, "[Service]\nStateDirectory=qux\n").unwrap();
+        let svc = unit.service.as_ref().unwrap();
+        assert_eq!(svc.state_directory, vec!["qux"]);
+        assert_eq!(svc.logs_directory, vec!["deepin"]);
     }
 
     // -----------------------------------------------------------------------

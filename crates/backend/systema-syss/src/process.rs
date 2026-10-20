@@ -246,9 +246,11 @@ pub async fn start_service(
         info!("Set XDG_RUNTIME_DIR={value} for {unit_name} (PAM did not provide it)");
     }
 
-    // Build environment lookup table (process env + unit Environment= +
-    // PAM env + forced env).
-    let env_table = build_env_table(&svc.environment, &pam_env);
+    // Build environment lookup table (process env + passwd identity env +
+    // unit Environment= + PAM env + forced env).
+    let identity_env = identity_env(creds.as_ref());
+    let directory_env = prepare_service_directories(svc, creds.as_ref())?;
+    let env_table = build_env_table(&svc.environment, &pam_env, &identity_env, &directory_env);
 
     // Expand $VAR / ${VAR} in every argument, handling standalone splitting.
     let final_args = if parsed.flags.no_env_expand {
@@ -305,6 +307,14 @@ pub async fn start_service(
     // execs with execvpe(), which discards every setenv() performed by
     // pre_exec (LISTEN_PID/LISTEN_FDS included).
     let mut child_envs: Vec<(CString, CString)> = Vec::new();
+    // Passwd identity env ($USER/$LOGNAME/$HOME/$SHELL, systemd.exec(5))
+    // goes in FIRST: later entries win, so the unit's own Environment= (and
+    // the PAM environment) can still override them.
+    for (key, val) in &identity_env {
+        if let (Ok(k), Ok(v)) = (CString::new(key.as_str()), CString::new(val.as_str())) {
+            child_envs.push((k, v));
+        }
+    }
     for env_str in &svc.environment {
         if let Some((key, val)) = env_str.split_once('=') {
             if let (Ok(k), Ok(v)) = (CString::new(key), CString::new(val)) {
@@ -315,6 +325,14 @@ pub async fn start_service(
     // PAM environment (applied after Environment= so it cannot be
     // overridden by the unit, mirroring systemd's strv_env_merge order).
     for (key, val) in &pam_env {
+        if let (Ok(k), Ok(v)) = (CString::new(key.as_str()), CString::new(val.as_str())) {
+            child_envs.push((k, v));
+        }
+    }
+    // Directory-directive env ($STATE_DIRECTORY & co): manager-synthesized
+    // exec-run metadata, applied like INVOCATION_ID below so a stale unit
+    // Environment= assignment cannot mask the real directories.
+    for (key, val) in &directory_env {
         if let (Ok(k), Ok(v)) = (CString::new(key.as_str()), CString::new(val.as_str())) {
             child_envs.push((k, v));
         }
@@ -583,6 +601,11 @@ struct Creds {
     /// Canonical username (pw_name) for `initgroups()`; `None` when only
     /// `Group=` was set.
     username: Option<String>,
+    /// passwd home directory; `None` when only `Group=` was set (no user
+    /// lookup happened).
+    home: Option<String>,
+    /// passwd login shell.
+    shell: Option<String>,
 }
 
 /// Resolve `User=`/`Group=` into uid/gid.  Numeric UIDs are supported
@@ -625,7 +648,6 @@ fn resolve_credentials(user: &str, group: &str) -> Result<Option<Creds>> {
     }
 
     let mut uid: Option<Uid> = None;
-    let mut resolved_user: Option<String> = None;
     if let Some(u) = &username {
         let found = match User::from_name(u).with_context(|| {
             sysa::l10n::fmt(
@@ -654,16 +676,24 @@ fn resolve_credentials(user: &str, group: &str) -> Result<Option<Creds>> {
             ))
         })?;
         uid = Some(usr.uid);
-        resolved_user = Some(usr.name);
         if gid.is_none() {
             gid = Some(usr.gid);
         }
+        return Ok(Some(Creds {
+            uid: uid.unwrap_or(Uid::from_raw(0)).as_raw(),
+            gid: gid.unwrap_or(Gid::from_raw(0)).as_raw(),
+            username: Some(usr.name.clone()),
+            home: Some(usr.dir.to_string_lossy().into_owned()),
+            shell: Some(usr.shell.to_string_lossy().into_owned()),
+        }));
     }
 
     Ok(Some(Creds {
         uid: uid.unwrap_or(Uid::from_raw(0)).as_raw(),
         gid: gid.unwrap_or(Gid::from_raw(0)).as_raw(),
-        username: resolved_user,
+        username: None,
+        home: None,
+        shell: None,
     }))
 }
 
@@ -1399,11 +1429,20 @@ fn expand_specifiers(s: &str, name: &str) -> String {
 /// Build a lookup table from the unit's `Environment=` settings and the PAM
 /// environment (order: process env, unit env, PAM env, forced env — later
 /// entries win).
-fn build_env_table(unit_env: &[String], pam_env: &[(String, String)]) -> HashMap<String, String> {
+fn build_env_table(
+    unit_env: &[String],
+    pam_env: &[(String, String)],
+    identity_env: &[(String, String)],
+    directory_env: &[(String, String)],
+) -> HashMap<String, String> {
     let mut table: HashMap<String, String> = HashMap::new();
 
     for (key, val) in std::env::vars() {
         table.insert(key, val);
+    }
+
+    for (key, val) in identity_env {
+        table.insert(key.clone(), val.clone());
     }
 
     for entry in unit_env {
@@ -1416,11 +1455,186 @@ fn build_env_table(unit_env: &[String], pam_env: &[(String, String)]) -> HashMap
         table.insert(key.clone(), val.clone());
     }
 
+    for (key, val) in directory_env {
+        table.insert(key.clone(), val.clone());
+    }
+
     for (key, val) in FORCED_SERVICE_ENV {
         table.insert(key.to_string(), val.to_string());
     }
 
     table
+}
+
+/// `$USER`/`$LOGNAME`/`$HOME`/`$SHELL` for the spawned child, sourced from the
+/// passwd entry of the service user — systemd.exec(5) has the manager set
+/// these four for every service, from `User=`'s passwd record or root's when
+/// the unit specifies no user (PAM-managed units get them from the pam
+/// environment instead, which is merged after them).  `$HOME` unset is not a
+/// tolerable fallback: dde-dconfig-daemon interpreted it as `//.cache/…`, and
+/// spdlog abort()ed the daemon on the resulting Permission denied — taking
+/// the whole accounts stack (and with it the greeter) down with it.
+fn identity_env(creds: Option<&Creds>) -> Vec<(String, String)> {
+    let creds = match creds {
+        Some(c) => c,
+        // No `User=`/`Group=` anywhere: the service runs as root, whose
+        // passwd entry is /root:/bin/sh on essentially every image.
+        None => {
+            return vec![
+                ("USER".to_string(), "root".to_string()),
+                ("LOGNAME".to_string(), "root".to_string()),
+                ("HOME".to_string(), "/root".to_string()),
+                ("SHELL".to_string(), "/bin/sh".to_string()),
+            ];
+        }
+    };
+    let user = creds.username.clone().unwrap_or_else(|| "root".to_string());
+    let home = creds.home.clone().unwrap_or_else(|| "/root".to_string());
+    let shell = creds.shell.clone().unwrap_or_else(|| "/bin/sh".to_string());
+    vec![
+        ("USER".to_string(), user.clone()),
+        ("LOGNAME".to_string(), user),
+        ("HOME".to_string(), home),
+        ("SHELL".to_string(), shell),
+    ]
+}
+
+/// Per-family bases for the systemd.exec(5) directory directives.
+///
+/// The system domain uses the absolute bases; a user-domain manager remaps
+/// them into the calling user's XDG hierarchy (see systemd.exec(5)'s
+/// user-manager table).
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct DirectoryBases {
+    state: std::path::PathBuf,
+    logs: std::path::PathBuf,
+    runtime: std::path::PathBuf,
+    configuration: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+fn directory_bases() -> DirectoryBases {
+    // The bases follow the manager's own identity (System S), not the
+    // service's: the system-domain manager is root and uses the absolute
+    // systemd paths, while a user-domain manager remaps its per-service
+    // directories into the user's XDG hierarchy (RuntimeDirectory →
+    // $XDG_RUNTIME_DIR, StateDirectory → $XDG_STATE_HOME, CacheDirectory →
+    // $XDG_CACHE_HOME, ConfigurationDirectory → $XDG_CONFIG_HOME — for the
+    // LogsDirectory the cache hierarchy is the deepin-observed convention).
+    if nix::unistd::Uid::current().as_raw() == 0 {
+        return DirectoryBases {
+            state: "/var/lib".into(),
+            logs: "/var/log".into(),
+            runtime: "/run".into(),
+            configuration: "/etc".into(),
+        };
+    }
+    let env_or = |key: &str, fallback: String| -> std::path::PathBuf {
+        std::env::var(key)
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(fallback))
+    };
+    let home = env_or("HOME", "/root".to_string());
+    DirectoryBases {
+        state: env_or("XDG_STATE_HOME", format!("{}/.local/state", home.display())),
+        logs: env_or("XDG_CACHE_HOME", format!("{}/.cache", home.display())),
+        runtime: env_or(
+            "XDG_RUNTIME_DIR",
+            format!("/run/user/{}", nix::unistd::Uid::current().as_raw()),
+        ),
+        configuration: env_or("XDG_CONFIG_HOME", format!("{}/.config", home.display())),
+    }
+}
+
+/// Create one directory family's paths, apply the mode, hand ownership to
+/// the service user and export the corresponding `$*_DIRECTORY` env var
+/// (systemd.exec(5)).  Nested fragments get their intermediate levels with
+/// the default umask permissions; mode and ownership land on the leaf.
+#[cfg(unix)]
+fn prepare_directory_family(
+    env_key: &str,
+    fragments: &[String],
+    mode: u32,
+    base: &std::path::Path,
+    owner: Option<(nix::unistd::Uid, nix::unistd::Gid)>,
+) -> Result<Vec<(String, String)>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut paths: Vec<String> = Vec::new();
+    for fragment in fragments {
+        let path = base.join(fragment.trim_start_matches('/'));
+        std::fs::create_dir_all(&path)
+            .with_context(|| format!("creating {} directory {}", env_key, path.display()))?;
+        if mode != 0 {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                .with_context(|| format!("setting mode on {}", path.display()))?;
+        }
+        if let Some((uid, gid)) = owner {
+            nix::unistd::chown(&path, Some(uid), Some(gid))
+                .map_err(|e| anyhow::anyhow!("chown {} to service user: {e}", path.display()))?;
+        }
+        paths.push(path.to_string_lossy().into_owned());
+    }
+    Ok(if paths.is_empty() {
+        Vec::new()
+    } else {
+        vec![(env_key.to_string(), paths.join(":"))]
+    })
+}
+
+/// Run every directory family for one service.  Returns the env pairs to
+/// hand to the process (empty when the unit declares none), failing the
+/// start when a directory cannot be created — systemd likewise fails the
+/// unit (e.g. `Failed to create /var/lib/…`).
+#[cfg(unix)]
+fn prepare_service_directories(
+    svc: &sysa::proto::ServiceConfig,
+    creds: Option<&Creds>,
+) -> Result<Vec<(String, String)>> {
+    let bases = directory_bases();
+    // Only the root manager can (and systemd-ish does) enforce ownership;
+    // a user-domain manager is already running as the owning user.
+    let owner = if nix::unistd::Uid::current().as_raw() == 0 {
+        Some((
+            nix::unistd::Uid::from_raw(creds.map(|c| c.uid).unwrap_or(0)),
+            nix::unistd::Gid::from_raw(creds.map(|c| c.gid).unwrap_or(0)),
+        ))
+    } else {
+        None
+    };
+    let mut env = Vec::new();
+    for (key, fragments, mode, base) in [
+        (
+            "STATE_DIRECTORY",
+            &svc.state_directory,
+            svc.state_directory_mode,
+            bases.state.as_path(),
+        ),
+        (
+            "LOGS_DIRECTORY",
+            &svc.logs_directory,
+            svc.logs_directory_mode,
+            bases.logs.as_path(),
+        ),
+        (
+            "RUNTIME_DIRECTORY",
+            &svc.runtime_directory,
+            svc.runtime_directory_mode,
+            bases.runtime.as_path(),
+        ),
+        (
+            "CONFIGURATION_DIRECTORY",
+            &svc.configuration_directory,
+            svc.configuration_directory_mode,
+            bases.configuration.as_path(),
+        ),
+    ] {
+        env.extend(prepare_directory_family(key, fragments, mode, base, owner)?);
+    }
+    Ok(env)
 }
 
 /// Whether `XDG_RUNTIME_DIR` should fall back to `/run/user/<uid>`.
@@ -2039,7 +2253,7 @@ mod tests {
             "SYSTEMCTL_FORCE_BUS=0".to_string(),
             "SYSTEMD_OFFLINE=1".to_string(),
         ];
-        let table = build_env_table(&unit_env, &[]);
+        let table = build_env_table(&unit_env, &[], &[], &[]);
         assert_eq!(
             table.get("SYSTEMCTL_FORCE_BUS").map(String::as_str),
             Some("1")
@@ -2051,10 +2265,24 @@ mod tests {
     fn pam_env_override_unit_environment_in_table() {
         let unit_env = vec!["XDG_RUNTIME_DIR=/tmp/unit".to_string()];
         let pam_env = vec![("XDG_RUNTIME_DIR".to_string(), "/run/user/1000".to_string())];
-        let table = build_env_table(&unit_env, &pam_env);
+        let table = build_env_table(&unit_env, &pam_env, &[], &[]);
         assert_eq!(
             table.get("XDG_RUNTIME_DIR").map(String::as_str),
             Some("/run/user/1000")
+        );
+    }
+
+    #[test]
+    fn directory_env_overrides_unit_environment_in_table() {
+        // The manager synthesizes the directory variables from the unit's
+        // directory directives; a unit that (pointlessly) carries its own
+        // STATE_DIRECTORY= must not mask the real one.
+        let directory_env = [("STATE_DIRECTORY".to_string(), "/var/lib/foo".to_string())];
+        let unit_env = vec!["STATE_DIRECTORY=/opt/lie".to_string()];
+        let table = build_env_table(&unit_env, &[], &[], &directory_env);
+        assert_eq!(
+            table.get("STATE_DIRECTORY").map(String::as_str),
+            Some("/var/lib/foo")
         );
     }
 
@@ -2064,12 +2292,183 @@ mod tests {
             ("SYSTEMCTL_FORCE_BUS".to_string(), "0".to_string()),
             ("SYSTEMD_OFFLINE".to_string(), "1".to_string()),
         ];
-        let table = build_env_table(&[], &pam_env);
+        let table = build_env_table(&[], &pam_env, &[], &[]);
         assert_eq!(
             table.get("SYSTEMCTL_FORCE_BUS").map(String::as_str),
             Some("1")
         );
         assert_eq!(table.get("SYSTEMD_OFFLINE").map(String::as_str), Some("0"));
+    }
+
+    #[test]
+    fn identity_env_defaults_to_root_passwd_entry_for_userless_units() {
+        // systemd.exec(5): with no User=/Group= the four identity variables
+        // still exist, sourced from root's passwd record.  An empty $HOME is
+        // what made dde-dconfig-daemon resolve its cache file as
+        // //.cache/deepin/dde-dconfig-daemon/dde-dconfig-daemon.log.
+        let table = build_env_table(&[], &[], &identity_env(None), &[]);
+        assert_eq!(table.get("USER").map(String::as_str), Some("root"));
+        assert_eq!(table.get("LOGNAME").map(String::as_str), Some("root"));
+        assert_eq!(table.get("HOME").map(String::as_str), Some("/root"));
+        assert_eq!(table.get("SHELL").map(String::as_str), Some("/bin/sh"));
+    }
+
+    #[test]
+    fn identity_env_sources_home_and_shell_from_service_user() {
+        let creds = Creds {
+            uid: 1000,
+            gid: 1000,
+            username: Some("chenpi11".to_string()),
+            home: Some("/home/chenpi11".to_string()),
+            shell: Some("/usr/bin/zsh".to_string()),
+        };
+        let identity = identity_env(Some(&creds));
+        let table = build_env_table(&[], &[], &identity, &[]);
+        assert_eq!(table.get("USER").map(String::as_str), Some("chenpi11"));
+        assert_eq!(table.get("LOGNAME").map(String::as_str), Some("chenpi11"));
+        assert_eq!(
+            table.get("HOME").map(String::as_str),
+            Some("/home/chenpi11")
+        );
+        assert_eq!(table.get("SHELL").map(String::as_str), Some("/usr/bin/zsh"));
+    }
+
+    #[test]
+    fn unit_environment_overrides_identity_env_in_table() {
+        let creds = Creds {
+            uid: 1000,
+            gid: 1000,
+            username: Some("chenpi11".to_string()),
+            home: Some("/home/chenpi11".to_string()),
+            shell: Some("/usr/bin/zsh".to_string()),
+        };
+        let identity = identity_env(Some(&creds));
+        let unit_env = vec!["HOME=/opt/unit-home".to_string()];
+        let table = build_env_table(&unit_env, &[], &identity, &[]);
+        assert_eq!(
+            table.get("HOME").map(String::as_str),
+            Some("/opt/unit-home")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn directory_family_creates_env_colon_joined() {
+        // systemd.exec(5): each fragment below the family base is created
+        // (nested levels included), gets the directive mode on its leaf and
+        // the family env var joins the full paths colon-separated.
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!(
+            "systema-syss-dirs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        let env = prepare_directory_family(
+            "STATE_DIRECTORY",
+            &["foo".to_string(), "sub/bar".to_string()],
+            0o700,
+            &base,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            env,
+            vec![(
+                "STATE_DIRECTORY".to_string(),
+                format!(
+                    "{}:{}",
+                    base.join("foo").display(),
+                    base.join("sub/bar").display()
+                )
+            )]
+        );
+        // The mode lands on each leaf (the nested intermediate level keeps
+        // umask defaults, like systemd's intermediate handling).
+        let mode = std::fs::metadata(base.join("foo"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+        let mode = std::fs::metadata(base.join("sub/bar"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn directory_family_without_mode_gets_default_and_env() {
+        // mode 0 = unset: the directory is still created and exported; the
+        // open perms follow the umask (not asserted here — umask-dependent).
+        let base = std::env::temp_dir().join(format!(
+            "systema-syss-dirs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        let env =
+            prepare_directory_family("LOGS_DIRECTORY", &["deepin".to_string()], 0, &base, None)
+                .unwrap();
+        assert_eq!(
+            env,
+            vec![(
+                "LOGS_DIRECTORY".to_string(),
+                base.join("deepin").to_string_lossy().into_owned()
+            )]
+        );
+        assert!(base.join("deepin").is_dir());
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn directory_family_failure_fails_the_start() {
+        // A base that is a file (not a directory) must fail creation —
+        // systemd rejects the unit for a failing directory directive too.
+        let root = std::env::temp_dir().join(format!(
+            "systema-syss-dirs-file-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ));
+        std::fs::write(&root, b"not a dir").unwrap();
+
+        let result =
+            prepare_directory_family("STATE_DIRECTORY", &["foo".to_string()], 0, &root, None);
+        assert!(result.is_err());
+
+        std::fs::remove_file(&root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn prepare_service_directories_skips_empty_families() {
+        // No directory directives listed → no env produced and nothing
+        // created anywhere.
+        let svc = sysa::proto::ServiceConfig::default();
+        let env = prepare_service_directories(&svc, None).unwrap_or_else(|e| {
+            panic!("empty family must not fail: {e}");
+        });
+        assert!(env.is_empty());
     }
 
     // --- Credential resolution ---

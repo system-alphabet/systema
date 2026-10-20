@@ -572,6 +572,22 @@ pub struct ServiceSection {
     pub pam_name: String,
     pub environment: Vec<String>,
     pub environment_file: Vec<String>,
+    /// `StateDirectory=` — whitespace-split path fragments created under
+    /// `/var/lib` (system domain, `$XDG_STATE_HOME` per fragment) and handed
+    /// to the process as `$STATE_DIRECTORY`.
+    pub state_directory: Vec<String>,
+    pub state_directory_mode: u32,
+    /// `LogsDirectory=` — under `/var/log` (system domain), exported as
+    /// `$LOGS_DIRECTORY`.
+    pub logs_directory: Vec<String>,
+    pub logs_directory_mode: u32,
+    /// `RuntimeDirectory=` — under `/run`, exported as `$RUNTIME_DIRECTORY`.
+    pub runtime_directory: Vec<String>,
+    pub runtime_directory_mode: u32,
+    /// `ConfigurationDirectory=` — under `/etc`, exported as
+    /// `$CONFIGURATION_DIRECTORY`.
+    pub configuration_directory: Vec<String>,
+    pub configuration_directory_mode: u32,
     pub pid_file: String,
     pub restart: RestartPolicy,
     pub restart_sec: u32,

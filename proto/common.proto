@@ -356,6 +356,21 @@ message ServiceConfig {
     // started (the worker waits for the name to be owned before the start
     // job completes, like systemd's service_bus_name_owner_change()).
     string bus_name = 20;
+    // Directory directives (systemd.exec(5)): the worker creates each
+    // fragment below the per-type base (/var/lib, /var/log, /run, /etc),
+    // applies the mode, chowns it to the service user and exports the
+    // corresponding colon-joined env var ($STATE_DIRECTORY,
+    // $LOGS_DIRECTORY, $RUNTIME_DIRECTORY, $CONFIGURATION_DIRECTORY).
+    // Mode 0 means "unset" (worker default 0755).  Fragments are
+    // whitespace-split at parse time.
+    repeated string state_directory = 21;
+    uint32 state_directory_mode = 22;
+    repeated string logs_directory = 23;
+    uint32 logs_directory_mode = 24;
+    repeated string runtime_directory = 25;
+    uint32 runtime_directory_mode = 26;
+    repeated string configuration_directory = 27;
+    uint32 configuration_directory_mode = 28;
 }
 
 // Configuration for `.scope` units, sent to the System E worker.

@@ -336,6 +336,21 @@ pub struct ServiceSection {
     pub pam_name: String,
     pub environment: Vec<String>,
     pub environment_file: Vec<String>,
+    /// `StateDirectory=` fragments (/var/lib base) → `$STATE_DIRECTORY`,
+    /// created + chowned to the service user before exec; mode 0 = worker
+    /// default (0755).  See systemd.exec(5) directory directives.
+    pub state_directory: Vec<String>,
+    pub state_directory_mode: u32,
+    /// `LogsDirectory=` fragments (/var/log base) → `$LOGS_DIRECTORY`.
+    pub logs_directory: Vec<String>,
+    pub logs_directory_mode: u32,
+    /// `RuntimeDirectory=` fragments (/run base) → `$RUNTIME_DIRECTORY`.
+    pub runtime_directory: Vec<String>,
+    pub runtime_directory_mode: u32,
+    /// `ConfigurationDirectory=` fragments (/etc base) →
+    /// `$CONFIGURATION_DIRECTORY`.
+    pub configuration_directory: Vec<String>,
+    pub configuration_directory_mode: u32,
     pub pid_file: String,
     pub restart: RestartPolicy,
     pub restart_sec: u32,

@@ -1047,6 +1047,21 @@ pub async fn enqueue_job(
     // PartOf/PropagatesReloadTo), merged to one job per unit, ordered by the
     // After=/Before= ordering graph, with ordering cycles broken.
     //
+    // Reload the root from disk first: the unit table may hold a definition
+    // delivered through mirrors or discovery whose dependency edges were
+    // trimmed (e.g. user@1000.service without Requires=user-runtime-dir@…),
+    // and the on-disk unit file is the authority.  Units without an on-disk
+    // definition (transient scopes, worker-defined slices) keep their table
+    // entry — `ensure_loaded_from_disk` returns false for them.  Units with
+    // a table entry whose Requires/After edges were dropped would start their
+    // root while its required prerequisites are not even scheduled (observed:
+    // user@1000.service exec'd before user-runtime-dir@1000.service, so
+    // /run/user/1000 was not mounted yet and systemd --user refused
+    // XDG_RUNTIME_DIR), which is why this refresh runs before every Start.
+    if matches!(kind, JobKind::Start | JobKind::Restart) {
+        crate::unit::loader::ensure_loaded_from_disk(allocator.clone(), unit_name).await?;
+    }
+    //
     // On-demand materialization (unit.define): before planning, the
     // dependency closure is walked and every referenced-but-missing unit
     // (e.g. a scope's `Slice=user-<UID>.slice` that System R has not
@@ -1701,6 +1716,32 @@ fn emit_job_new_after_lock(
 ///   B. a candidate must not already have an in-flight Start/Restart job,
 ///      and must not already be cached as `active`/`activating` — this
 ///      prevents "one more start on top of an in-flight start".
+/// PartOf= start/restart propagation (systemd.unit(5)): the stop/restart of
+/// the listed target propagates to every unit with `PartOf=` on it, but a
+/// plain START of the target propagates nothing — `PartOf=` never activates
+/// units.  Starting all `PartOf=graphical.target` units when the target came
+/// up used to force-start ddm/treeland next to lightdm, which broke the
+/// display-manager bus-name arbitration and left the screen black.
+///
+/// Simplification: the propagated action is a Start (not a Restart), so
+/// already-active `PartOf=` units are not bounced on a target restart.
+fn partof_start_propagation(
+    state: &AllocatorState,
+    unit_name: &str,
+    success: bool,
+    kind: JobKind,
+) -> Vec<String> {
+    if !success || !matches!(kind, JobKind::Restart) {
+        return Vec::new();
+    }
+    state
+        .units
+        .iter()
+        .filter(|(_, other_unit)| other_unit.unit.part_of.contains(unit_name))
+        .map(|(other_name, _)| other_name.clone())
+        .collect()
+}
+
 fn binds_to_start_propagation(
     state: &AllocatorState,
     unit_name: &str,
@@ -1881,13 +1922,13 @@ pub fn handle_task_result(
             post_actions.push(PostAction::Start(name));
         }
 
-        // --- PartOf= start propagation (simplified: always propagate) ---
-        if success && matches!(kind, JobKind::Start | JobKind::Restart) {
-            for (other_name, other_unit) in &state.units {
-                if other_unit.unit.part_of.contains(unit_name) {
-                    post_actions.push(PostAction::Start(other_name.clone()));
-                }
-            }
+        // --- PartOf= restart propagation (systemd.unit(5): the stop/restart
+        // of the listed target propagates to this unit; a plain START of the
+        // target has no effect on PartOf= units.  Starting every unit with
+        // `PartOf=graphical.target` on boot pulled in ddm/treeland alongside
+        // lightdm and broke the display-manager bus-name arbitration.) ---
+        for name in partof_start_propagation(&state, unit_name, success, kind) {
+            post_actions.push(PostAction::Start(name));
         }
 
         // --- OnSuccess= / OnFailure= triggers ---
@@ -2148,6 +2189,14 @@ fn build_unit_config(
         tty_path: svc.tty_path.clone(),
         remain_after_exit: svc.remain_after_exit,
         bus_name: svc.bus_name.clone(),
+        state_directory: svc.state_directory.clone(),
+        state_directory_mode: svc.state_directory_mode,
+        logs_directory: svc.logs_directory.clone(),
+        logs_directory_mode: svc.logs_directory_mode,
+        runtime_directory: svc.runtime_directory.clone(),
+        runtime_directory_mode: svc.runtime_directory_mode,
+        configuration_directory: svc.configuration_directory.clone(),
+        configuration_directory_mode: svc.configuration_directory_mode,
     });
 
     let socket = uf.socket.as_ref().map(|sk| {
@@ -3888,6 +3937,12 @@ mod tests {
         (name.to_string(), u)
     }
 
+    fn unit_part_of(name: &str, target: &str) -> (String, UnitFile) {
+        let mut u = make_unit(name);
+        u.unit.part_of.insert(target.to_string());
+        (name.to_string(), u)
+    }
+
     fn cached_active(state: &mut AllocatorState, name: &str) {
         state.unit_states.insert(
             name.to_string(),
@@ -3903,6 +3958,56 @@ mod tests {
                 controller: String::new(),
             },
         );
+    }
+
+    #[test]
+    fn partof_start_does_not_activate_on_plain_start() {
+        // systemd.unit(5): a plain start of the target has no effect on
+        // PartOf= units.  Boot regression: starting graphical.target used to
+        // force-start ddm/treeland (PartOf=graphical.target) next to the
+        // lightdm pulled in via Wants=display-manager.service, breaking the
+        // org.freedesktop.DisplayManager name arbitration and leaving the
+        // greeter/lockscreen unable to become DRM master (black screen).
+        let mut state = AllocatorState::new();
+        state.units.insert(
+            "graphical.target".to_string(),
+            make_unit("graphical.target"),
+        );
+        let (tn, t) = unit_part_of("treeland.service", "graphical.target");
+        state.units.insert(tn, t);
+        let (dn, d) = unit_part_of("ddm.service", "graphical.target");
+        state.units.insert(dn, d);
+
+        let targets = partof_start_propagation(&state, "graphical.target", true, JobKind::Start);
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn partof_start_propagates_on_target_restart() {
+        let mut state = AllocatorState::new();
+        state.units.insert(
+            "graphical.target".to_string(),
+            make_unit("graphical.target"),
+        );
+        let (tn, t) = unit_part_of("treeland.service", "graphical.target");
+        state.units.insert(tn, t);
+
+        let targets = partof_start_propagation(&state, "graphical.target", true, JobKind::Restart);
+        assert_eq!(targets, vec!["treeland.service".to_string()]);
+    }
+
+    #[test]
+    fn partof_start_skipped_on_failure() {
+        let mut state = AllocatorState::new();
+        state.units.insert(
+            "graphical.target".to_string(),
+            make_unit("graphical.target"),
+        );
+        let (tn, t) = unit_part_of("treeland.service", "graphical.target");
+        state.units.insert(tn, t);
+
+        let targets = partof_start_propagation(&state, "graphical.target", false, JobKind::Restart);
+        assert!(targets.is_empty());
     }
 
     #[test]

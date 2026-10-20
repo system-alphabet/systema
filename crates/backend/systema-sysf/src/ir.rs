@@ -103,6 +103,22 @@ pub struct ServiceConfig {
     pub pam_name: String,
     pub environment: Vec<String>,
     pub environment_file: Vec<String>,
+    /// `StateDirectory=` fragments (below /var/lib in the system domain);
+    /// the worker creates them, chowns them to the service user and exports
+    /// `$STATE_DIRECTORY` (colon-joined) — systemd.exec(5) directory
+    /// directives.  Mode 0 means "unset" → the worker's 0755 default.
+    pub state_directory: Vec<String>,
+    pub state_directory_mode: u32,
+    /// `LogsDirectory=` fragments (below /var/log) → `$LOGS_DIRECTORY`.
+    pub logs_directory: Vec<String>,
+    pub logs_directory_mode: u32,
+    /// `RuntimeDirectory=` fragments (below /run) → `$RUNTIME_DIRECTORY`.
+    pub runtime_directory: Vec<String>,
+    pub runtime_directory_mode: u32,
+    /// `ConfigurationDirectory=` fragments (below /etc) →
+    /// `$CONFIGURATION_DIRECTORY`.
+    pub configuration_directory: Vec<String>,
+    pub configuration_directory_mode: u32,
     pub restart_policy: RestartPolicy,
     pub restart_sec: u32,
     pub timeout_start_sec: u32,
