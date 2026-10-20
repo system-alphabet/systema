@@ -768,8 +768,15 @@ async fn control_phase(
             StartUnitsRequest { names },
         )
         .await?;
+        // systemd semantics: a unit failing to ENQUEUE is a degraded unit,
+        // not a failed boot — systemd keeps going and marks the unit failed.
+        // The per-unit results are logged in the completion loop below; the
+        // whole-control-phase bail here used to SIGTERM every worker
+        // (killing an otherwise healthy boot) whenever a single slow enqueue
+        // (e.g. NetworkManager-wait-online) tripped the batch reply's
+        // `success=false`.
         if !start.success {
-            anyhow::bail!(sysa::l10n::t_("manager.start_units failed"));
+            warn!("Control phase: start_units reported per-unit failure(s) — continuing, units marked failed individually");
         }
         Ok(start)
     });
