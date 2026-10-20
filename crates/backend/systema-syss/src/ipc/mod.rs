@@ -100,7 +100,17 @@ pub(crate) async fn monitor_service(
 
         match child.try_wait() {
             Ok(Some(status)) => {
-                let pid = child.id().unwrap_or(0);
+                // A fast-exiting service may already have been reaped by the
+                // SYSS reaper, in which case tokio's Child::id() is None;
+                // fall back to the registry's recorded PID instead of
+                // logging a misleading "PID 0".
+                let pid = {
+                    let reg_pid = registry
+                        .lock()
+                        .get(&unit_name)
+                        .and_then(|inst| inst.main_pid);
+                    child.id().or(reg_pid).unwrap_or(0)
+                };
                 info!(
                     "Service {} (PID {}) exited: code={:?}, success={}",
                     unit_name,

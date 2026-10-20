@@ -50,6 +50,7 @@ struct Args {
 pub async fn run() -> Result<()> {
     sysa::paths::init();
     sysa::l10n::init();
+    sysa::signals::install_signal_guard();
 
     let args = {
         use clap::{CommandFactory, FromArgMatches};

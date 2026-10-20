@@ -368,6 +368,7 @@ async fn main() -> Result<()> {
     }
     sysa::paths::init();
     sysa::l10n::init();
+    sysa::signals::install_signal_guard();
 
     let matches = build_localized_cli().get_matches();
     if *matches.get_one::<bool>("version").unwrap_or(&false) {

@@ -1524,6 +1524,7 @@ mod tests {
     }
 
     /// Open a pidfd naming `pid`.  Needs Linux 5.3+.
+    #[cfg(target_os = "linux")]
     fn pidfd_for(pid: u32) -> std::os::fd::OwnedFd {
         use std::os::fd::FromRawFd;
         let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
@@ -1535,6 +1536,7 @@ mod tests {
         unsafe { std::os::fd::OwnedFd::from_raw_fd(raw as std::os::fd::RawFd) }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn pid_from_pidfd_reads_the_pid_it_names() {
         let fd = pidfd_for(std::process::id());
@@ -1558,6 +1560,7 @@ mod tests {
     /// `PIDFDs=` (ah) is how logind names a session scope's processes.  The
     /// control protocol carries no file descriptors, so the bridge has to
     /// resolve each one to the PID it names before the request goes over IPC.
+    #[cfg(target_os = "linux")]
     #[test]
     fn properties_to_bag_resolves_pidfds_into_pids() {
         let own = pidfd_for(std::process::id());

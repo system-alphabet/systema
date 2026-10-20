@@ -20,7 +20,10 @@ enum BoundSocket {
     Tcp(TcpListener),
     UnixStream(UnixListener),
     Udp(RawFd),
-    Fifo,
+    /// An open `O_RDWR|O_NONBLOCK` fd of the socket's FIFO, kept so (a) it
+    /// can be passed to the service the way systemd does and (b) readers on
+    /// the FIFO never see a spurious EOF while the socket unit is running.
+    Fifo(RawFd),
     Netlink(RawFd),
 }
 
@@ -90,13 +93,13 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
             }
         }
         if !addr.fifo.is_empty() {
-            create_fifo(&addr.fifo, &config.socket_mode).with_context(|| {
+            let fd = create_fifo(&addr.fifo, &config.socket_mode).with_context(|| {
                 sysa::l10n::fmt(
                     sysa::l10n::t_("Failed to create FIFO '{addr_fifo}'."),
                     &[("addr_fifo", &addr.fifo.to_string())],
                 )
             })?;
-            listeners.push(BoundSocket::Fifo);
+            listeners.push(BoundSocket::Fifo(fd));
         }
         if !addr.netlink.is_empty() {
             let fd = bind_netlink(&addr.netlink).with_context(|| {
@@ -213,13 +216,12 @@ pub fn get_listener_fd(manager: &SocketManager, unit_name: &str) -> Option<RawFd
         BoundSocket::Tcp(l) => Some(l.as_raw_fd()),
         BoundSocket::UnixStream(l) => Some(l.as_raw_fd()),
         BoundSocket::Udp(fd) => Some(*fd),
-        BoundSocket::Fifo => None,
+        BoundSocket::Fifo(fd) => Some(*fd),
         BoundSocket::Netlink(fd) => Some(*fd),
     }
 }
 
-/// Return the raw fds of every listening socket for a unit (skipping
-/// address kinds without an fd, e.g. FIFOs).
+/// Return the raw fds of every listening socket for a unit.
 pub fn get_listener_fds(manager: &SocketManager, unit_name: &str) -> Vec<RawFd> {
     let guard = manager.lock();
     let Some(ms) = guard.get(unit_name) else {
@@ -230,8 +232,7 @@ pub fn get_listener_fds(manager: &SocketManager, unit_name: &str) -> Vec<RawFd> 
         .filter_map(|ls| match ls {
             BoundSocket::Tcp(l) => Some(l.as_raw_fd()),
             BoundSocket::UnixStream(l) => Some(l.as_raw_fd()),
-            BoundSocket::Udp(fd) | BoundSocket::Netlink(fd) => Some(*fd),
-            BoundSocket::Fifo => None,
+            BoundSocket::Udp(fd) | BoundSocket::Fifo(fd) | BoundSocket::Netlink(fd) => Some(*fd),
         })
         .collect()
 }
@@ -709,7 +710,7 @@ fn bind_netlink(_address: &str) -> Result<RawFd> {
     anyhow::bail!(sysa::l10n::t_("Netlink sockets are only supported on Linux."));
 }
 
-fn create_fifo(path: &str, mode: &str) -> Result<()> {
+fn create_fifo(path: &str, mode: &str) -> Result<RawFd> {
     let cpath = CString::new(path).with_context(|| {
         sysa::l10n::fmt(
             sysa::l10n::t_("Invalid FIFO path '{path}'."),
@@ -746,7 +747,21 @@ fn create_fifo(path: &str, mode: &str) -> Result<()> {
     } else {
         info!("Created FIFO at '{}' (mode {:o})", path, mode_int);
     }
-    Ok(())
+    // Keep an open O_RDWR|O_NONBLOCK fd, mirroring what systemd does for
+    // ListenFIFO sockets: it is handed to the service on socket activation,
+    // and it prevents readers from seeing a spurious EOF while the unit runs.
+    // Deliberately NOT O_CLOEXEC: fds forwarded via SCM_RIGHTS inherit the
+    // close-on-exec flag, and the service child needs the fd to survive exec.
+    let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR | libc::O_NONBLOCK, 0) };
+    if fd < 0 {
+        let e = std::io::Error::last_os_error();
+        anyhow::bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("open FIFO '{path}' after mkfifo failed: {e}."),
+            &[("path", path), ("e", &e.to_string())]
+        ));
+    }
+    info!("FIFO '{}' kept open (fd {fd})", path);
+    Ok(fd)
 }
 
 // ---------------------------------------------------------------------------

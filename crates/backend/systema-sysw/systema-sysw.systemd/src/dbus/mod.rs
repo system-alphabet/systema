@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use once_cell::sync::OnceCell;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use zbus::connection::Builder;
 
 /// Budget for connecting to the bus — the system bus by default, the
@@ -32,6 +32,16 @@ use zbus::connection::Builder;
 /// reconnect loop in `main`, so the bridge would never claim
 /// `org.freedesktop.systemd1`.
 const BUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Budget for *waiting* for the bus socket to appear at all.
+///
+/// Early boot may launch the bridge before `dbus.service`: the system bus
+/// socket does not exist yet, so connecting fails immediately with ENOENT
+/// and the whole bridge session would be torn down and re-primed once per
+/// second until the bus arrives.  Retrying the connect inside this function
+/// instead keeps the control session and the primed mirror stable.
+const BUS_WAIT_TOTAL: Duration = Duration::from_secs(30);
+const BUS_WAIT_STEP: Duration = Duration::from_millis(500);
 
 use systema_sysw_common::ControlClient;
 
@@ -174,6 +184,34 @@ pub async fn register_unit_object(
     info!("Registered D-Bus unit object for {}", unit_name);
 }
 
+/// Retry the bus connect inside one bridge session until the bus socket
+/// exists (bounded by [`BUS_WAIT_TOTAL`]) — early boot may start the bridge
+/// before `dbus.service`, and failing here would tear down the control
+/// session and re-prime the mirror once per second.
+async fn probe_bus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection> {
+    let deadline = std::time::Instant::now() + BUS_WAIT_TOTAL;
+    loop {
+        let fut = bus_builder(ctx)?.build();
+        let connected = match tokio::time::timeout(BUS_CONNECT_TIMEOUT, fut).await {
+            Ok(res) => res,
+            Err(_) => Err(zbus::Error::Handshake(
+                sysa::l10n::t_("timed out connecting to the bus").to_string(),
+            )),
+        };
+        match connected {
+            Ok(conn) => return Ok(conn),
+            Err(e) => {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(e);
+                }
+                debug!("bus not ready yet ({e}); keep waiting ({remaining:.1?} left)");
+                tokio::time::sleep(BUS_WAIT_STEP).await;
+            }
+        }
+    }
+}
+
 /// Build the D-Bus connection: claim `org.freedesktop.systemd1`, serve the
 /// Manager and its custom Properties interface, then register per-unit
 /// objects for every unit currently in the mirror.
@@ -181,13 +219,7 @@ pub async fn run_dbus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection
     // Safety check: verify no other process already owns our bus name, so we
     // never conflict with a real systemd init.
     {
-        let probe = tokio::time::timeout(BUS_CONNECT_TIMEOUT, bus_builder(ctx)?.build())
-            .await
-            .map_err(|_| {
-                zbus::Error::Handshake(
-                    sysa::l10n::t_("timed out connecting to the bus").to_string(),
-                )
-            })??;
+        let probe = probe_bus(ctx).await?;
         let has_owner: bool = probe
             .call_method(
                 Some("org.freedesktop.DBus"),
@@ -204,6 +236,11 @@ pub async fn run_dbus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection
                 "D-Bus name '{BUS_NAME}' is already owned by another process. Refusing to run to avoid conflicting with an existing init system."
             );
             drop(probe);
+            // Emit the refusal as a real failure instead of silently falling
+            // through and colliding with the existing owner anyway.
+            return Err(zbus::Error::Handshake(format!(
+                "D-Bus name '{BUS_NAME}' is already owned"
+            )));
         }
     }
 

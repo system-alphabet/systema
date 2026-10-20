@@ -445,6 +445,7 @@ async fn main() -> Result<()> {
     envs::install();
     sysa::paths::init();
     sysa::l10n::init();
+    sysa::signals::install_signal_guard();
 
     let args = build_args();
     if args.version {
