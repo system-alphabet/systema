@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-17 13:32+0800\n"
+        "POT-Creation-Date: 2026-10-21 12:41+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -16,191 +16,16 @@ msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Content-Type: text/plain; charset=UTF-8\n"
         "Content-Transfer-Encoding: 8bit\n"
 #
-# File: ../crates/libsysa/src/ipc.rs, line: 29
-#, rust-format
-msgid   "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
-msgstr  "连接 System A 失败：{e}。系统域操作需要 root：请加 sudo 重新运行，或使用 --user 管理用户实例。"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 37
-# File: ../crates/libsysa/src/finder.rs, line: 72
-# File: ../crates/libsysa/src/finder.rs, line: 108
-# File: ../crates/libsysa/src/staging_admin.rs, line: 69
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 44
-#, rust-format
-msgid   "Failed to connect to System A: {e}"
-msgstr  "无法连接到 System A：{e}"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 28
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 255
-msgid   "Failed to encode Envelope."
-msgstr  "无法编码 Envelope。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 32
-msgid   "Failed to send Envelope frame."
-msgstr  "无法发送 Envelope 帧。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 43
-msgid   "Frame receive error."
-msgstr  "帧接收错误。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 46
-msgid   "Failed to decode Envelope."
-msgstr  "无法解码 Envelope。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 63
-msgid   "Failed to encode payload."
-msgstr  "无法编码载荷。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 83
-msgid   "SCM_RIGHTS send task panicked."
-msgstr  "SCM_RIGHTS 发送任务发生 panic。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 92
-msgid   "SCM_RIGHTS recv task panicked."
-msgstr  "SCM_RIGHTS 接收任务发生 panic。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 117
-msgid   "CMSG_FIRSTHDR returned null."
-msgstr  "CMSG_FIRSTHDR 返回空指针。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 135
-#, rust-format
-msgid   "sendmsg (SCM_RIGHTS) failed: {e}."
-msgstr  "sendmsg (SCM_RIGHTS) 失败：{e}。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 174
-#, rust-format
-msgid   "recvmsg (SCM_RIGHTS) failed: {e}."
-msgstr  "recvmsg (SCM_RIGHTS) 失败：{e}。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 182
-msgid   "fdpass connection closed while waiting for a listener fd."
-msgstr  "等待监听 fd 时 fdpass 连接已关闭。"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 199
-msgid   "recvmsg did not contain SCM_RIGHTS fd."
-msgstr  "recvmsg 未包含 SCM_RIGHTS fd。"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 10
-#, rust-format
-msgid   "l10n_debug: mo_dir does not exist: {mo_dir}"
-msgstr  "l10n_debug：mo_dir 不存在：{mo_dir}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 20
-#, rust-format
-msgid   "l10n_debug: Failed to bindtextdomain: {e}"
-msgstr  "l10n_debug：bindtextdomain 失败：{e}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 30
-#, rust-format
-msgid   "l10n_debug: Failed to bind_textdomain_codeset: {e}"
-msgstr  "l10n_debug：bind_textdomain_codeset 失败：{e}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 38
-#, rust-format
-msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
-msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
-#
-# File: ../crates/libsysa/src/controller.rs, line: 8
-msgid   "failed to decode UnitConfig"
-msgstr  "无法解码 UnitConfig"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 51
-# File: ../crates/libsysa/src/finder.rs, line: 87
-msgid   "System A disconnected before sending ack."
-msgstr  "System A 在发送 ack 之前断开连接。"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 56
-# File: ../crates/libsysa/src/finder.rs, line: 92
-#, rust-format
-msgid   "Expected 'finder.ack', got '{method}'"
-msgstr  "期望“finder.ack”，实际“{method}”"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 62
-# File: ../crates/libsysa/src/finder.rs, line: 98
-msgid   "Failed to decode UnitRegistrationAck"
-msgstr  "无法解码 UnitRegistrationAck"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 123
-msgid   "System A disconnected before sending query result."
-msgstr  "System A 在发送查询结果之前断开连接。"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 129
-#, rust-format
-msgid   "Expected 'staging.query_result', got '{method}'"
-msgstr  "期望“staging.query_result”，实际“{method}”"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 135
-msgid   "Failed to decode StagingQueryResult"
-msgstr  "无法解码 StagingQueryResult"
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 85
-msgid   "System A disconnected before admin result."
-msgstr  "System A 在返回管理结果之前断开连接。"
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 91
-#, rust-format
-msgid   "Expected 'admin.staging.result', got '{method}'"
-msgstr  "期望“admin.staging.result”，实际“{method}”"
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 97
-msgid   "Failed to decode AdminStagingResult"
-msgstr  "无法解码 AdminStagingResult"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
-msgid   "System A disconnected before unit-state EOF."
-msgstr  "System A 在 unit-state EOF 之前断开连接。"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 69
-msgid   "Failed to decode UnitStateEntry"
-msgstr  "无法解码 UnitStateEntry"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 76
-msgid   "Failed to decode UnitStateEof"
-msgstr  "无法解码 UnitStateEof"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 85
-#, rust-format
-msgid   "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
-msgstr  "期望“admin.unitstate.entry”/“admin.unitstate.eof”，实际“{other}”"
-#
 # File: ../crates/libsysa/src/logging.rs, line: 165
 # File: ../crates/libsysa/src/logging.rs, line: 262
 #, rust-format
 msgid   "Cannot open log file {path} ({e}); falling back to stderr"
 msgstr  "无法打开日志文件 {path}（{e}）；回退到 stderr"
 #
-# File: ../crates/libsysa/src/logging.rs, line: 237
+# File: ../crates/libsysa/src/logging.rs, line: 304
 #, rust-format
-msgid   "Invalid log level '{level}' ({e}); using info"
-msgstr  "无效的日志级别“{level}”（{e}）；使用 info"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
-#, rust-format
-msgid   "Cannot connect to {path}."
-msgstr  "无法连接到 {path}。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
-msgid   "System A closed connection before ack."
-msgstr  "System A 在 ack 之前关闭了连接。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
-#, rust-format
-msgid   "Registration rejected: {message}."
-msgstr  "注册被拒绝：{message}。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
-msgid   "Write to System A socket."
-msgstr  "写入 System A 套接字。"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
-msgid   "failed to decode ack"
-msgstr  "无法解码 ACK"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
-#, rust-format
-msgid   "unknown method: {other}"
-msgstr  "未知的方法：{other}"
+msgid   "Invalid log level '{level}' ({e}); using warn"
+msgstr  "无效的日志级别“{level}”（{e}）；使用 warn"
 #
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 130
 #, rust-format
@@ -211,6 +36,90 @@ msgstr  "检测到涉及单元 {unit} 的依赖循环（无法打破）。"
 #, rust-format
 msgid   "Unable to resolve dependency cycles after removing {count} edges."
 msgstr  "移除 {count} 条边后仍无法解决依赖循环。"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
+#, rust-format
+msgid   "SO_PEERCRED failed: {e}"
+msgstr  "SO_PEERCRED 失败：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 252
+#, rust-format
+msgid   "getpeereid failed: {e}"
+msgstr  "getpeereid 失败：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 271
+msgid   "failed to get peer credentials"
+msgstr  "无法获取对端凭据"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 275
+msgid   "Client disconnected before registration"
+msgstr  "客户端在注册之前断开连接"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 285
+#, rust-format
+msgid   "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
+msgstr  "期望“worker.register”、“finder.register_units”、“finder.commit_units”或“staging.query”，实际“{method}”"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 556
+#, rust-format
+msgid   "decode failed: {e}"
+msgstr  "解码失败：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1131
+#, rust-format
+msgid   "Failed to deserialize UnitIR JSON: {error}"
+msgstr  "无法反序列化 UnitIR JSON：{error}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1143
+#, rust-format
+msgid   "{count} units staged for UID {uid}."
+msgstr  "已为 UID {uid} 暂存 {count} 个单元。"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1202
+#, rust-format
+msgid   "permission denied (UID {client_uid}): may only commit own staging areas"
+msgstr  "权限不足（UID {client_uid}）：只能提交自己的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1240
+#, rust-format
+msgid   "{count} units committed for UID {uid}."
+msgstr  "已为 UID {uid} 提交 {count} 个单元。"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1297
+#, rust-format
+msgid   "permission denied (UID {client_uid}): may only query own staging areas"
+msgstr  "权限不足（UID {client_uid}）：只能查询自己的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1311
+#, rust-format
+msgid   "Failed to serialize staging units: {e}"
+msgstr  "无法序列化暂存单元：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1324
+#, rust-format
+msgid   "no staging area for UID {target_uid} with name '{name}'"
+msgstr  "UID {target_uid} 没有名为“{name}”的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1379
+# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 425
+#, rust-format
+msgid   "no staging area for UID {uid}"
+msgstr  "UID {uid} 没有暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1421
+#, rust-format
+msgid   "no staging area for UID {uid} with name '{name}'"
+msgstr  "UID {uid} 没有名为“{name}”的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1436
+#, rust-format
+msgid   "no staging area with name '{name}'"
+msgstr  "没有名为“{name}”的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1484
+#, rust-format
+msgid   "unknown admin staging op '{other}'"
+msgstr  "未知的管理暂存操作“{other}”"
 #
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 149
 #, rust-format
@@ -253,12 +162,6 @@ msgstr  "权限不足（UID {uid}）：只有 root 或 UID {sys_uid} 可以检�
 #, rust-format
 msgid   "unknown admin method '{other}'"
 msgstr  "未知的管理方法“{other}”"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1379
-# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 425
-#, rust-format
-msgid   "no staging area for UID {uid}"
-msgstr  "UID {uid} 没有暂存区"
 #
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 440
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 471
@@ -414,84 +317,6 @@ msgstr  "电源单元 JSON 载荷无效"
 #, rust-format
 msgid   "registered {created} new, {updated} updated .power unit(s)"
 msgstr  "已注册 {created} 个新 .power 单元，更新 {updated} 个"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
-#, rust-format
-msgid   "SO_PEERCRED failed: {e}"
-msgstr  "SO_PEERCRED 失败：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 252
-#, rust-format
-msgid   "getpeereid failed: {e}"
-msgstr  "getpeereid 失败：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 271
-msgid   "failed to get peer credentials"
-msgstr  "无法获取对端凭据"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 275
-msgid   "Client disconnected before registration"
-msgstr  "客户端在注册之前断开连接"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 285
-#, rust-format
-msgid   "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
-msgstr  "期望“worker.register”、“finder.register_units”、“finder.commit_units”或“staging.query”，实际“{method}”"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 556
-#, rust-format
-msgid   "decode failed: {e}"
-msgstr  "解码失败：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1131
-#, rust-format
-msgid   "Failed to deserialize UnitIR JSON: {error}"
-msgstr  "无法反序列化 UnitIR JSON：{error}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1143
-#, rust-format
-msgid   "{count} units staged for UID {uid}."
-msgstr  "已为 UID {uid} 暂存 {count} 个单元。"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1202
-#, rust-format
-msgid   "permission denied (UID {client_uid}): may only commit own staging areas"
-msgstr  "权限不足（UID {client_uid}）：只能提交自己的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1240
-#, rust-format
-msgid   "{count} units committed for UID {uid}."
-msgstr  "已为 UID {uid} 提交 {count} 个单元。"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1297
-#, rust-format
-msgid   "permission denied (UID {client_uid}): may only query own staging areas"
-msgstr  "权限不足（UID {client_uid}）：只能查询自己的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1311
-#, rust-format
-msgid   "Failed to serialize staging units: {e}"
-msgstr  "无法序列化暂存单元：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1324
-#, rust-format
-msgid   "no staging area for UID {target_uid} with name '{name}'"
-msgstr  "UID {target_uid} 没有名为“{name}”的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1421
-#, rust-format
-msgid   "no staging area for UID {uid} with name '{name}'"
-msgstr  "UID {uid} 没有名为“{name}”的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1436
-#, rust-format
-msgid   "no staging area with name '{name}'"
-msgstr  "没有名为“{name}”的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1484
-#, rust-format
-msgid   "unknown admin staging op '{other}'"
-msgstr  "未知的管理暂存操作“{other}”"
 #
 # File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
 msgid   "Transaction order is cyclic"
@@ -670,6 +495,20 @@ msgstr  "在搜索路径中找不到 systema-sysf 二进制文件：{paths}"
 msgid   "failed: {msg}"
 msgstr  "失败：{msg}"
 #
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
+msgid   "Root Slice"
+msgstr  "根 Slice"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
+#, rust-format
+msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+msgstr  "无效的暂存区名称“{name}”：长度最多为 64 个字符，且只能包含字母、下划线、斜杠、反斜杠或连字符"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
+#, rust-format
+msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
+msgstr  "无法创建新单元“{id}”：缺少必需字段“unit_type”"
+#
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 49
 msgid   "System A — System Allocator"
 msgstr  "System A — 系统分配器"
@@ -773,20 +612,6 @@ msgstr  "打印版本信息并退出。"
 msgid   "Print full version: build options and compile-time paths."
 msgstr  "打印完整版本：构建选项与编译期路径。"
 #
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
-msgid   "Root Slice"
-msgstr  "根 Slice"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
-#, rust-format
-msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-msgstr  "无效的暂存区名称“{name}”：长度最多为 64 个字符，且只能包含字母、下划线、斜杠、反斜杠或连字符"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
-#, rust-format
-msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
-msgstr  "无法创建新单元“{id}”：缺少必需字段“unit_type”"
-#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 65
 msgid   "System F — System Finder Worker"
 msgstr  "System F — 系统查找器工作进程"
@@ -842,15 +667,6 @@ msgstr  "无法绑定重新加载套接字 {path}。"
 #, rust-format
 msgid   "Scanning {dir} ..."
 msgstr  "正在扫描 {dir} ..."
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
-msgid   "System F — systemd finder"
-msgstr  "System F — systemd 查找器"
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
-#, rust-format
-msgid   "Staging failed: {message}."
-msgstr  "暂存失败：{message}。"
 #
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 40
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/parser.rs, line: 55
@@ -948,6 +764,15 @@ msgstr  "正在解析 {name} 的 [Scope] 段 ..."
 #, rust-format
 msgid   "Parsing [Device] section of {name} ..."
 msgstr  "正在解析 {name} 的 [Device] 段 ..."
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
+msgid   "System F — systemd finder"
+msgstr  "System F — systemd 查找器"
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
+#, rust-format
+msgid   "Staging failed: {message}."
+msgstr  "暂存失败：{message}。"
 #
 # File: ../crates/backend/systema-sysk/src/controller.rs, line: 83
 msgid   "no SocketConfig in UnitConfig"
@@ -1122,6 +947,11 @@ msgstr  "无法为 FIFO“{path}”创建目录“{dir}”。"
 #, rust-format
 msgid   "mkfifo '{path}' failed: {e}."
 msgstr  "mkfifo“{path}”失败：{e}。"
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 759
+#, rust-format
+msgid   "open FIFO '{path}' after mkfifo failed: {e}."
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysk/src/socket.rs, line: 831
 #, rust-format
@@ -1400,21 +1230,6 @@ msgstr  "重新加载 {unit_name} 失败：服务未运行。"
 msgid   "Failed to send SIGHUP"
 msgstr  "无法发送 SIGHUP"
 #
-# File: ../crates/backend/systema-syss/src/notify.rs, line: 311
-#, rust-format
-msgid   "{unit_name}: sd_notify entry vanished"
-msgstr  "{unit_name}：sd_notify 条目消失"
-#
-# File: ../crates/backend/systema-syss/src/notify.rs, line: 327
-#, rust-format
-msgid   "{unit_name} (PID {pid}) exited before {what}"
-msgstr  "{unit_name}（PID {pid}）在 {what} 之前退出"
-#
-# File: ../crates/backend/systema-syss/src/notify.rs, line: 339
-#, rust-format
-msgid   "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
-msgstr  "{unit_name} 等待 {what} 超时（{timeout_secs}s）"
-#
 # File: ../crates/backend/systema-syss/src/reaper.rs, line: 195
 #, rust-format
 msgid   "exit code {code}"
@@ -1430,24 +1245,20 @@ msgstr  "被 {sig} 杀死"
 msgid   "raw status {status}"
 msgstr  "原始状态 {status}"
 #
-# File: ../crates/backend/systema-syss/src/main.rs, line: 48
-msgid   "System S — System Service Worker"
-msgstr  "System S — 系统服务工作进程"
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 58
-msgid   "Do not register as a child subreaper."
-msgstr  "不要注册为子 subreaper。"
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 74
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 61
-msgid   "D-Bus address to use (default: the system bus)."
-msgstr  "要使用的 D-Bus 地址（默认：系统总线）。"
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 101
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 88
+# File: ../crates/backend/systema-syss/src/notify.rs, line: 311
 #, rust-format
-msgid   "invalid --bus-address: {err}"
-msgstr  "无效的 --bus-address：{err}"
+msgid   "{unit_name}: sd_notify entry vanished"
+msgstr  "{unit_name}：sd_notify 条目消失"
+#
+# File: ../crates/backend/systema-syss/src/notify.rs, line: 327
+#, rust-format
+msgid   "{unit_name} (PID {pid}) exited before {what}"
+msgstr  "{unit_name}（PID {pid}）在 {what} 之前退出"
+#
+# File: ../crates/backend/systema-syss/src/notify.rs, line: 339
+#, rust-format
+msgid   "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
+msgstr  "{unit_name} 等待 {what} 超时（{timeout_secs}s）"
 #
 # File: ../crates/backend/systema-syss/src/process.rs, line: 120
 #, rust-format
@@ -1547,6 +1358,25 @@ msgstr  "去除前缀后 ExecStart 命令为空。"
 # File: ../crates/backend/systema-syss/src/process.rs, line: 958
 msgid   "@ prefix requires at least two tokens (argv0 program)."
 msgstr  "@ 前缀至少需要两个标记（argv0 和程序）。"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 48
+msgid   "System S — System Service Worker"
+msgstr  "System S — 系统服务工作进程"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 58
+msgid   "Do not register as a child subreaper."
+msgstr  "不要注册为子 subreaper。"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 74
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 61
+msgid   "D-Bus address to use (default: the system bus)."
+msgstr  "要使用的 D-Bus 地址（默认：系统总线）。"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 101
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 88
+#, rust-format
+msgid   "invalid --bus-address: {err}"
+msgstr  "无效的 --bus-address：{err}"
 #
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
@@ -1740,10 +1570,6 @@ msgstr  "无法向 System A 提交 slice 单元"
 msgid   "System A refused the commit: {message}"
 msgstr  "System A 拒绝了提交：{message}"
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
-msgid   "System R — System Resource Worker"
-msgstr  "System R — 系统资源工作进程"
-#
 # File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
 msgid   "resource worker not initialised"
 msgstr  ""
@@ -1758,6 +1584,10 @@ msgstr  "无法为非 slice 单元合成定义：{invalid}"
 msgid   "cannot serialise synthesized definitions: {e}"
 msgstr  "无法序列化合成定义：{e}"
 #
+# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
+msgid   "System R — System Resource Worker"
+msgstr  "System R — 系统资源工作进程"
+#
 # File: ../crates/backend/systema-syse/src/cgroup.rs, line: 32
 #, rust-format
 msgid   "cannot read {cgroup_path} cgroup.procs"
@@ -1767,10 +1597,6 @@ msgstr  "无法读取 {cgroup_path} cgroup.procs"
 #, rust-format
 msgid   "cannot write {cgroup_path} cgroup.kill"
 msgstr  "无法写入 {cgroup_path} cgroup.kill"
-#
-# File: ../crates/backend/systema-syse/src/main.rs, line: 43
-msgid   "System E — System External Process Worker"
-msgstr  "System E — 系统外部进程工作进程"
 #
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 183
 #, rust-format
@@ -1790,6 +1616,10 @@ msgstr  "Scope {unit_name} 没有 cgroup。"
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 267
 msgid   "Scopes cannot be reloaded."
 msgstr  "Scope 无法重新加载。"
+#
+# File: ../crates/backend/systema-syse/src/main.rs, line: 43
+msgid   "System E — System External Process Worker"
+msgstr  "System E — 系统外部进程工作进程"
 #
 # File: ../crates/backend/systema-sysi/src/mount_setup.rs, line: 184
 #, rust-format
@@ -1927,10 +1757,6 @@ msgstr  "manager.register_power_units 失败：{message}"
 #, rust-format
 msgid   "manager.list_units failed: {message}"
 msgstr  "manager.list_units 失败：{message}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 803
-msgid   "manager.start_units failed"
-msgstr  "manager.start_units 失败"
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 233
 msgid   "SysAInit — System Alphabet init"
@@ -2076,6 +1902,33 @@ msgstr  "正在解码 manager.error 载荷"
 msgid   "decoding {method} reply"
 msgstr  "正在解码 {method} 回复"
 #
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 152
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 192
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 370
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 414
+#, rust-format
+msgid   "Bad arguments: {e}."
+msgstr  "参数无效：{e}。"
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 172
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 248
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 395
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 423
+#, rust-format
+msgid   "Unknown interface '{iface_name}'."
+msgstr  "未知接口“{iface_name}”。"
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 266
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 440
+#, rust-format
+msgid   "Unknown property '{prop_name}'."
+msgstr  "未知属性“{prop_name}”。"
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 281
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 455
+msgid   "Properties are read-only"
+msgstr  "属性为只读"
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 66
 #, rust-format
 msgid   "Job mode {mode} invalid"
@@ -2134,33 +1987,6 @@ msgstr  "没有调用 ID 为 {invocation_id} 的单元。"
 msgid   "timed out connecting to the bus"
 msgstr  "连接总线超时"
 #
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 152
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 192
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 370
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 414
-#, rust-format
-msgid   "Bad arguments: {e}."
-msgstr  "参数无效：{e}。"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 172
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 248
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 395
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 423
-#, rust-format
-msgid   "Unknown interface '{iface_name}'."
-msgstr  "未知接口“{iface_name}”。"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 266
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 440
-#, rust-format
-msgid   "Unknown property '{prop_name}'."
-msgstr  "未知属性“{prop_name}”。"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 281
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 455
-msgid   "Properties are read-only"
-msgstr  "属性为只读"
-#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/bridge.rs, line: 201
 msgid   "control session ended — reconnect required"
 msgstr  "控制会话已结束 — 需要重新连接"
@@ -2168,6 +1994,11 @@ msgstr  "控制会话已结束 — 需要重新连接"
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 39
 msgid   "System Wrapper — systemd D-Bus bridge"
 msgstr  "System Wrapper — systemd D-Bus 桥接"
+#
+# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
+#, rust-format
+msgid   "systema-sysu reaper error: {e}"
+msgstr  "systema-sysu reaper 错误：{e}"
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 113
 msgid   "System U — per-user instance launcher"
@@ -2255,11 +2086,6 @@ msgstr  "用户实例（pid {pid}）在 {secs} 秒内未停止。"
 #, rust-format
 msgid   "setsid failed: {e}."
 msgstr  "setsid 失败：{e}。"
-#
-# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
-#, rust-format
-msgid   "systema-sysu reaper error: {e}"
-msgstr  "systema-sysu reaper 错误：{e}"
 #
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 89
 msgid   "Failed to parse units JSON."
@@ -2400,11 +2226,199 @@ msgstr  "单元名称；先尝试精确匹配，否则视为正则表达式。"
 msgid   "failed to spawn pager '{pager}': {error}"
 msgstr  "无法启动分页器“{pager}”：{error}"
 #
+# File: ../crates/libsysa/src/ipc.rs, line: 29
+#, rust-format
+msgid   "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
+msgstr  "连接 System A 失败：{e}。系统域操作需要 root：请加 sudo 重新运行，或使用 --user 管理用户实例。"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 37
+# File: ../crates/libsysa/src/finder.rs, line: 72
+# File: ../crates/libsysa/src/finder.rs, line: 108
+# File: ../crates/libsysa/src/staging_admin.rs, line: 69
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 44
+#, rust-format
+msgid   "Failed to connect to System A: {e}"
+msgstr  "无法连接到 System A：{e}"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 28
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 255
+msgid   "Failed to encode Envelope."
+msgstr  "无法编码 Envelope。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 32
+msgid   "Failed to send Envelope frame."
+msgstr  "无法发送 Envelope 帧。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 43
+msgid   "Frame receive error."
+msgstr  "帧接收错误。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 46
+msgid   "Failed to decode Envelope."
+msgstr  "无法解码 Envelope。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 63
+msgid   "Failed to encode payload."
+msgstr  "无法编码载荷。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 83
+msgid   "SCM_RIGHTS send task panicked."
+msgstr  "SCM_RIGHTS 发送任务发生 panic。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 92
+msgid   "SCM_RIGHTS recv task panicked."
+msgstr  "SCM_RIGHTS 接收任务发生 panic。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 117
+msgid   "CMSG_FIRSTHDR returned null."
+msgstr  "CMSG_FIRSTHDR 返回空指针。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 135
+#, rust-format
+msgid   "sendmsg (SCM_RIGHTS) failed: {e}."
+msgstr  "sendmsg (SCM_RIGHTS) 失败：{e}。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 174
+#, rust-format
+msgid   "recvmsg (SCM_RIGHTS) failed: {e}."
+msgstr  "recvmsg (SCM_RIGHTS) 失败：{e}。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 182
+msgid   "fdpass connection closed while waiting for a listener fd."
+msgstr  "等待监听 fd 时 fdpass 连接已关闭。"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 199
+msgid   "recvmsg did not contain SCM_RIGHTS fd."
+msgstr  "recvmsg 未包含 SCM_RIGHTS fd。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
+#, rust-format
+msgid   "Cannot connect to {path}."
+msgstr  "无法连接到 {path}。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
+msgid   "System A closed connection before ack."
+msgstr  "System A 在 ack 之前关闭了连接。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
+#, rust-format
+msgid   "Registration rejected: {message}."
+msgstr  "注册被拒绝：{message}。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
+msgid   "Write to System A socket."
+msgstr  "写入 System A 套接字。"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
+msgid   "failed to decode ack"
+msgstr  "无法解码 ACK"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
+#, rust-format
+msgid   "unknown method: {other}"
+msgstr  "未知的方法：{other}"
+#
+# File: ../crates/libsysa/src/controller.rs, line: 8
+msgid   "failed to decode UnitConfig"
+msgstr  "无法解码 UnitConfig"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 51
+# File: ../crates/libsysa/src/finder.rs, line: 87
+msgid   "System A disconnected before sending ack."
+msgstr  "System A 在发送 ack 之前断开连接。"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 56
+# File: ../crates/libsysa/src/finder.rs, line: 92
+#, rust-format
+msgid   "Expected 'finder.ack', got '{method}'"
+msgstr  "期望“finder.ack”，实际“{method}”"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 62
+# File: ../crates/libsysa/src/finder.rs, line: 98
+msgid   "Failed to decode UnitRegistrationAck"
+msgstr  "无法解码 UnitRegistrationAck"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 123
+msgid   "System A disconnected before sending query result."
+msgstr  "System A 在发送查询结果之前断开连接。"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 129
+#, rust-format
+msgid   "Expected 'staging.query_result', got '{method}'"
+msgstr  "期望“staging.query_result”，实际“{method}”"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 135
+msgid   "Failed to decode StagingQueryResult"
+msgstr  "无法解码 StagingQueryResult"
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 85
+msgid   "System A disconnected before admin result."
+msgstr  "System A 在返回管理结果之前断开连接。"
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 91
+#, rust-format
+msgid   "Expected 'admin.staging.result', got '{method}'"
+msgstr  "期望“admin.staging.result”，实际“{method}”"
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 97
+msgid   "Failed to decode AdminStagingResult"
+msgstr  "无法解码 AdminStagingResult"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
+msgid   "System A disconnected before unit-state EOF."
+msgstr  "System A 在 unit-state EOF 之前断开连接。"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 69
+msgid   "Failed to decode UnitStateEntry"
+msgstr  "无法解码 UnitStateEntry"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 76
+msgid   "Failed to decode UnitStateEof"
+msgstr  "无法解码 UnitStateEof"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 85
+#, rust-format
+msgid   "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
+msgstr  "期望“admin.unitstate.entry”/“admin.unitstate.eof”，实际“{other}”"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 10
+#, rust-format
+msgid   "l10n_debug: mo_dir does not exist: {mo_dir}"
+msgstr  "l10n_debug：mo_dir 不存在：{mo_dir}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 20
+#, rust-format
+msgid   "l10n_debug: Failed to bindtextdomain: {e}"
+msgstr  "l10n_debug：bindtextdomain 失败：{e}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 30
+#, rust-format
+msgid   "l10n_debug: Failed to bind_textdomain_codeset: {e}"
+msgstr  "l10n_debug：bind_textdomain_codeset 失败：{e}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 38
+#, rust-format
+msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
+msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
+#
+#
+# File: ../crates/libsysa/src/logging.rs, line: 237
+#, rust-format
+#~ msgid        "Invalid log level '{level}' ({e}); using info"
+#~ msgstr       "无效的日志级别“{level}”（{e}）；使用 info"
+#
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 803
+#~ msgid        "manager.start_units failed"
+#~ msgstr       "manager.start_units 失败"
+#
+#
 #
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
 #
 #
 #
@@ -2416,10 +2430,12 @@ msgstr  "无法启动分页器“{pager}”：{error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
 #
 #
 #
@@ -2434,10 +2450,12 @@ msgstr  "无法启动分页器“{pager}”：{error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
 #
 #
 #

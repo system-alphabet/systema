@@ -16,7 +16,7 @@ struct Args {
 
     #[arg(
         long,
-        default_value = "info",
+        default_value = "warn",
         help = "Log level (trace, debug, info, warn, error)"
     )]
     log_level: String,

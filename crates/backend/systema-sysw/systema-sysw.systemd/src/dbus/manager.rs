@@ -1155,7 +1155,7 @@ impl ManagerInterface {
 
     #[zbus(property)]
     fn log_level(&self) -> &str {
-        "info"
+        "warn"
     }
 
     #[zbus(property)]

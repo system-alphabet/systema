@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-17 13:32+0800\n"
+        "POT-Creation-Date: 2026-10-21 12:41+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -16,191 +16,16 @@ msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Content-Transfer-Encoding: 8bit\n"
         "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 #
-# File: ../crates/libsysa/src/ipc.rs, line: 29
-#, rust-format
-msgid   "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
-msgstr  "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
-#
-# File: ../crates/libsysa/src/finder.rs, line: 37
-# File: ../crates/libsysa/src/finder.rs, line: 72
-# File: ../crates/libsysa/src/finder.rs, line: 108
-# File: ../crates/libsysa/src/staging_admin.rs, line: 69
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 44
-#, rust-format
-msgid   "Failed to connect to System A: {e}"
-msgstr  "Failed to connect to System A: {e}"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 28
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 255
-msgid   "Failed to encode Envelope."
-msgstr  "Failed to encode Envelope."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 32
-msgid   "Failed to send Envelope frame."
-msgstr  "Failed to send Envelope frame."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 43
-msgid   "Frame receive error."
-msgstr  "Frame receive error."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 46
-msgid   "Failed to decode Envelope."
-msgstr  "Failed to decode Envelope."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 63
-msgid   "Failed to encode payload."
-msgstr  "Failed to encode payload."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 83
-msgid   "SCM_RIGHTS send task panicked."
-msgstr  "SCM_RIGHTS send task panicked."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 92
-msgid   "SCM_RIGHTS recv task panicked."
-msgstr  "SCM_RIGHTS recv task panicked."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 117
-msgid   "CMSG_FIRSTHDR returned null."
-msgstr  "CMSG_FIRSTHDR returned null."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 135
-#, rust-format
-msgid   "sendmsg (SCM_RIGHTS) failed: {e}."
-msgstr  "sendmsg (SCM_RIGHTS) failed: {e}."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 174
-#, rust-format
-msgid   "recvmsg (SCM_RIGHTS) failed: {e}."
-msgstr  "recvmsg (SCM_RIGHTS) failed: {e}."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 182
-msgid   "fdpass connection closed while waiting for a listener fd."
-msgstr  "fdpass connection closed while waiting for a listener fd."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 199
-msgid   "recvmsg did not contain SCM_RIGHTS fd."
-msgstr  "recvmsg did not contain SCM_RIGHTS fd."
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 10
-#, rust-format
-msgid   "l10n_debug: mo_dir does not exist: {mo_dir}"
-msgstr  "l10n_debug: mo_dir does not exist: {mo_dir}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 20
-#, rust-format
-msgid   "l10n_debug: Failed to bindtextdomain: {e}"
-msgstr  "l10n_debug: Failed to bindtextdomain: {e}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 30
-#, rust-format
-msgid   "l10n_debug: Failed to bind_textdomain_codeset: {e}"
-msgstr  "l10n_debug: Failed to bind_textdomain_codeset: {e}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 38
-#, rust-format
-msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
-msgstr  "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
-#
-# File: ../crates/libsysa/src/controller.rs, line: 8
-msgid   "failed to decode UnitConfig"
-msgstr  "failed to decode UnitConfig"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 51
-# File: ../crates/libsysa/src/finder.rs, line: 87
-msgid   "System A disconnected before sending ack."
-msgstr  "System A disconnected before sending ack."
-#
-# File: ../crates/libsysa/src/finder.rs, line: 56
-# File: ../crates/libsysa/src/finder.rs, line: 92
-#, rust-format
-msgid   "Expected 'finder.ack', got '{method}'"
-msgstr  "Expected 'finder.ack', got '{method}'"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 62
-# File: ../crates/libsysa/src/finder.rs, line: 98
-msgid   "Failed to decode UnitRegistrationAck"
-msgstr  "Failed to decode UnitRegistrationAck"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 123
-msgid   "System A disconnected before sending query result."
-msgstr  "System A disconnected before sending query result."
-#
-# File: ../crates/libsysa/src/finder.rs, line: 129
-#, rust-format
-msgid   "Expected 'staging.query_result', got '{method}'"
-msgstr  "Expected 'staging.query_result', got '{method}'"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 135
-msgid   "Failed to decode StagingQueryResult"
-msgstr  "Failed to decode StagingQueryResult"
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 85
-msgid   "System A disconnected before admin result."
-msgstr  "System A disconnected before admin result."
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 91
-#, rust-format
-msgid   "Expected 'admin.staging.result', got '{method}'"
-msgstr  "Expected 'admin.staging.result', got '{method}'"
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 97
-msgid   "Failed to decode AdminStagingResult"
-msgstr  "Failed to decode AdminStagingResult"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
-msgid   "System A disconnected before unit-state EOF."
-msgstr  "System A disconnected before unit-state EOF."
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 69
-msgid   "Failed to decode UnitStateEntry"
-msgstr  "Failed to decode UnitStateEntry"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 76
-msgid   "Failed to decode UnitStateEof"
-msgstr  "Failed to decode UnitStateEof"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 85
-#, rust-format
-msgid   "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
-msgstr  "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
-#
 # File: ../crates/libsysa/src/logging.rs, line: 165
 # File: ../crates/libsysa/src/logging.rs, line: 262
 #, rust-format
 msgid   "Cannot open log file {path} ({e}); falling back to stderr"
 msgstr  "Cannot open log file {path} ({e}); falling back to stderr"
 #
-# File: ../crates/libsysa/src/logging.rs, line: 237
+# File: ../crates/libsysa/src/logging.rs, line: 304
 #, rust-format
-msgid   "Invalid log level '{level}' ({e}); using info"
-msgstr  "Invalid log level '{level}' ({e}); using info"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
-#, rust-format
-msgid   "Cannot connect to {path}."
-msgstr  "Cannot connect to {path}."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
-msgid   "System A closed connection before ack."
-msgstr  "System A closed connection before ack."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
-#, rust-format
-msgid   "Registration rejected: {message}."
-msgstr  "Registration rejected: {message}."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
-msgid   "Write to System A socket."
-msgstr  "Write to System A socket."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
-msgid   "failed to decode ack"
-msgstr  "failed to decode ack"
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
-#, rust-format
-msgid   "unknown method: {other}"
-msgstr  "unknown method: {other}"
+msgid   "Invalid log level '{level}' ({e}); using warn"
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 130
 #, rust-format
@@ -211,6 +36,90 @@ msgstr  "Dependency cycle detected involving unit: {unit} (unable to break)."
 #, rust-format
 msgid   "Unable to resolve dependency cycles after removing {count} edges."
 msgstr  "Unable to resolve dependency cycles after removing {count} edges."
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
+#, rust-format
+msgid   "SO_PEERCRED failed: {e}"
+msgstr  "SO_PEERCRED failed: {e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 252
+#, rust-format
+msgid   "getpeereid failed: {e}"
+msgstr  "getpeereid failed: {e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 271
+msgid   "failed to get peer credentials"
+msgstr  "failed to get peer credentials"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 275
+msgid   "Client disconnected before registration"
+msgstr  "Client disconnected before registration"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 285
+#, rust-format
+msgid   "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
+msgstr  "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 556
+#, rust-format
+msgid   "decode failed: {e}"
+msgstr  "decode failed: {e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1131
+#, rust-format
+msgid   "Failed to deserialize UnitIR JSON: {error}"
+msgstr  "Failed to deserialize UnitIR JSON: {error}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1143
+#, rust-format
+msgid   "{count} units staged for UID {uid}."
+msgstr  "{count} units staged for UID {uid}."
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1202
+#, rust-format
+msgid   "permission denied (UID {client_uid}): may only commit own staging areas"
+msgstr  "permission denied (UID {client_uid}): may only commit own staging areas"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1240
+#, rust-format
+msgid   "{count} units committed for UID {uid}."
+msgstr  "{count} units committed for UID {uid}."
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1297
+#, rust-format
+msgid   "permission denied (UID {client_uid}): may only query own staging areas"
+msgstr  "permission denied (UID {client_uid}): may only query own staging areas"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1311
+#, rust-format
+msgid   "Failed to serialize staging units: {e}"
+msgstr  "Failed to serialize staging units: {e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1324
+#, rust-format
+msgid   "no staging area for UID {target_uid} with name '{name}'"
+msgstr  "no staging area for UID {target_uid} with name '{name}'"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1379
+# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 425
+#, rust-format
+msgid   "no staging area for UID {uid}"
+msgstr  "no staging area for UID {uid}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1421
+#, rust-format
+msgid   "no staging area for UID {uid} with name '{name}'"
+msgstr  "no staging area for UID {uid} with name '{name}'"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1436
+#, rust-format
+msgid   "no staging area with name '{name}'"
+msgstr  "no staging area with name '{name}'"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1484
+#, rust-format
+msgid   "unknown admin staging op '{other}'"
+msgstr  "unknown admin staging op '{other}'"
 #
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 149
 #, rust-format
@@ -253,12 +162,6 @@ msgstr  "Permission denied (UID {uid}): only root or UID {sys_uid} may inspect u
 #, rust-format
 msgid   "unknown admin method '{other}'"
 msgstr  "unknown admin method '{other}'"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1379
-# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 425
-#, rust-format
-msgid   "no staging area for UID {uid}"
-msgstr  "no staging area for UID {uid}"
 #
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 440
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 471
@@ -414,84 +317,6 @@ msgstr  "bad power units JSON payload"
 #, rust-format
 msgid   "registered {created} new, {updated} updated .power unit(s)"
 msgstr  "registered {created} new, {updated} updated .power unit(s)"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
-#, rust-format
-msgid   "SO_PEERCRED failed: {e}"
-msgstr  "SO_PEERCRED failed: {e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 252
-#, rust-format
-msgid   "getpeereid failed: {e}"
-msgstr  "getpeereid failed: {e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 271
-msgid   "failed to get peer credentials"
-msgstr  "failed to get peer credentials"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 275
-msgid   "Client disconnected before registration"
-msgstr  "Client disconnected before registration"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 285
-#, rust-format
-msgid   "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
-msgstr  "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 556
-#, rust-format
-msgid   "decode failed: {e}"
-msgstr  "decode failed: {e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1131
-#, rust-format
-msgid   "Failed to deserialize UnitIR JSON: {error}"
-msgstr  "Failed to deserialize UnitIR JSON: {error}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1143
-#, rust-format
-msgid   "{count} units staged for UID {uid}."
-msgstr  "{count} units staged for UID {uid}."
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1202
-#, rust-format
-msgid   "permission denied (UID {client_uid}): may only commit own staging areas"
-msgstr  "permission denied (UID {client_uid}): may only commit own staging areas"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1240
-#, rust-format
-msgid   "{count} units committed for UID {uid}."
-msgstr  "{count} units committed for UID {uid}."
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1297
-#, rust-format
-msgid   "permission denied (UID {client_uid}): may only query own staging areas"
-msgstr  "permission denied (UID {client_uid}): may only query own staging areas"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1311
-#, rust-format
-msgid   "Failed to serialize staging units: {e}"
-msgstr  "Failed to serialize staging units: {e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1324
-#, rust-format
-msgid   "no staging area for UID {target_uid} with name '{name}'"
-msgstr  "no staging area for UID {target_uid} with name '{name}'"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1421
-#, rust-format
-msgid   "no staging area for UID {uid} with name '{name}'"
-msgstr  "no staging area for UID {uid} with name '{name}'"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1436
-#, rust-format
-msgid   "no staging area with name '{name}'"
-msgstr  "no staging area with name '{name}'"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1484
-#, rust-format
-msgid   "unknown admin staging op '{other}'"
-msgstr  "unknown admin staging op '{other}'"
 #
 # File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
 msgid   "Transaction order is cyclic"
@@ -670,6 +495,20 @@ msgstr  "systema-sysf binary not found in search paths: {paths}"
 msgid   "failed: {msg}"
 msgstr  "failed: {msg}"
 #
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
+msgid   "Root Slice"
+msgstr  "Root Slice"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
+#, rust-format
+msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+msgstr  "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
+#, rust-format
+msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
+msgstr  "cannot create new unit \"{id}\": missing required field \"unit_type\""
+#
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 49
 msgid   "System A — System Allocator"
 msgstr  "System A — System Allocator"
@@ -773,20 +612,6 @@ msgstr  "Print version information and exit."
 msgid   "Print full version: build options and compile-time paths."
 msgstr  "Print full version: build options and compile-time paths."
 #
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
-msgid   "Root Slice"
-msgstr  "Root Slice"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
-#, rust-format
-msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-msgstr  "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
-#, rust-format
-msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
-msgstr  "cannot create new unit \"{id}\": missing required field \"unit_type\""
-#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 65
 msgid   "System F — System Finder Worker"
 msgstr  "System F — System Finder Worker"
@@ -842,15 +667,6 @@ msgstr  "Failed to bind reload socket {path}."
 #, rust-format
 msgid   "Scanning {dir} ..."
 msgstr  "Scanning {dir} ..."
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
-msgid   "System F — systemd finder"
-msgstr  "System F — systemd finder"
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
-#, rust-format
-msgid   "Staging failed: {message}."
-msgstr  "Staging failed: {message}."
 #
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 40
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/parser.rs, line: 55
@@ -949,6 +765,15 @@ msgstr  "Parsing [Scope] section of {name} ..."
 #, rust-format
 msgid   "Parsing [Device] section of {name} ..."
 msgstr  "Parsing [Device] section of {name} ..."
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
+msgid   "System F — systemd finder"
+msgstr  "System F — systemd finder"
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
+#, rust-format
+msgid   "Staging failed: {message}."
+msgstr  "Staging failed: {message}."
 #
 # File: ../crates/backend/systema-sysk/src/controller.rs, line: 83
 msgid   "no SocketConfig in UnitConfig"
@@ -1123,6 +948,11 @@ msgstr  "Cannot create directory '{dir}' for FIFO '{path}'."
 #, rust-format
 msgid   "mkfifo '{path}' failed: {e}."
 msgstr  "mkfifo '{path}' failed: {e}."
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 759
+#, rust-format
+msgid   "open FIFO '{path}' after mkfifo failed: {e}."
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysk/src/socket.rs, line: 831
 #, rust-format
@@ -1401,21 +1231,6 @@ msgstr  "Reload of {unit_name} failed: service is not running."
 msgid   "Failed to send SIGHUP"
 msgstr  "Failed to send SIGHUP"
 #
-# File: ../crates/backend/systema-syss/src/notify.rs, line: 311
-#, rust-format
-msgid   "{unit_name}: sd_notify entry vanished"
-msgstr  "{unit_name}: sd_notify entry vanished"
-#
-# File: ../crates/backend/systema-syss/src/notify.rs, line: 327
-#, rust-format
-msgid   "{unit_name} (PID {pid}) exited before {what}"
-msgstr  "{unit_name} (PID {pid}) exited before {what}"
-#
-# File: ../crates/backend/systema-syss/src/notify.rs, line: 339
-#, rust-format
-msgid   "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
-msgstr  "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
-#
 # File: ../crates/backend/systema-syss/src/reaper.rs, line: 195
 #, rust-format
 msgid   "exit code {code}"
@@ -1431,24 +1246,20 @@ msgstr  "killed by {sig}"
 msgid   "raw status {status}"
 msgstr  "raw status {status}"
 #
-# File: ../crates/backend/systema-syss/src/main.rs, line: 48
-msgid   "System S — System Service Worker"
-msgstr  "System S — System Service Worker"
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 58
-msgid   "Do not register as a child subreaper."
-msgstr  "Do not register as a child subreaper."
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 74
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 61
-msgid   "D-Bus address to use (default: the system bus)."
-msgstr  "D-Bus address to use (default: the system bus)."
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 101
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 88
+# File: ../crates/backend/systema-syss/src/notify.rs, line: 311
 #, rust-format
-msgid   "invalid --bus-address: {err}"
-msgstr  "invalid --bus-address: {err}"
+msgid   "{unit_name}: sd_notify entry vanished"
+msgstr  "{unit_name}: sd_notify entry vanished"
+#
+# File: ../crates/backend/systema-syss/src/notify.rs, line: 327
+#, rust-format
+msgid   "{unit_name} (PID {pid}) exited before {what}"
+msgstr  "{unit_name} (PID {pid}) exited before {what}"
+#
+# File: ../crates/backend/systema-syss/src/notify.rs, line: 339
+#, rust-format
+msgid   "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
+msgstr  "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
 #
 # File: ../crates/backend/systema-syss/src/process.rs, line: 120
 #, rust-format
@@ -1548,6 +1359,25 @@ msgstr  "Empty ExecStart command after prefix stripping."
 # File: ../crates/backend/systema-syss/src/process.rs, line: 958
 msgid   "@ prefix requires at least two tokens (argv0 program)."
 msgstr  "@ prefix requires at least two tokens (argv0 program)."
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 48
+msgid   "System S — System Service Worker"
+msgstr  "System S — System Service Worker"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 58
+msgid   "Do not register as a child subreaper."
+msgstr  "Do not register as a child subreaper."
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 74
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 61
+msgid   "D-Bus address to use (default: the system bus)."
+msgstr  "D-Bus address to use (default: the system bus)."
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 101
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 88
+#, rust-format
+msgid   "invalid --bus-address: {err}"
+msgstr  "invalid --bus-address: {err}"
 #
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
@@ -1741,10 +1571,6 @@ msgstr  "Cannot commit slice units with System A"
 msgid   "System A refused the commit: {message}"
 msgstr  "System A refused the commit: {message}"
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
-msgid   "System R — System Resource Worker"
-msgstr  "System R — System Resource Worker"
-#
 # File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
 msgid   "resource worker not initialised"
 msgstr  ""
@@ -1759,6 +1585,10 @@ msgstr  "cannot synthesize definitions for non-slice units: {invalid}"
 msgid   "cannot serialise synthesized definitions: {e}"
 msgstr  "cannot serialise synthesized definitions: {e}"
 #
+# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
+msgid   "System R — System Resource Worker"
+msgstr  "System R — System Resource Worker"
+#
 # File: ../crates/backend/systema-syse/src/cgroup.rs, line: 32
 #, rust-format
 msgid   "cannot read {cgroup_path} cgroup.procs"
@@ -1768,10 +1598,6 @@ msgstr  "cannot read {cgroup_path} cgroup.procs"
 #, rust-format
 msgid   "cannot write {cgroup_path} cgroup.kill"
 msgstr  "cannot write {cgroup_path} cgroup.kill"
-#
-# File: ../crates/backend/systema-syse/src/main.rs, line: 43
-msgid   "System E — System External Process Worker"
-msgstr  "System E — System External Process Worker"
 #
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 183
 #, rust-format
@@ -1791,6 +1617,10 @@ msgstr  "Scope {unit_name} has no cgroup."
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 267
 msgid   "Scopes cannot be reloaded."
 msgstr  "Scopes cannot be reloaded."
+#
+# File: ../crates/backend/systema-syse/src/main.rs, line: 43
+msgid   "System E — System External Process Worker"
+msgstr  "System E — System External Process Worker"
 #
 # File: ../crates/backend/systema-sysi/src/mount_setup.rs, line: 184
 #, rust-format
@@ -1928,10 +1758,6 @@ msgstr  "manager.register_power_units failed: {message}"
 #, rust-format
 msgid   "manager.list_units failed: {message}"
 msgstr  "manager.list_units failed: {message}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 803
-msgid   "manager.start_units failed"
-msgstr  "manager.start_units failed"
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 233
 msgid   "SysAInit — System Alphabet init"
@@ -2077,6 +1903,33 @@ msgstr  "decoding manager.error payload"
 msgid   "decoding {method} reply"
 msgstr  "decoding {method} reply"
 #
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 152
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 192
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 370
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 414
+#, rust-format
+msgid   "Bad arguments: {e}."
+msgstr  "Bad arguments: {e}."
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 172
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 248
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 395
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 423
+#, rust-format
+msgid   "Unknown interface '{iface_name}'."
+msgstr  "Unknown interface '{iface_name}'."
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 266
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 440
+#, rust-format
+msgid   "Unknown property '{prop_name}'."
+msgstr  "Unknown property '{prop_name}'."
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 281
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 455
+msgid   "Properties are read-only"
+msgstr  "Properties are read-only"
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 66
 #, rust-format
 msgid   "Job mode {mode} invalid"
@@ -2135,33 +1988,6 @@ msgstr  "No unit with invocation ID {invocation_id}."
 msgid   "timed out connecting to the bus"
 msgstr  "timed out connecting to the bus"
 #
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 152
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 192
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 370
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 414
-#, rust-format
-msgid   "Bad arguments: {e}."
-msgstr  "Bad arguments: {e}."
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 172
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 248
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 395
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 423
-#, rust-format
-msgid   "Unknown interface '{iface_name}'."
-msgstr  "Unknown interface '{iface_name}'."
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 266
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 440
-#, rust-format
-msgid   "Unknown property '{prop_name}'."
-msgstr  "Unknown property '{prop_name}'."
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 281
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 455
-msgid   "Properties are read-only"
-msgstr  "Properties are read-only"
-#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/bridge.rs, line: 201
 msgid   "control session ended — reconnect required"
 msgstr  "control session ended — reconnect required"
@@ -2169,6 +1995,11 @@ msgstr  "control session ended — reconnect required"
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 39
 msgid   "System Wrapper — systemd D-Bus bridge"
 msgstr  "System Wrapper — systemd D-Bus bridge"
+#
+# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
+#, rust-format
+msgid   "systema-sysu reaper error: {e}"
+msgstr  "systema-sysu reaper error: {e}"
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 113
 msgid   "System U — per-user instance launcher"
@@ -2256,11 +2087,6 @@ msgstr  "Per-user instance (pid {pid}) did not stop within {secs}s."
 #, rust-format
 msgid   "setsid failed: {e}."
 msgstr  "setsid failed: {e}."
-#
-# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
-#, rust-format
-msgid   "systema-sysu reaper error: {e}"
-msgstr  "systema-sysu reaper error: {e}"
 #
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 89
 msgid   "Failed to parse units JSON."
@@ -2401,11 +2227,199 @@ msgstr  "Unit name; tried as an exact match first, otherwise treated as a regula
 msgid   "failed to spawn pager '{pager}': {error}"
 msgstr  "failed to spawn pager '{pager}': {error}"
 #
+# File: ../crates/libsysa/src/ipc.rs, line: 29
+#, rust-format
+msgid   "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
+msgstr  "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
+#
+# File: ../crates/libsysa/src/finder.rs, line: 37
+# File: ../crates/libsysa/src/finder.rs, line: 72
+# File: ../crates/libsysa/src/finder.rs, line: 108
+# File: ../crates/libsysa/src/staging_admin.rs, line: 69
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 44
+#, rust-format
+msgid   "Failed to connect to System A: {e}"
+msgstr  "Failed to connect to System A: {e}"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 28
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 255
+msgid   "Failed to encode Envelope."
+msgstr  "Failed to encode Envelope."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 32
+msgid   "Failed to send Envelope frame."
+msgstr  "Failed to send Envelope frame."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 43
+msgid   "Frame receive error."
+msgstr  "Frame receive error."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 46
+msgid   "Failed to decode Envelope."
+msgstr  "Failed to decode Envelope."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 63
+msgid   "Failed to encode payload."
+msgstr  "Failed to encode payload."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 83
+msgid   "SCM_RIGHTS send task panicked."
+msgstr  "SCM_RIGHTS send task panicked."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 92
+msgid   "SCM_RIGHTS recv task panicked."
+msgstr  "SCM_RIGHTS recv task panicked."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 117
+msgid   "CMSG_FIRSTHDR returned null."
+msgstr  "CMSG_FIRSTHDR returned null."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 135
+#, rust-format
+msgid   "sendmsg (SCM_RIGHTS) failed: {e}."
+msgstr  "sendmsg (SCM_RIGHTS) failed: {e}."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 174
+#, rust-format
+msgid   "recvmsg (SCM_RIGHTS) failed: {e}."
+msgstr  "recvmsg (SCM_RIGHTS) failed: {e}."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 182
+msgid   "fdpass connection closed while waiting for a listener fd."
+msgstr  "fdpass connection closed while waiting for a listener fd."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 199
+msgid   "recvmsg did not contain SCM_RIGHTS fd."
+msgstr  "recvmsg did not contain SCM_RIGHTS fd."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
+#, rust-format
+msgid   "Cannot connect to {path}."
+msgstr  "Cannot connect to {path}."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
+msgid   "System A closed connection before ack."
+msgstr  "System A closed connection before ack."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
+#, rust-format
+msgid   "Registration rejected: {message}."
+msgstr  "Registration rejected: {message}."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
+msgid   "Write to System A socket."
+msgstr  "Write to System A socket."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
+msgid   "failed to decode ack"
+msgstr  "failed to decode ack"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
+#, rust-format
+msgid   "unknown method: {other}"
+msgstr  "unknown method: {other}"
+#
+# File: ../crates/libsysa/src/controller.rs, line: 8
+msgid   "failed to decode UnitConfig"
+msgstr  "failed to decode UnitConfig"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 51
+# File: ../crates/libsysa/src/finder.rs, line: 87
+msgid   "System A disconnected before sending ack."
+msgstr  "System A disconnected before sending ack."
+#
+# File: ../crates/libsysa/src/finder.rs, line: 56
+# File: ../crates/libsysa/src/finder.rs, line: 92
+#, rust-format
+msgid   "Expected 'finder.ack', got '{method}'"
+msgstr  "Expected 'finder.ack', got '{method}'"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 62
+# File: ../crates/libsysa/src/finder.rs, line: 98
+msgid   "Failed to decode UnitRegistrationAck"
+msgstr  "Failed to decode UnitRegistrationAck"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 123
+msgid   "System A disconnected before sending query result."
+msgstr  "System A disconnected before sending query result."
+#
+# File: ../crates/libsysa/src/finder.rs, line: 129
+#, rust-format
+msgid   "Expected 'staging.query_result', got '{method}'"
+msgstr  "Expected 'staging.query_result', got '{method}'"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 135
+msgid   "Failed to decode StagingQueryResult"
+msgstr  "Failed to decode StagingQueryResult"
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 85
+msgid   "System A disconnected before admin result."
+msgstr  "System A disconnected before admin result."
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 91
+#, rust-format
+msgid   "Expected 'admin.staging.result', got '{method}'"
+msgstr  "Expected 'admin.staging.result', got '{method}'"
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 97
+msgid   "Failed to decode AdminStagingResult"
+msgstr  "Failed to decode AdminStagingResult"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
+msgid   "System A disconnected before unit-state EOF."
+msgstr  "System A disconnected before unit-state EOF."
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 69
+msgid   "Failed to decode UnitStateEntry"
+msgstr  "Failed to decode UnitStateEntry"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 76
+msgid   "Failed to decode UnitStateEof"
+msgstr  "Failed to decode UnitStateEof"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 85
+#, rust-format
+msgid   "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
+msgstr  "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 10
+#, rust-format
+msgid   "l10n_debug: mo_dir does not exist: {mo_dir}"
+msgstr  "l10n_debug: mo_dir does not exist: {mo_dir}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 20
+#, rust-format
+msgid   "l10n_debug: Failed to bindtextdomain: {e}"
+msgstr  "l10n_debug: Failed to bindtextdomain: {e}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 30
+#, rust-format
+msgid   "l10n_debug: Failed to bind_textdomain_codeset: {e}"
+msgstr  "l10n_debug: Failed to bind_textdomain_codeset: {e}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 38
+#, rust-format
+msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
+msgstr  "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
+#
+#
+# File: ../crates/libsysa/src/logging.rs, line: 237
+#, rust-format
+#~ msgid        "Invalid log level '{level}' ({e}); using info"
+#~ msgstr       "Invalid log level '{level}' ({e}); using info"
+#
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 803
+#~ msgid        "manager.start_units failed"
+#~ msgstr       "manager.start_units failed"
+#
+#
 #
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 #
@@ -2417,10 +2431,12 @@ msgstr  "failed to spawn pager '{pager}': {error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2435,10 +2451,12 @@ msgstr  "failed to spawn pager '{pager}': {error}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #

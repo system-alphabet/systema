@@ -179,15 +179,21 @@ impl Write for StripAnsiWriter {
 
 /// Resolve the log file for a component named `name`: the explicit CLI
 /// value wins, then `SYSTEMA_LOG_FILE`, then — when `default_file` applies
-/// (daemons) — `<builtin log dir>/<name>.log`.  `None` (no file sink)
-/// covers `-` and a tool that was given no `--log-file`.
+/// (daemons) — `<builtin log dir>/<name>.log`.  The env fallback likewise
+/// belongs to daemons only: a tool that was given no `--log-file` (or `-`)
+/// gets no file sink at all.
 fn resolve_log_file(
     name: &str,
     cli: Option<PathBuf>,
     env: Option<std::ffi::OsString>,
     default_file: bool,
 ) -> Option<PathBuf> {
-    let value = cli.or_else(|| env.map(PathBuf::from)).or_else(|| {
+    // Gate the env arm on `default_file` so a tool never inherits a file
+    // sink from the environment, even when called directly (the caller
+    // already pre-filters with `Options::env_file`; this keeps the contract
+    // total in the function itself).
+    let env = default_file.then(|| env.map(PathBuf::from)).flatten();
+    let value = cli.or(env).or_else(|| {
         default_file.then(|| Path::new(crate::paths::builtin_log_dir()).join(format!("{name}.log")))
     })?;
     (value != Path::new("-")).then_some(value)
@@ -301,11 +307,11 @@ pub fn init(opts: Options<'_>) -> LogTarget {
             eprintln!(
                 "{}",
                 crate::l10n::fmt(
-                    crate::l10n::t_("Invalid log level '{level}' ({e}); using info"),
+                    crate::l10n::t_("Invalid log level '{level}' ({e}); using warn"),
                     &[("level", &opts.level.to_string()), ("e", &e.to_string())]
                 )
             );
-            EnvFilter::new("info")
+            EnvFilter::new("warn")
         }
     };
 
