@@ -40,6 +40,10 @@ impl UnitFinder {
             })?;
         let mut framed = frame_stream(stream);
 
+        // Pre-hello IPC version exchange: the allocator refuses peers that
+        // speak a different wire version before finder semantics.
+        crate::ipc::exchange_version(&mut framed, "system-f").await?;
+
         let reg_msg = RegisterUnits {
             name: name.to_string(),
             units_json,
@@ -74,6 +78,10 @@ impl UnitFinder {
                 ))
             })?;
         let mut framed = frame_stream(stream);
+
+        // Pre-hello IPC version exchange: the allocator refuses peers that
+        // speak a different wire version before finder semantics.
+        crate::ipc::exchange_version(&mut framed, "system-f").await?;
 
         let commit_msg = CommitUnits {
             name: name.to_string(),
@@ -110,6 +118,10 @@ impl UnitFinder {
                 ))
             })?;
         let mut framed = frame_stream(stream);
+
+        // Pre-hello IPC version exchange: the allocator refuses peers that
+        // speak a different wire version before finder semantics.
+        crate::ipc::exchange_version(&mut framed, "system-f").await?;
 
         let query = StagingQuery {
             name: name.to_string(),

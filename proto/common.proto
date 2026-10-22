@@ -395,3 +395,28 @@ message ScopeConfig {
     // Parent slice from [Unit] Slice=; empty means the default (system.slice).
     string slice = 7;
 }
+
+// ---------------------------------------------------------------------------
+// IPC protocol version exchange (wire layer, before any session semantics)
+// ---------------------------------------------------------------------------
+
+// The client's very first envelope on any new session (control, admin,
+// worker, finder planes alike).  The server must answer with
+// `ipc.version.result` before hello or registration semantics run.
+message IpcVersionRequest {
+    // IPC protocol version the client wants to speak.
+    uint32 version = 1;
+    // Free-text client identity for server logs (may be empty).
+    string client = 2;
+}
+
+// The server's verdict.  `compatible == false` refuses the client's
+// version: the server sends this reply and closes the connection at once.
+message IpcVersionResult {
+    // The server's own IPC protocol version.
+    uint32 version = 1;
+    // Server accepted the version the client announced.
+    bool compatible = 2;
+    // Human-readable rejection reason (l10n); empty when compatible.
+    string message = 3;
+}

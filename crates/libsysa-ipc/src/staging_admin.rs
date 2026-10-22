@@ -65,6 +65,10 @@ impl StagingAdmin {
         let stream = connect_control(&self.socket_path).await?;
         let mut framed = frame_stream(stream);
 
+        // Pre-hello IPC version exchange: the allocator refuses peers on a
+        // different wire version before any admin semantics run.
+        crate::ipc::exchange_version(&mut framed, "staging-admin").await?;
+
         let query = AdminStagingOp {
             op: op.to_string(),
             uid,

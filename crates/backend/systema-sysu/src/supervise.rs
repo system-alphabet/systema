@@ -163,6 +163,19 @@ where
     let stream = tokio::net::UnixStream::connect(sock_path).await?;
     let mut framed = sysa::ipc::frame_stream(stream);
 
+    // IPC version exchange precedes hello: the allocator pins one wire
+    // version; a mismatch gets an "incompatible" verdict and an immediate
+    // close, surfaced here as an ordinary caller error.
+    let ipc_version = sysa::ipc::exchange_version(&mut framed, "system-sysu")
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(sysa::l10n::fmt(
+                sysa::l10n::t_("IPC version exchange with System A failed: {e}"),
+                &[("e", &e.to_string())]
+            ))
+        })?;
+    debug!("IPC version {ipc_version} negotiated with System A");
+
     // Handshake: the control socket closes the session if the first
     // envelope is anything but `manager.hello`.
     let hello_env = sysa::ipc::make_envelope(

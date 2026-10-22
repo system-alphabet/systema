@@ -74,6 +74,20 @@ impl ControlClient {
             )
         })?;
         debug!("Connected to control socket {path}");
+        // IPC version exchange precedes the hello: the allocator pins one
+        // wire version; a mismatch gets an "incompatible" verdict and an
+        // immediate close, surfaced here as an ordinary connect error.
+        let mut framed = frame_stream(stream);
+        let ipc_version = sysa::ipc::exchange_version(&mut framed, flavor)
+            .await
+            .with_context(|| {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("IPC version exchange with System A failed"),
+                    &[],
+                )
+            })?;
+        debug!("[{flavor}] IPC version {ipc_version} negotiated");
+        let stream = framed.into_inner();
         Self::connect_on(stream, flavor, worker_id).await
     }
 

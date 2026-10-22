@@ -551,6 +551,10 @@ impl WorkerIpc {
 
         let mut framed = frame_stream(stream);
 
+        // Pre-hello IPC version exchange: the allocator refuses peers that
+        // speak a different wire version before registration semantics.
+        crate::ipc::exchange_version(&mut framed, &self.worker_id).await?;
+
         let reg = WorkerRegistration {
             worker_id: self.worker_id.clone(),
             unit_types: self.unit_types.clone(),
@@ -962,9 +966,36 @@ mod tests {
         // Taken on the first `worker.ready` so the sender is moved only once.
         let mut ready = Some(ready);
 
-        let reg = recv_envelope(&mut framed)
+        let first = recv_envelope(&mut framed)
             .await?
             .context("worker never registered")?;
+        // Either the pre-hello IPC version exchange (new-style clients) or
+        // — plain pair tests — straight into `worker.register`.
+        let reg = if first.method == crate::ipc::METHOD_VERSION {
+            let request = crate::proto::IpcVersionRequest::decode(first.payload.as_slice())?;
+            assert_eq!(request.version, crate::ipc::IPC_VERSION);
+            let result = crate::proto::IpcVersionResult {
+                version: crate::ipc::IPC_VERSION,
+                compatible: true,
+                message: String::new(),
+            };
+            send_envelope(
+                &mut framed,
+                &make_envelope(
+                    first.request_id,
+                    "system-a",
+                    "system-t-1",
+                    crate::ipc::METHOD_VERSION_RESULT,
+                    result,
+                )?,
+            )
+            .await?;
+            recv_envelope(&mut framed)
+                .await?
+                .context("worker never registered")?
+        } else {
+            first
+        };
         assert_eq!(reg.method, "worker.register");
         let ack = RegisterAck {
             accepted: true,

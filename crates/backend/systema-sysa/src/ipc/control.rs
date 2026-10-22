@@ -141,18 +141,46 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
     // Admin sessions are served synchronously on the writer — no handshake,
     // no event subscription — mirroring the historical admin protocol that
     // used to live on the allocator IPC socket.
-    let first_env = match reader.next().await {
-        None => {
-            info!("Control client (PID {client_pid}) disconnected before the first envelope");
+    //
+    // Before any of that, an IPC-aware client exchanges the wire version
+    // (`ipc.version` → `ipc.version.result`): the allocator pins one
+    // version (`sysa_ipc::ipc::IPC_VERSION`), refuses everything else and
+    // closes the connection before hello semantics start.  Peers that skip
+    // the exchange (legacy) proceed exactly as before.
+    let first_env = loop {
+        let env = match reader.next().await {
+            None => {
+                info!("Control client (PID {client_pid}) disconnected before the first envelope");
+                return Ok(());
+            }
+            Some(Err(e)) => anyhow::bail!(sysa::l10n::fmt(
+                sysa::l10n::t_("control frame error: {e}"),
+                &[("e", &e.to_string())]
+            )),
+            Some(Ok(bytes)) => {
+                Envelope::decode(bytes.as_ref()).context(sysa::l10n::t_("bad first envelope"))?
+            }
+        };
+        let Some(request) = sysa::ipc::version_request_from(&env) else {
+            break env;
+        };
+        let compatible = sysa::ipc::version_verdict(&request);
+        let reply = sysa::ipc::version_result_envelope(env.request_id, &request)?;
+        if writer.send(encode_envelope(&reply)).await.is_err() {
             return Ok(());
         }
-        Some(Err(e)) => anyhow::bail!(sysa::l10n::fmt(
-            sysa::l10n::t_("control frame error: {e}"),
-            &[("e", &e.to_string())]
-        )),
-        Some(Ok(bytes)) => {
-            Envelope::decode(bytes.as_ref()).context(sysa::l10n::t_("bad first envelope"))?
+        if !compatible {
+            warn!(
+                "IPC version {} refused from PID {client_pid} (this build pins {}); closing",
+                request.version,
+                sysa::ipc::IPC_VERSION
+            );
+            return Ok(());
         }
+        info!(
+            "IPC version {} negotiated with PID {client_pid} ('{}')",
+            request.version, request.client
+        );
     };
     let first_method = first_env.method.clone();
     if matches!(first_method.as_str(), "admin.staging" | "admin.unitstate") {

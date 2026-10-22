@@ -40,6 +40,10 @@ impl UnitStateAdmin {
         let stream = connect_control(&self.socket_path).await?;
         let mut framed = frame_stream(stream);
 
+        // Pre-hello IPC version exchange: the allocator refuses peers on a
+        // different wire version before any admin semantics run.
+        crate::ipc::exchange_version(&mut framed, "unitstate-admin").await?;
+
         let query_env = make_envelope(
             1,
             "",

@@ -6,8 +6,9 @@ use futures::{SinkExt, StreamExt};
 use prost::Message;
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tracing::{debug, warn};
 
-use crate::proto::Envelope;
+use crate::proto::{Envelope, IpcVersionRequest, IpcVersionResult};
 
 /// A framed Unix stream that sends/receives length-delimited protobuf envelopes.
 pub type EnvelopeFramed = Framed<UnixStream, LengthDelimitedCodec>;
@@ -95,6 +96,155 @@ pub fn make_envelope(
         method: method.into(),
         payload: buf.freeze().to_vec(),
     })
+}
+
+// ---------------------------------------------------------------------------
+// IPC protocol version exchange (wire layer, before any session semantics)
+// ---------------------------------------------------------------------------
+
+/// The IPC protocol version of the envelope/framing wire layer in this
+/// build.  The allocator currently pins a single version: a peer that
+/// announces anything else gets `ipc.version.result{compatible:false}` and
+/// its connection is closed before any session semantics — hello,
+/// registration, admin requests — ever start.  A min/max negotiation may
+/// widen this later (`doc/ipc-api-stability.md` §4.1).
+pub const IPC_VERSION: u32 = 1;
+
+/// First envelope of any new session — client → server, before hello.
+pub const METHOD_VERSION: &str = "ipc.version";
+
+/// The verdict to [`METHOD_VERSION`] — server → client, echoed `request_id`.
+pub const METHOD_VERSION_RESULT: &str = "ipc.version.result";
+
+/// Client-side pre-hello version exchange.
+///
+/// Announces [`IPC_VERSION`] and awaits the verdict.  Compatibility holds
+/// only when the reply is `ipc.version.result`, its `compatible` is true
+/// *and* the echoed server version is one we speak (for now: equal).  Any
+/// other reply — `manager.error`, an old server's unknown-method rejection,
+/// EOF — is an incompatibility, and the caller must drop the stream either
+/// way.  Returns the server's version so callers can log the negotiated
+/// pair.
+pub async fn exchange_version(framed: &mut EnvelopeFramed, client: &str) -> Result<u32> {
+    let request = make_envelope(
+        0,
+        client,
+        "system-a",
+        METHOD_VERSION,
+        IpcVersionRequest {
+            version: IPC_VERSION,
+            client: client.to_string(),
+        },
+    )?;
+    send_envelope(framed, &request).await?;
+
+    let reply = recv_envelope(framed).await?.ok_or_else(|| {
+        anyhow::anyhow!(crate::l10n::t_(
+            "peer closed the connection during the IPC version exchange"
+        ))
+    })?;
+    if reply.method != METHOD_VERSION_RESULT {
+        anyhow::bail!(crate::l10n::fmt(
+            crate::l10n::t_("unexpected reply '{method}' during the IPC version exchange"),
+            &[("method", &reply.method)]
+        ));
+    }
+    let result = IpcVersionResult::decode(reply.payload.as_slice())
+        .context(crate::l10n::t_("unreadable ipc.version.result payload"))?;
+    if !result.compatible || result.version != IPC_VERSION {
+        anyhow::bail!(crate::l10n::fmt(
+            crate::l10n::t_(
+                "incompatible IPC version: we speak {mine}, the peer announced {theirs}: {message}"
+            ),
+            &[
+                ("mine", &IPC_VERSION.to_string()),
+                ("theirs", &result.version.to_string()),
+                ("message", &result.message)
+            ]
+        ));
+    }
+    Ok(result.version)
+}
+
+/// Decode the leading version-exchange frame on the server side, when the
+/// session's first envelope is one.  `None` — this peer skipped the
+/// exchange (legacy): the caller proceeds with its existing first-frame
+/// semantics unchanged.
+pub fn version_request_from(env: &Envelope) -> Option<IpcVersionRequest> {
+    if env.method != METHOD_VERSION {
+        return None;
+    }
+    IpcVersionRequest::decode(env.payload.as_slice()).ok()
+}
+
+/// Whether the server accepts the client's announced version (for now the
+/// allocator pins [`IPC_VERSION`]; only an equal version passes).
+pub fn version_verdict(request: &IpcVersionRequest) -> bool {
+    request.version == IPC_VERSION
+}
+
+/// Build the server's `ipc.version.result`.  The server always reports its
+/// own version in the reply; `compatible == false` adds the l10n rejection
+/// text and the caller closes the connection after sending.
+pub fn version_result_envelope(request_id: u64, request: &IpcVersionRequest) -> Result<Envelope> {
+    let compatible = version_verdict(request);
+    let message = if compatible {
+        String::new()
+    } else {
+        crate::l10n::fmt(
+            crate::l10n::t_("this build pins IPC version {have}; the peer announced {want}"),
+            &[
+                ("have", &IPC_VERSION.to_string()),
+                ("want", &request.version.to_string()),
+            ],
+        )
+    };
+    make_envelope(
+        request_id,
+        "system-a",
+        request.client.as_str(),
+        METHOD_VERSION_RESULT,
+        IpcVersionResult {
+            version: IPC_VERSION,
+            compatible,
+            message,
+        },
+    )
+}
+
+/// Server-side pre-hello gate for a framed full-duplex session (worker
+/// plane).  When the first envelope is a version exchange, the verdict is
+/// written and — if refused — `Ok(None)` is returned for the caller to
+/// drop the connection; otherwise the actual first session frame is read
+/// and returned.  Legacy first envelopes (no exchange) pass through
+/// untouched, so old peers keep working over the same accept path.
+pub async fn gate_session_first(
+    framed: &mut EnvelopeFramed,
+    first: Envelope,
+) -> Result<Option<Envelope>> {
+    let Some(request) = version_request_from(&first) else {
+        debug!(
+            "peer '{}' skipped the IPC version exchange (legacy)",
+            first.source
+        );
+        return Ok(Some(first));
+    };
+    let reply = version_result_envelope(first.request_id, &request)?;
+    if send_envelope(framed, &reply).await.is_err() {
+        return Ok(None);
+    }
+    if !version_verdict(&request) {
+        warn!(
+            "IPC version {} announced by '{}' refused (this build pins {}); closing",
+            request.version, request.client, IPC_VERSION
+        );
+        return Ok(None);
+    }
+    debug!(
+        "IPC version {} negotiated with '{}'",
+        request.version, request.client
+    );
+    Ok(recv_envelope(framed).await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -255,5 +405,123 @@ mod tests {
             libc::close(fd);
             libc::close(received);
         }
+    }
+}
+
+#[cfg(test)]
+mod version_exchange_tests {
+    use super::*;
+    use crate::proto::ManagerHelloRequest;
+
+    async fn duplex() -> (EnvelopeFramed, EnvelopeFramed) {
+        let (a, b) = tokio::net::UnixStream::pair().unwrap();
+        (frame_stream(a), frame_stream(b))
+    }
+
+    #[tokio::test]
+    async fn incompatible_announcement_refuses_and_closes() {
+        let (mut client, mut server) = duplex().await;
+
+        let request = make_envelope(
+            7,
+            "rogue",
+            "system-a",
+            METHOD_VERSION,
+            IpcVersionRequest {
+                version: 99,
+                client: "rogue".to_string(),
+            },
+        )
+        .unwrap();
+        send_envelope(&mut client, &request).await.unwrap();
+
+        let first = recv_envelope(&mut server).await.unwrap().unwrap();
+        // Refused: the gate says close (None) after the verdict went out.
+        assert!(gate_session_first(&mut server, first)
+            .await
+            .unwrap()
+            .is_none());
+        let verdict = recv_envelope(&mut client).await.unwrap().unwrap();
+        assert_eq!(verdict.method, METHOD_VERSION_RESULT);
+        let result = IpcVersionResult::decode(verdict.payload.as_slice()).unwrap();
+        assert!(!result.compatible);
+        assert_eq!(result.version, IPC_VERSION);
+        assert!(!result.message.is_empty());
+    }
+
+    #[tokio::test]
+    async fn compatible_exchange_returns_then_the_real_first_frame() {
+        let (mut client, mut server) = duplex().await;
+        let server = tokio::spawn(async move {
+            let first = recv_envelope(&mut server).await.unwrap().unwrap();
+            let continuation = gate_session_first(&mut server, first)
+                .await
+                .unwrap()
+                .unwrap();
+            (continuation, server)
+        });
+
+        let negotiated = exchange_version(&mut client, "tester").await.unwrap();
+        assert_eq!(negotiated, IPC_VERSION);
+
+        // Client deems itself compatible and sends its hello; the server
+        // gate hands the hello through as the session's first envelope
+        // ("communication established" semantics stay with hello).
+        let hello = make_envelope(
+            1,
+            "tester",
+            "system-a",
+            "manager.hello",
+            ManagerHelloRequest {
+                flavor: "tester".to_string(),
+                version: "0.0.0".to_string(),
+                worker_id: String::new(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        send_envelope(&mut client, &hello).await.unwrap();
+
+        let (continuation, server) = server.await.unwrap();
+        assert_eq!(continuation.method, "manager.hello");
+        assert_eq!(continuation.request_id, 1);
+        drop(server);
+    }
+
+    #[tokio::test]
+    async fn legacy_first_frame_passes_through_untouched() {
+        let (_client, mut server) = duplex().await;
+        let legacy = Envelope {
+            request_id: 3,
+            source: "legacy".to_string(),
+            target: "system-a".to_string(),
+            method: "worker.register".to_string(),
+            payload: Vec::new(),
+        };
+        let gated = gate_session_first(&mut server, legacy)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(gated.method, "worker.register");
+        assert_eq!(gated.request_id, 3);
+    }
+
+    #[tokio::test]
+    async fn unexpected_reply_to_exchange_is_incompatibility() {
+        let (mut client, mut server) = duplex().await;
+        let server = tokio::spawn(async move {
+            // A legacy server that does not know the exchange answers with
+            // its own first-frame rejection and closes.
+            let first = recv_envelope(&mut server).await.unwrap().unwrap();
+            let error = make_envelope(1, "system-a", "", "manager.error", ()).unwrap();
+            drop(first);
+            send_envelope(&mut server, &error).await.unwrap();
+            drop(server);
+        });
+
+        let err = exchange_version(&mut client, "tester").await.unwrap_err();
+        assert!(err.to_string().contains("exchange"));
+        drop(client);
+        let _ = server.await;
     }
 }

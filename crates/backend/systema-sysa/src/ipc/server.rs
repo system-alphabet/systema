@@ -276,6 +276,13 @@ async fn handle_worker(
         anyhow::anyhow!(sysa::l10n::t_("Client disconnected before registration"))
     })?;
 
+    // Pre-hello IPC version exchange: refused peers get their verdict and
+    // an immediate close; legacy first frames pass through unchanged.
+    let env = match sysa::ipc::gate_session_first(&mut framed, env).await? {
+        Some(env) => env,
+        None => return Ok(()),
+    };
+
     match env.method.as_str() {
         "worker.register" => handle_worker_session(framed, env, allocator, pending_fd).await,
         "finder.register_units" => handle_finder_register(framed, env, allocator, client_uid).await,
