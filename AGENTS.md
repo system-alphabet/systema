@@ -16,8 +16,9 @@ changes do **not** need to be written back into these docs.
   `rustfmt --check` **only on changed files**, plus a cross-target matrix
   (x86_64-linux, FreeBSD ×2 configs, OpenBSD, Android aarch64+x86_64) all 0e/0w.
 - Commit messages: Conventional Commits (`feat:`, `fix:`, `refactor:`, …).
-  Language split: `doc/` and `.po` in Chinese; code comments, identifiers and
-  commit messages in English.
+  The subject after the colon starts with a capital letter and ends with a
+  period. Language split: `doc/` and `.po` in Chinese; code comments,
+  identifiers and commit messages in English.
 
 ## Workspace gotchas
 - **Directory name ≠ package name**: `crates/libsysa` is package **`sysa`**,
