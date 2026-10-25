@@ -187,10 +187,13 @@ pub async fn start_service(
         None
     };
 
-    // Open the PAM session (PAMName= + User= required, mirroring systemd's
-    // exec-invoke.c `setup_pam()` trigger).  pam_systemd.so & co run here
-    // and export the runtime environment (XDG_RUNTIME_DIR, ...) which is
-    // merged into the child's environment below.
+    // Open the PAM session in a dedicated forked holder child (the
+    // "(syss-pam)" helper; PAMName= + User= required, mirroring systemd's
+    // exec-invoke.c `setup_pam()` trigger).  The child runs the stack in
+    // the only execution context the kernel grants loginuid writes (see
+    // pam.rs), parks holding the session for the service's lifetime and
+    // ships `pam_getenvlist()` back over a pipe; it tears the session down
+    // in its own context when this service's main process exits.
     let mut pam_env: Vec<(String, String)> = Vec::new();
     let mut pam_session: Option<crate::pam::PamSession> = None;
     if wants_credentials && !svc.pam_name.is_empty() && !svc.user.is_empty() {
@@ -209,7 +212,7 @@ pub async fn start_service(
         let pam_name_task = pam_name.clone();
         let username_task = username.clone();
         match tokio::task::spawn_blocking(move || {
-            crate::pam::pam_setup(&pam_name_task, &username_task, tty.as_deref())
+            crate::pam::pam_session_open(&pam_name_task, &username_task, tty.as_deref())
         })
         .await
         {
@@ -440,8 +443,10 @@ pub async fn start_service(
 
     info!("Service {} started, PID={}", unit_name, pid);
 
-    // Keep the PAM session open until the service's main process exits,
-    // then tear it down (the "(sd-pam)" helper equivalent).
+    // Keep the PAM holder child parked until the service's main process
+    // exits; then deliver EOF via the lifecycle pipe, so the parked child
+    // tears the PAM session down in its own (opening) context, mirroring
+    // systemd's "(sd-pam)" teardown sequence.
     if let Some(session) = pam_session {
         let unit_name_for_cleanup = unit_name.clone();
         tokio::spawn(async move {

@@ -213,6 +213,59 @@ P1 = 3.4 的 shell 钩子（尽力而为）；P2 = PAM 模块（确定性会话�
   （用户域实例跑在用户私有的 session bus 上，该旁路在 P1 不构成
   跨用户风险——备注 11；系统域入口的补课不受此影响。）
 
+## 10. 修订（2026-10-25）：syss 的 PAM 会话改为驻留子进程执行（"(syss-pam)" / sd-pam 模式）
+
+**背景**（deepin VM（deepin 6.6.x x86_64）现场诊断闭环，P1 落地后实测）：
+
+- syss 原实现把整段 PAM 栈放在 tokio 阻塞池工作**线程**里跑（`spawn_blocking`）。
+- 内核对 `/proc/<tgid>/loginuid` 的写有**任务身份闸**（非权限闸）：`fs/proc/base.c`
+  的 `proc_loginuid_write()` 里 `current != pid_task(proc_pid(inode), PIDTYPE_PID)`
+  → `-EPERM`——只有线程组 leader（"进程形态"任务）可写，与 CapEff/ptrace 全满与否
+  无关（mainline v6.6 与 v7.3 源码逐字一致；VM 实测三分支：主线程 OK /
+  fork 子进程 OK / 普通线程 EPERM——syss 工作线程 tid=3837 被 tracer 实抓）。
+- `pam_loginuid.so` 在 `systemd-user` 栈中是 required → 栈整体返回 PAM 14
+  （`PAM_SESSION_ERR`）→ PAM 环境永远为空：`XDG_RUNTIME_DIR` 只能靠
+  `xdg_runtime_dir_fallback` 兜底，`DBUS_SESSION_BUS_ADDRESS` 要等
+  `dbus.socket` 的 ExecStartPost 在 ~20 s 后补上 → dde-session 的一次性引导
+  （exec 前的环境即需完成）早于该时间点而失败，桌面链不启动。
+
+**决策**：照 systemd `setup_pam()` 的 "*(sd-pam)*" 形态重做。每次携带 `PAMName=`
+的 spawn，由 syss `fork()` 一个专用驻留子进程：
+
+1. 子进程跑完整栈（`pam_start` → `set_item(PAM_TTY)` → `setcred(ESTABLISH)` →
+   `pam_open_session` → `pam_getenvlist`），把环境列表经管道按
+   「状态字节 + NUL 分隔条目」交回父进程，然后**驻留**持有 pamh 直至服务主进程
+   退出；最后**在同一执行上下文**完成收尾序列
+   （`pam_close_session` → `setcred(DELETE)` → `pam_end`）。
+2. 父进程带超时（30 s）读环境管道；失败语义与原实现一致：warn 后无 PAM 环境
+   继续启动，`xdg_runtime_dir_fallback`（§5 中 `XDG_RUNTIME_DIR` 的兜底）不变。
+3. fork 卫生：libpam 在 fork 前 dlopen 并进程级缓存；CString 全部预转换；
+   子进程关闭除 stdio + 两条管道外的全部 fd；不碰 tokio/tracing；一律
+   `_exit()` 结束；Linux/Android 上设 `PR_SET_PDEATHSIG=SIGKILL`
+   （syss 死则陪葬；fork 与 prctl 之间有 getppid 复查）与
+   `PR_SET_NAME="(syss-pam)"`；两条管道 O_CLOEXEC——此后父进程 fork/exec 的
+   服务子进程绝不继承 lifecycle 写端，EOF 信号才真正随服务退出产生。
+4. 收尾触发：沿用既有 monitor 任务（服务主进程退出判定）→ 关 lifecycle 写端
+   → 子进程收尾 → 父进程有界 waitpid（≤10 s，超时 SIGKILL）；`ECHILD`
+   （被 reaper 预收）与 `EINTR` 均视为完成。异常兜底：spawn 失败路径立即收尸；
+   `PamSession` 意外 Drop 只关写端（EOF 让子进程自毁），遗留收尸由
+   `reaper.rs`（子进程不在 registry 快照内）完成。
+5. 子进程生命周期内只保留 stdio（PAM 模块经 `/dev/log` 的 syslog 通路照常可用）。
+
+**不改变**：PAM 可选性（libpam 缺失即跳过）、触发条件（`PAMName=` + `User=` +
+非 NO_SETUID）、调用点位置（`process.rs` spawn 段）、monitor 循环骨架。
+
+**部署注意**：fork 子进程继承 syss 的 loginuid 设置态，而
+`AUDIT_FEATURE_LOGINUID_IMMUTABLE` 默认开 → **syss 必须随 boot 链启动**
+（loginuid=unset）。从已登录 shell 手工拉起时连接 fork 的子进程都会在
+audit 闸（`kernel/audit.c:audit_set_loginuid_perm()`）EPERM。deepin 6.6
+没有 audit 相关 sysctl 不影响本规则（纯 procfs 身份判定）。
+
+**验证**：syss 日志不再出现 PAM 14；`/proc/<user-mgr 的 pid>/environ` 在
+spawn 即刻同含 `XDG_RUNTIME_DIR` 与 `DBUS_SESSION_BUS_ADDRESS`（不再由
+ExecStartPost 延迟 20 s 补）；修复前 VM 现象（dde-session-manager 因缺
+DBUS 变量引导失败）消失。
+
 ## 附：关键代码位置
 
 | 内容 | 位置 |
@@ -224,6 +277,7 @@ P1 = 3.4 的 shell 钩子（尽力而为）；P2 = PAM 模块（确定性会话�
 | `manager.daemon_reload` / `start_units` 处理 | `crates/backend/systema-sysa/src/ipc/control.rs:528, 1193` |
 | syss 日志目录（`SYSTEMA_SERVICE_LOG_DIR` 运行时覆盖） | `crates/backend/systema-syss/src/process.rs`（`service_log_dir()`） |
 | syss 凭证切换（initgroups，无操作跳过） | `crates/backend/systema-syss/src/process.rs`（pre_exec 段） |
+| syss 驻留 PAM 子进程（"(syss-pam)"，§10） | `crates/backend/systema-syss/src/pam.rs`（`pam_session_open` / `pam_child_main`）；触发点 `process.rs`（spawn 段、monitor 收尾） |
 | 死文件 | 已删除：`crates/backend/systema-sysa/src/unit/parser.rs`（`unit/mod.rs` 从未引用它） |
 | CLI 接入点 | `crates/frontend/systema-unitstatectl/src/main.rs`；`crates/frontend/systema-stagingctl/src/main.rs` |
 | admin 客户端（读 `control_socket_path`） | `crates/libsysa/src/staging_admin.rs`、`unitstate_admin.rs`（经 `ipc::connect_control`） |
