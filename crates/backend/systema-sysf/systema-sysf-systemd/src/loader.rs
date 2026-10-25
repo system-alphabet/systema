@@ -142,6 +142,7 @@ fn find_exact_in(dirs: &[String], name: &str) -> Result<Option<UnitFile>> {
                     if !unit.install.alias.iter().any(|a| a == name) {
                         unit.install.alias.push(name.to_string());
                     }
+                    unit.alias_links.push(name.to_string());
                     Ok(unit)
                 }
                 None => parse_unit_from_path(&path),
@@ -268,8 +269,9 @@ fn load_units_from_dir(
                     }
                 };
                 if !unit.install.alias.iter().any(|a| a == &alias) {
-                    unit.install.alias.push(alias);
+                    unit.install.alias.push(alias.clone());
                 }
+                unit.alias_links.push(alias);
                 Ok(unit)
             }
             None => parse_unit_from_path(&path),
@@ -339,6 +341,53 @@ mod tests {
         let svc = unit.service.unwrap();
         assert!(svc.exec_start[0].raw.contains("tty3"));
         assert!(svc.exec_start[0].args.contains(&"tty3".to_string()));
+    }
+
+    #[test]
+    fn discover_one_marks_a_symlink_alias_as_materialised() {
+        let dir = temp_dir("alias-link");
+        fs::write(
+            dir.join("lightdm.service"),
+            "[Unit]\nDescription=LightDM\n[Service]\nExecStart=/usr/bin/lightdm\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("lightdm.service", dir.join("display-manager.service")).unwrap();
+
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let unit = discover_one_in(&dirs, "display-manager.service")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(unit.name, "lightdm.service");
+        assert_eq!(
+            unit.install.alias,
+            vec!["display-manager.service".to_string()]
+        );
+        // The name exists on disk: the finder may treat it as authoritative.
+        assert_eq!(
+            unit.alias_links,
+            vec!["display-manager.service".to_string()]
+        );
+    }
+
+    #[test]
+    fn install_alias_is_not_marked_as_materialised() {
+        let dir = temp_dir("alias-hint");
+        fs::write(
+            dir.join("lightdm.service"),
+            "[Unit]\nDescription=LightDM\n[Install]\nAlias=display-manager.service\n\
+             [Service]\nExecStart=/usr/bin/lightdm\n",
+        )
+        .unwrap();
+
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let unit = discover_one_in(&dirs, "lightdm.service").unwrap().unwrap();
+
+        assert!(unit
+            .install
+            .alias
+            .contains(&"display-manager.service".to_string()));
+        assert!(unit.alias_links.is_empty());
     }
 
     #[test]

@@ -294,8 +294,29 @@ pub struct UnitIR {
     /// for `lightdm.service`).  Aliases come from `[Install] Alias=` lines
     /// and from unit-file symlinks (a symlink's basename aliases the
     /// canonical unit it points at).
+    ///
+    /// The systemd finder no longer reports aliases here: it resolves them
+    /// against the filesystem (which name actually exists, and in which
+    /// search-path directory) and reports one [`Self::alias_of`] record per
+    /// alias name instead.  The field stays for producers that only declare
+    /// aliases.
     #[serde(default)]
     pub aliases: Vec<String>,
+
+    /// Set on an *alias record*: this IR does not define a unit, it declares
+    /// that `id` is another name for the canonical unit `alias_of`.
+    ///
+    /// Alias ownership is decided by the Finder, which is the component that
+    /// sees the filesystem and therefore knows whether a name is materialised
+    /// as a symlink or only declared via `[Install] Alias=`, and which
+    /// search-path directory wins.  System A only records the mapping: it
+    /// never chooses between competing declarations.
+    ///
+    /// Consumers must not create a unit for an alias record — the alias
+    /// shares the target's jobs, state and object identity.  No other field
+    /// of an alias record is meaningful.
+    #[serde(default)]
+    pub alias_of: Option<String>,
 
     /// `[Unit] Slice=` — the parent slice this unit belongs to (e.g.
     /// `"system.slice"`).  `None` when the directive is absent or empty;

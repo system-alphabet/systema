@@ -790,6 +790,12 @@ pub struct UnitFile {
     pub transient: bool,
     pub unit: UnitSection,
     pub install: InstallSection,
+    /// Aliases materialised as unit-file symlinks, as opposed to the
+    /// `[Install] Alias=` declarations the parser folds into
+    /// [`InstallSection::alias`].  Filled by the loader, never by the parser:
+    /// the finder uses it to decide which of several competing declarations
+    /// actually owns a name on disk.
+    pub alias_links: Vec<String>,
     /// Present only for service units.
     pub service: Option<ServiceSection>,
     /// Present only for mount units.
@@ -822,6 +828,7 @@ impl UnitFile {
             transient: false,
             unit: UnitSection::default(),
             install: InstallSection::default(),
+            alias_links: Vec::new(),
             service: None,
             mount: None,
             automount: None,

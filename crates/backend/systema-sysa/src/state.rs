@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use sysa::event_bus::EventBus;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock as TokioRwLock;
-use tracing::info;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use systema_sysf::ir::UnitIR;
@@ -301,10 +301,21 @@ pub struct AllocatorState {
     /// All loaded unit files.
     pub units: HashMap<String, UnitFile>,
     /// Alias names → canonical unit names (e.g. `display-manager.service` →
-    /// `lightdm.service`).  Populated on every commit from the units' declared
-    /// aliases; all job dispatch and unit lookups resolve through this map so
-    /// an alias is never treated as a separate unit.
+    /// `lightdm.service`).  Populated on every commit from the Finder's alias
+    /// records and from unambiguous declarations; all job dispatch and unit
+    /// lookups resolve through this map so an alias is never treated as a
+    /// separate unit.
     pub aliases: HashMap<String, String>,
+    /// The subset of [`Self::aliases`] that a Finder resolved and reported as
+    /// `alias_of` records.
+    ///
+    /// Kept apart from the derived map because it is *provenance*: a name the
+    /// Finder assigned is not up for grabs by a later commit that merely
+    /// declares `[Install] Alias=` (an on-demand load of a rival declarant
+    /// must not silently take a resolved name over).  An entry moves only when
+    /// a Finder reports a different owner, and disappears when its target or a
+    /// real unit of that name replaces it.
+    pub alias_records: HashMap<String, String>,
     /// Desired state for each named unit.
     pub desired: HashMap<String, DesiredState>,
     /// In-flight jobs keyed by job ID.
@@ -412,6 +423,7 @@ impl AllocatorState {
         let mut state = AllocatorState {
             units: HashMap::new(),
             aliases: HashMap::new(),
+            alias_records: HashMap::new(),
             desired: HashMap::new(),
             jobs: HashMap::new(),
             workers: HashMap::new(),
@@ -543,6 +555,10 @@ impl AllocatorState {
     ///   leaves `self.units` untouched.
     /// - Existing units are *merged* (only the entries provided in the IR are
     ///   overwritten); new units are created from the IR.
+    /// - An IR carrying `alias_of` is an alias record, not a unit: it adds a
+    ///   name to its target's alias list and never creates a unit of its own.
+    ///   The Finder resolves contested names (it sees the filesystem), so no
+    ///   choice between declarants is made here.
     ///
     /// Returns the number of created and updated units.
     pub fn merge_units(
@@ -551,8 +567,9 @@ impl AllocatorState {
     ) -> Result<(usize, usize), String> {
         // Phase 1 (plan): build every new UnitFile up front so a missing
         // required field aborts the commit before anything is mutated.
+        // Alias records define no unit and are applied in phase 3.
         let mut new_units: Vec<(String, UnitFile)> = Vec::with_capacity(units.len());
-        for ir in units.values() {
+        for ir in units.values().filter(|ir| ir.alias_of.is_none()) {
             if !self.units.contains_key(&ir.id) {
                 new_units.push(unit_file_from_ir(ir)?);
             }
@@ -562,7 +579,7 @@ impl AllocatorState {
         // steps are infallible, so a failure cannot happen mid-way.
         let mut created = 0usize;
         let mut updated = 0usize;
-        for ir in units.values() {
+        for ir in units.values().filter(|ir| ir.alias_of.is_none()) {
             if let Some(existing) = self.units.get_mut(&ir.id) {
                 apply_ir_patch(ir, existing);
                 updated += 1;
@@ -577,6 +594,39 @@ impl AllocatorState {
             if let Some(ref tx) = self.unit_loaded_tx {
                 let _ = tx.send(unit_name);
             }
+        }
+
+        // Phase 3 (aliases): record the names the Finder resolved.  Runs
+        // after the target units exist; infallible, and never creates a unit
+        // — an alias shares its target's jobs, state and object identity.
+        for ir in units.values() {
+            let Some(target) = &ir.alias_of else {
+                continue;
+            };
+            if self.units.contains_key(&ir.id) {
+                debug!("alias '{}' ignored: a real unit owns the name", ir.id);
+                continue;
+            }
+            if !self.units.contains_key(target) {
+                warn!(
+                    "alias '{}' points at unknown unit '{}'; ignored",
+                    ir.id, target
+                );
+                continue;
+            }
+            // The record is authoritative: the Finder looked at the filesystem
+            // and decided this name belongs to `target`, so drop a stale claim
+            // from any other unit (the symlink may have been repointed).
+            for (name, uf) in self.units.iter_mut() {
+                if name != target {
+                    uf.install.alias.retain(|a| a != &ir.id);
+                }
+            }
+            let uf = self.units.get_mut(target).expect("target checked above");
+            if !uf.install.alias.iter().any(|a| a == &ir.id) {
+                uf.install.alias.push(ir.id.clone());
+            }
+            self.alias_records.insert(ir.id.clone(), target.clone());
         }
 
         self.rebuild_alias_map();
@@ -705,11 +755,31 @@ impl AllocatorState {
     /// aliases of which canonical unit and (2) rewrite every dependency,
     /// ordering, and install reference so the scheduler and the reference
     /// graph only ever deal with canonical names.
+    ///
+    /// This pass does not decide which unit owns a contested name.  The
+    /// component that can see the evidence does: the systemd Finder resolves
+    /// aliases against the filesystem (a symlink beats a bare `[Install]
+    /// Alias=`, and the higher-priority search-path directory wins) and
+    /// reports one `alias_of` record per name, which [`Self::merge_units`]
+    /// folds into the target's list before this pass runs and remembers in
+    /// [`Self::alias_records`], so a later commit that merely declares the
+    /// same alias cannot take the name over.  A name that is still claimed by
+    /// several units here came from a producer that did not resolve it; it is
+    /// left without an owner and reported, because picking one would be a
+    /// silent arbitration with no evidence behind it.
     pub(crate) fn rebuild_alias_map(&mut self) {
-        self.aliases.clear();
+        // Names a Finder resolved are the starting point, never a declaration.
+        // An entry outlives the commit that carried it: the producer that saw
+        // the evidence is the only one allowed to move it, and a target that
+        // is gone (or a real unit that appeared under the alias's name) drops
+        // it.
+        self.alias_records.retain(|alias, target| {
+            !self.units.contains_key(alias) && self.units.contains_key(target)
+        });
+        self.aliases = self.alias_records.clone();
         // Collect declared aliases first to avoid borrow conflicts.  Group by
-        // alias so a collision between several declarants gets one decision,
-        // and keep both maps name-sorted so every decision is deterministic.
+        // alias so a contested name is seen once, and keep the grouping
+        // name-sorted so the report below is stable.
         let mut declared: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (name, unit) in &self.units {
             for alias in &unit.install.alias {
@@ -723,17 +793,21 @@ impl AllocatorState {
                     .insert(name.clone());
             }
         }
-        let fs_lookup = |name: &str| -> Option<String> {
-            systema_sysf_systemd::loader::discover_one(name)
-                .ok()
-                .flatten()
-                .map(|uf| uf.name)
-        };
         for (alias, declarants) in declared {
-            if let Some(canonical) =
-                pick_alias_canonical(&alias, &declarants, &self.units, &fs_lookup)
-            {
-                self.aliases.insert(alias, canonical);
+            if self.aliases.contains_key(&alias) {
+                continue; // already owned by a Finder's record
+            }
+            match declarants.len() {
+                1 => {
+                    let canonical = declarants.into_iter().next().expect("one declarant");
+                    self.aliases.insert(alias, canonical);
+                }
+                _ => warn!(
+                    "alias '{}' claimed by {} units ({:?}); refusing to pick an owner",
+                    alias,
+                    declarants.len(),
+                    declarants
+                ),
             }
         }
         // Rewrite every reference from an alias to its canonical name.
@@ -806,45 +880,6 @@ impl AllocatorState {
 }
 
 /// Replace every name in `names` that is an alias with its canonical name.
-/// Decide which canonical unit owns `alias` during
-/// [`AllocatorState::rebuild_alias_map`].
-///
-/// Normal case: exactly one unit declares the alias through `[Install]
-/// Alias=`, and that unit owns it.  Collision case: several unit files
-/// declare the same alias — on the test image both `lightdm.service` and
-/// `ddm.service` declare `Alias=display-manager.service`.  `[Install]` is
-/// install-time metadata and carries no runtime authority, so the collision
-/// is resolved the way the loader resolves any unit name: by search-path
-/// lookup of a unit file named exactly like the alias (`/etc/systemd/system/
-/// display-manager.service -> lightdm.service`).  This used to be an
-/// `or_insert` over a `HashMap` iteration, so the winner was whichever
-/// canonical name the hash order happened to visit first — lightdm on some
-/// boots, ddm on others, silently replacing the display manager.
-fn pick_alias_canonical(
-    alias: &str,
-    declarants: &BTreeSet<String>,
-    units: &HashMap<String, UnitFile>,
-    lookup: &dyn Fn(&str) -> Option<String>,
-) -> Option<String> {
-    if declarants.len() == 1 {
-        return declarants.iter().next().cloned();
-    }
-    // Filesystem evidence first: the unit file with the alias's exact name
-    // decides which declarant wins, mirroring systemd's alias handling.
-    if let Some(canonical) = lookup(alias) {
-        if declarants.contains(&canonical) && units.contains_key(&canonical) {
-            return Some(canonical);
-        }
-    }
-    // No filesystem evidence either way (a collision that only exists as
-    // `[Install]` hints): fall back to a deterministic loaded declarant
-    // instead of letting hash-map iteration order choose per boot.
-    declarants
-        .iter()
-        .find(|canonical| units.contains_key(*canonical))
-        .cloned()
-}
-
 fn rewrite_alias_refs(names: &mut HashSet<String>, aliases: &HashMap<String, String>) {
     if names.is_empty() || aliases.is_empty() {
         return;
@@ -1316,6 +1351,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             aliases: Vec::new(),
+            alias_of: None,
             resource_control: None,
         }
     }
@@ -1542,11 +1578,13 @@ mod tests {
     }
 
     #[test]
-    fn colliding_alias_resolves_by_filesystem_authority() {
+    fn contested_alias_is_left_unresolved() {
         // Both lightdm.service and ddm.service declare
-        // `Alias=display-manager.service` on the test image.  The unit file
-        // with the alias's exact name (/etc/systemd/system/
-        // display-manager.service -> lightdm.service) decides the winner.
+        // `Alias=display-manager.service` on the test image.  Resolving that
+        // is the Finder's job (it reports the name's owner from filesystem
+        // evidence); if a declaration arrives here unresolved, System A must
+        // not pick a winner — the name stays unowned instead of silently
+        // starting one display manager or the other.
         let mut lightdm = UnitFile::new("lightdm.service");
         lightdm
             .install
@@ -1556,71 +1594,24 @@ mod tests {
         ddm.install
             .alias
             .push("display-manager.service".to_string());
-        let mut units = HashMap::new();
-        units.insert("lightdm.service".to_string(), lightdm);
-        units.insert("ddm.service".to_string(), ddm);
-        let declarants: BTreeSet<String> = ["lightdm.service", "ddm.service"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let mut state = AllocatorState::new();
+        state.units.insert("lightdm.service".to_string(), lightdm);
+        state.units.insert("ddm.service".to_string(), ddm);
 
-        let pick = |name: &str| -> Option<String> {
-            if name == "display-manager.service" {
-                Some("lightdm.service".to_string())
-            } else {
-                None
-            }
-        };
+        state.rebuild_alias_map();
+
+        assert!(!state.aliases.contains_key("display-manager.service"));
         assert_eq!(
-            pick_alias_canonical("display-manager.service", &declarants, &units, &pick),
-            Some("lightdm.service".to_string())
-        );
-        // The disk is the only authority: pointing it at ddm flips the world
-        // (that is what `systemctl enable ddm` would have produced).
-        let pick_ddm = |name: &str| -> Option<String> {
-            if name == "display-manager.service" {
-                Some("ddm.service".to_string())
-            } else {
-                None
-            }
-        };
-        assert_eq!(
-            pick_alias_canonical("display-manager.service", &declarants, &units, &pick_ddm),
-            Some("ddm.service".to_string())
+            state.resolve_unit_name("display-manager.service"),
+            "display-manager.service"
         );
     }
 
     #[test]
-    fn colliding_alias_without_filesystem_evidence_is_deterministic() {
-        // No unit file carries the alias name (a collision that exists only
-        // as clashing `[Install]` hints): the winner must not depend on
-        // HashMap iteration order — the lexicographically first loaded
-        // declarant wins, every boot.
-        let mut a = UnitFile::new("alpha.service");
-        a.install.alias.push("phantom.service".to_string());
-        let mut z = UnitFile::new("zeta.service");
-        z.install.alias.push("phantom.service".to_string());
-        let mut units = HashMap::new();
-        units.insert("zeta.service".to_string(), z);
-        units.insert("alpha.service".to_string(), a);
-        let declarants: BTreeSet<String> = ["zeta.service", "alpha.service"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        for _ in 0..32 {
-            assert_eq!(
-                pick_alias_canonical("phantom.service", &declarants, &units, &|_| None),
-                Some("alpha.service".to_string())
-            );
-        }
-    }
-
-    #[test]
-    fn commit_resolves_colliding_aliases_deterministically() {
-        // End-to-end through commit: two declarants fight over one alias
-        // with no backing unit file on disk — the resolved alias must be
-        // stable (deterministic), never a per-boot flip.
+    fn commit_leaves_a_contested_alias_unresolved() {
+        // End-to-end through commit: two declarants fight over one alias and
+        // neither was resolved by a Finder — the name must stay unowned
+        // rather than flipping between the two per boot.
         let mut state = AllocatorState::new();
         let mut first = UnitFile::new("zz-late.service");
         first
@@ -1639,7 +1630,7 @@ mod tests {
         state.commit_staging(7, "test").unwrap();
         assert_eq!(
             state.resolve_unit_name("allocator-alias-collision.service"),
-            "aa-early.service"
+            "allocator-alias-collision.service"
         );
     }
 
@@ -1667,6 +1658,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             aliases: Vec::new(),
+            alias_of: None,
             resource_control: None,
         }
     }
@@ -1701,6 +1693,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             aliases: vec!["display-manager.service".to_string()],
+            alias_of: None,
             resource_control: None,
         };
         // `[Install] Alias=display-manager.service` in lightdm.service plus
@@ -1739,6 +1732,186 @@ mod tests {
             .install
             .alias
             .contains(&"display-manager.service".to_string()));
+    }
+
+    /// A plain `.service` definition, as a Finder would report it.
+    fn service_ir(id: &str) -> UnitIR {
+        UnitIR {
+            id: id.to_string(),
+            unit_type: Some(UnitType::Service),
+            description: None,
+            source_format: Some("systemd".to_string()),
+            source_path: None,
+            aliases: Vec::new(),
+            alias_of: None,
+            slice: None,
+            dependencies: None,
+            service: Some(Default::default()),
+            mount: None,
+            automount: None,
+            timer: None,
+            socket: None,
+            conditions: None,
+            asserts: None,
+            wanted_by: None,
+            required_by: None,
+            resource_control: None,
+        }
+    }
+
+    /// The Finder's alias record: `alias` is another name for `target`.
+    fn alias_ir(alias: &str, target: &str) -> UnitIR {
+        UnitIR {
+            alias_of: Some(target.to_string()),
+            unit_type: None,
+            service: None,
+            ..service_ir(alias)
+        }
+    }
+
+    #[test]
+    fn merge_units_applies_alias_records_without_creating_units() {
+        let mut state = AllocatorState::new();
+        let units = HashMap::from([
+            ("lightdm.service".to_string(), service_ir("lightdm.service")),
+            (
+                "display-manager.service".to_string(),
+                alias_ir("display-manager.service", "lightdm.service"),
+            ),
+        ]);
+
+        let (created, updated) = state.merge_units(&units).unwrap();
+
+        // The alias record is not a unit: only lightdm was created.
+        assert_eq!((created, updated), (1, 0));
+        assert!(!state.units.contains_key("display-manager.service"));
+        assert_eq!(
+            state.resolve_unit_name("display-manager.service"),
+            "lightdm.service"
+        );
+        assert!(state.units["lightdm.service"]
+            .install
+            .alias
+            .contains(&"display-manager.service".to_string()));
+    }
+
+    #[test]
+    fn alias_record_does_not_shadow_an_already_loaded_unit() {
+        let mut state = AllocatorState::new();
+        state
+            .merge_units(&HashMap::from([(
+                "display-manager.service".to_string(),
+                service_ir("display-manager.service"),
+            )]))
+            .unwrap();
+
+        // A late alias record for the same name must not turn the real unit
+        // into an alias (it would make the name resolve to lightdm).
+        state
+            .merge_units(&HashMap::from([
+                ("lightdm.service".to_string(), service_ir("lightdm.service")),
+                (
+                    "display-manager.service".to_string(),
+                    alias_ir("display-manager.service", "lightdm.service"),
+                ),
+            ]))
+            .unwrap();
+
+        assert!(state.units.contains_key("display-manager.service"));
+        assert_eq!(
+            state.resolve_unit_name("display-manager.service"),
+            "display-manager.service"
+        );
+        assert!(state.units["lightdm.service"].install.alias.is_empty());
+    }
+
+    #[test]
+    fn alias_record_owns_the_name_across_later_declarations() {
+        let mut state = AllocatorState::new();
+        state
+            .merge_units(&HashMap::from([
+                ("lightdm.service".to_string(), service_ir("lightdm.service")),
+                (
+                    "display-manager.service".to_string(),
+                    alias_ir("display-manager.service", "lightdm.service"),
+                ),
+            ]))
+            .unwrap();
+
+        // ddm.service arrives later (an on-demand load) and still carries its
+        // own `[Install] Alias=` claim.  It must not take the resolved name
+        // over: only the Finder, which saw the symlink, may move it.
+        let mut ddm = service_ir("ddm.service");
+        ddm.aliases = vec!["display-manager.service".to_string()];
+        state
+            .merge_units(&HashMap::from([("ddm.service".to_string(), ddm)]))
+            .unwrap();
+
+        assert_eq!(
+            state.resolve_unit_name("display-manager.service"),
+            "lightdm.service"
+        );
+        assert!(state.units["lightdm.service"]
+            .install
+            .alias
+            .contains(&"display-manager.service".to_string()));
+    }
+
+    #[test]
+    fn alias_record_reassigns_a_stale_claim() {
+        let mut state = AllocatorState::new();
+        state
+            .merge_units(&HashMap::from([
+                ("lightdm.service".to_string(), service_ir("lightdm.service")),
+                (
+                    "display-manager.service".to_string(),
+                    alias_ir("display-manager.service", "lightdm.service"),
+                ),
+            ]))
+            .unwrap();
+        assert_eq!(
+            state.resolve_unit_name("display-manager.service"),
+            "lightdm.service"
+        );
+
+        // The symlink is repointed at ddm; the next commit moves the name.
+        state
+            .merge_units(&HashMap::from([
+                ("ddm.service".to_string(), service_ir("ddm.service")),
+                (
+                    "display-manager.service".to_string(),
+                    alias_ir("display-manager.service", "ddm.service"),
+                ),
+            ]))
+            .unwrap();
+
+        assert_eq!(
+            state.resolve_unit_name("display-manager.service"),
+            "ddm.service"
+        );
+        assert!(state.units["lightdm.service"].install.alias.is_empty());
+        assert!(state.units["ddm.service"]
+            .install
+            .alias
+            .contains(&"display-manager.service".to_string()));
+    }
+
+    #[test]
+    fn alias_record_with_a_missing_target_is_ignored() {
+        let mut state = AllocatorState::new();
+        let units = HashMap::from([(
+            "display-manager.service".to_string(),
+            alias_ir("display-manager.service", "lightdm.service"),
+        )]);
+
+        let (created, updated) = state.merge_units(&units).unwrap();
+
+        assert_eq!((created, updated), (0, 0));
+        assert!(!state.units.contains_key("display-manager.service"));
+        assert_eq!(
+            state.resolve_unit_name("display-manager.service"),
+            "display-manager.service"
+        );
     }
 
     #[test]

@@ -4114,6 +4114,7 @@ mod tests {
             source_format: Some("dynamic".to_string()),
             source_path: None,
             aliases: Vec::new(),
+            alias_of: None,
             slice: Some(parent.to_string()),
             dependencies: if with_parent_dep {
                 Some(DependencySet {

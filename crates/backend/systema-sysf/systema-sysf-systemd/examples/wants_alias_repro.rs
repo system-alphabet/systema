@@ -40,7 +40,10 @@ async fn main() {
         "display-manager.service",
     ] {
         match map.get(key) {
-            Some(ir) => eprintln!("== {key} exists: aliases={:?}", ir.aliases),
+            Some(ir) => eprintln!(
+                "== {key} exists: aliases={:?} alias_of={:?}",
+                ir.aliases, ir.alias_of
+            ),
             None => eprintln!("== {key}: ABSENT"),
         }
     }

@@ -32,9 +32,13 @@ impl Finder for SystemdFinder {
     async fn find_all(&self) -> Result<HashMap<String, UnitIR>> {
         let files = loader::discover_all()?;
         let mut map: HashMap<String, UnitIR> = HashMap::new();
-        for file in files {
-            merge_unit_ir(&mut map, &file);
+        for file in &files {
+            merge_unit_ir(&mut map, file);
         }
+        // Alias ownership is decided here, where the filesystem evidence is:
+        // emit one alias record per name, so System A never sees two units
+        // competing for the same name.
+        emit_alias_records(&mut map, &files);
         Ok(map)
     }
 
@@ -48,22 +52,13 @@ impl Finder for SystemdFinder {
 ///
 /// The same canonical unit can be discovered more than once (e.g. an `/etc`
 /// symlink alias plus the real file under `/usr/lib`).  Keep the first
-/// (highest-precedence) definition and only merge in any extra aliases it may
-/// have missed.
+/// (highest-precedence) definition, exactly like systemd's `unit_file_find`;
+/// the lower-priority copies are shadowed.  Aliases are not merged here:
+/// [`emit_alias_records`] resolves them globally, because one name can be
+/// claimed by several different units.
 fn merge_unit_ir(map: &mut HashMap<String, UnitIR>, file: &UnitFile) {
-    let ir = convert_unit_file(file);
-    match map.get_mut(&file.name) {
-        Some(existing) => {
-            for alias in &ir.aliases {
-                if !existing.aliases.contains(alias) {
-                    existing.aliases.push(alias.clone());
-                }
-            }
-        }
-        None => {
-            map.insert(file.name.clone(), ir);
-        }
-    }
+    map.entry(file.name.clone())
+        .or_insert_with(|| convert_unit_file(file));
 }
 
 fn convert_unit_file(uf: &UnitFile) -> UnitIR {
@@ -84,8 +79,94 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         asserts: Some(convert_asserts(uf)),
         wanted_by: Some(uf.install.wanted_by.iter().cloned().collect()),
         required_by: Some(uf.install.required_by.iter().cloned().collect()),
-        aliases: uf.install.alias.clone(),
+        // Aliases travel as `alias_of` records (see `emit_alias_records`): the
+        // finder is the component that knows whether a name is backing a real
+        // file and which search-path directory wins.
+        aliases: Vec::new(),
+        alias_of: None,
         resource_control: extract_resource_control(uf),
+    }
+}
+
+/// Resolve every alias name reported by the discovered unit files to exactly
+/// one owner, and insert one alias record per name.
+///
+/// The evidence is the filesystem: a name materialised as a unit-file symlink
+/// (`UnitFile::alias_links`) beats an `[Install] Alias=` declaration, and
+/// among equals the first discovered file wins — the loader scans the search
+/// paths in priority order.  Only the first file found under a given name
+/// counts: a lower-priority duplicate of that name is shadowed, so its alias
+/// declarations are not part of the loaded unit.
+///
+/// Deduplication is by *file* name, not by canonical name: several names may
+/// point at one unit (`ssh.service` and `sshd.service`), and each of them is
+/// a valid alias.  The loader records a symlink file's own basename as a link
+/// alias, so the first entry of `alias_links` identifies the file.
+///
+/// A name that is itself a loaded unit keeps owning itself: no record is
+/// emitted, and the real unit wins over any alias claim.
+fn emit_alias_records(map: &mut HashMap<String, UnitIR>, files: &[UnitFile]) {
+    // alias -> (rank, discovery index, canonical unit).  Rank 0 is a
+    // materialised link, rank 1 a bare `[Install] Alias=` declaration.
+    let mut claims: HashMap<&str, (u8, usize, &str)> = HashMap::new();
+    let mut seen_files: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (index, file) in files.iter().enumerate() {
+        let file_name = file
+            .alias_links
+            .first()
+            .map(String::as_str)
+            .unwrap_or(file.name.as_str());
+        if !seen_files.insert(file_name) {
+            continue; // shadowed duplicate at a lower-priority search path
+        }
+        for alias in &file.install.alias {
+            let claim = (
+                u8::from(!file.alias_links.contains(alias)),
+                index,
+                file.name.as_str(),
+            );
+            match claims.get(alias.as_str()) {
+                Some(&current) if (current.0, current.1) <= (claim.0, claim.1) => {}
+                _ => {
+                    claims.insert(alias.as_str(), claim);
+                }
+            }
+        }
+    }
+
+    for (alias, (_, _, canonical)) in claims {
+        if map.contains_key(alias) {
+            continue; // a real unit owns the name; it is not an alias
+        }
+        map.insert(alias.to_string(), alias_record(alias, canonical));
+    }
+}
+
+/// Build the alias record for `alias` → `canonical`.
+///
+/// It carries no definition: the alias shares the target's jobs, state and
+/// object identity, so System A only records the name mapping.
+fn alias_record(alias: &str, canonical: &str) -> UnitIR {
+    UnitIR {
+        id: alias.to_string(),
+        unit_type: None,
+        description: None,
+        source_format: Some("systemd".to_string()),
+        source_path: None,
+        slice: None,
+        dependencies: None,
+        service: None,
+        mount: None,
+        automount: None,
+        timer: None,
+        socket: None,
+        conditions: None,
+        asserts: None,
+        wanted_by: None,
+        required_by: None,
+        aliases: Vec::new(),
+        alias_of: Some(canonical.to_string()),
+        resource_control: None,
     }
 }
 
@@ -326,6 +407,7 @@ impl SystemdFinder {
 mod tests {
     use super::*;
 
+    /// A unit whose aliases are `[Install] Alias=` declarations only.
     fn unit_file(name: &str, aliases: &[&str]) -> UnitFile {
         let mut uf = UnitFile::new(name);
         uf.unit.description = format!("desc of {name}");
@@ -333,41 +415,116 @@ mod tests {
         uf
     }
 
+    /// A unit whose aliases exist as unit-file symlinks on disk.
+    fn linked_unit_file(name: &str, aliases: &[&str]) -> UnitFile {
+        let mut uf = unit_file(name, aliases);
+        uf.alias_links = aliases.iter().map(|s| s.to_string()).collect();
+        uf
+    }
+
+    fn build(files: &[UnitFile]) -> HashMap<String, UnitIR> {
+        let mut map = HashMap::new();
+        for file in files {
+            merge_unit_ir(&mut map, file);
+        }
+        emit_alias_records(&mut map, files);
+        map
+    }
+
     #[test]
-    fn convert_unit_file_carries_aliases() {
-        let uf = unit_file("lightdm.service", &["display-manager.service"]);
+    fn convert_unit_file_reports_no_aliases_of_its_own() {
+        let uf = linked_unit_file("lightdm.service", &["display-manager.service"]);
         let ir = convert_unit_file(&uf);
         assert_eq!(ir.id, "lightdm.service");
-        assert_eq!(ir.aliases, vec!["display-manager.service"]);
-    }
-
-    #[test]
-    fn convert_unit_file_no_aliases_is_empty() {
-        let uf = unit_file("sshd.service", &[]);
-        let ir = convert_unit_file(&uf);
         assert!(ir.aliases.is_empty());
+        assert!(ir.alias_of.is_none());
     }
 
     #[test]
-    fn find_all_merges_duplicate_canonical_names_and_their_aliases() {
-        let mut map = HashMap::new();
-        merge_unit_ir(
-            &mut map,
-            &unit_file("lightdm.service", &["display-manager.service"]),
+    fn alias_record_prefers_a_materialised_link_over_a_declaration() {
+        let files = vec![
+            linked_unit_file("lightdm.service", &["display-manager.service"]),
+            unit_file("ddm.service", &["display-manager.service"]),
+        ];
+        let map = build(&files);
+
+        let record = map
+            .get("display-manager.service")
+            .expect("alias record emitted");
+        assert_eq!(record.alias_of.as_deref(), Some("lightdm.service"));
+        assert!(record.unit_type.is_none());
+        assert!(record.service.is_none());
+        // The canonical units carry no competing alias list.
+        assert!(map["lightdm.service"].aliases.is_empty());
+        assert!(map["ddm.service"].aliases.is_empty());
+    }
+
+    #[test]
+    fn alias_record_uses_discovery_order_between_two_links() {
+        // Search paths are scanned in priority order and the loader pushes
+        // files as it finds them, so the first link wins.
+        let files = vec![
+            linked_unit_file("lightdm.service", &["display-manager.service"]),
+            linked_unit_file("ddm.service", &["display-manager.service"]),
+        ];
+        let map = build(&files);
+        assert_eq!(
+            map["display-manager.service"].alias_of.as_deref(),
+            Some("lightdm.service")
         );
-        merge_unit_ir(
-            &mut map,
-            &unit_file("lightdm.service", &["lightdm-extra.service"]),
+    }
+
+    #[test]
+    fn install_alias_declaration_alone_becomes_an_alias_record() {
+        let files = vec![unit_file("lightdm.service", &["display-manager.service"])];
+        let map = build(&files);
+        assert_eq!(
+            map["display-manager.service"].alias_of.as_deref(),
+            Some("lightdm.service")
         );
-        // The first definition is kept; aliases are the union.
+    }
+
+    #[test]
+    fn alias_from_a_shadowed_duplicate_is_ignored() {
+        // /etc overrides /usr/lib: the shadowed file's declarations are not
+        // part of the loaded unit, so they must not claim a name.
+        let files = vec![
+            unit_file("lightdm.service", &[]),
+            unit_file("lightdm.service", &["display-manager.service"]),
+        ];
+        let map = build(&files);
         assert_eq!(map.len(), 1);
-        let merged = map.get("lightdm.service").unwrap();
-        assert_eq!(merged.aliases.len(), 2);
-        assert!(merged
-            .aliases
-            .contains(&"display-manager.service".to_string()));
-        assert!(merged
-            .aliases
-            .contains(&"lightdm-extra.service".to_string()));
+        assert!(!map.contains_key("display-manager.service"));
+    }
+
+    #[test]
+    fn every_link_to_one_unit_is_reported() {
+        // Two different names point at the same unit; neither may be lost to
+        // deduplication (they are not duplicates of the same file).
+        let files = vec![
+            linked_unit_file("lightdm.service", &["display-manager.service"]),
+            linked_unit_file("lightdm.service", &["x-display-manager.service"]),
+        ];
+        let map = build(&files);
+        assert_eq!(
+            map["display-manager.service"].alias_of.as_deref(),
+            Some("lightdm.service")
+        );
+        assert_eq!(
+            map["x-display-manager.service"].alias_of.as_deref(),
+            Some("lightdm.service")
+        );
+    }
+
+    #[test]
+    fn alias_record_never_shadows_a_real_unit() {
+        let files = vec![
+            linked_unit_file("lightdm.service", &["display-manager.service"]),
+            unit_file("display-manager.service", &[]),
+        ];
+        let map = build(&files);
+        let real = map.get("display-manager.service").unwrap();
+        assert_eq!(real.id, "display-manager.service");
+        assert!(real.alias_of.is_none());
     }
 }

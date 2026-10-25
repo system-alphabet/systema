@@ -64,6 +64,7 @@ pub fn user_slice_ir(unit_name: &str, description: &str) -> UnitIR {
         source_format: Some("dynamic".to_string()),
         source_path: None,
         aliases: Vec::new(),
+        alias_of: None,
         slice: None,
         dependencies: None,
         service: None,
@@ -192,6 +193,7 @@ fn slice_ir_for(unit_name: &str, parent: &str) -> UnitIR {
         source_format: Some("dynamic".to_string()),
         source_path: None,
         aliases: Vec::new(),
+        alias_of: None,
         slice: Some(parent.to_string()),
         dependencies: Some(DependencySet {
             requires: HashSet::from([parent.to_string()]),

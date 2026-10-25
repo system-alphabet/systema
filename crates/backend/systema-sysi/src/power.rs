@@ -157,6 +157,7 @@ fn power_unit_ir(unit_name: &str) -> Option<UnitIR> {
         source_format: Some("dynamic".to_string()),
         source_path: None,
         aliases: Vec::new(),
+        alias_of: None,
         slice: None,
         dependencies: None,
         service: None,
