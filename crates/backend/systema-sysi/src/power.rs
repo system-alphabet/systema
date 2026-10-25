@@ -170,6 +170,7 @@ fn power_unit_ir(unit_name: &str) -> Option<UnitIR> {
         asserts: None,
         wanted_by: None,
         required_by: None,
+        template: None,
     })
 }
 

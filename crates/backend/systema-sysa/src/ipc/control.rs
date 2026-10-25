@@ -1892,6 +1892,7 @@ mod tests {
                 asserts: None,
                 wanted_by: None,
                 required_by: None,
+                template: None,
             },
         )]
         .into_iter()
@@ -2331,6 +2332,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            template: None,
         }
     }
 

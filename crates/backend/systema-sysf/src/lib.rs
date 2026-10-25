@@ -7,6 +7,7 @@
 //! the `systema-sysf` executable from the finder search paths.
 
 pub mod ir;
+pub mod template;
 
 use std::collections::HashMap;
 use std::sync::Arc;

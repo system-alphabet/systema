@@ -265,6 +265,34 @@ pub struct SocketConfig {
     pub directory_mode: String,
 }
 
+/// Template metadata for a template definition or one of its instances.
+///
+/// A template unit (`getty@.service`) is a definition, not a runnable unit:
+/// its values keep the instance specifiers (`%i`, `%I`) unexpanded so that a
+/// consumer can materialize any instance from it.  An instance
+/// (`getty@tty3.service`) records the parameters that were substituted and the
+/// template it specializes.  A producer that reports an instance has already
+/// merged that instance's own drop-ins into it, which is what makes a reported
+/// instance win over a template instantiation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateInfo {
+    /// True when this IR *is* the template definition (`getty@.service`),
+    /// rather than an instance of one.
+    #[serde(default)]
+    pub definition: bool,
+
+    /// The template this IR specializes (`getty@.service` for
+    /// `getty@tty3.service`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub of: Option<String>,
+
+    /// The parameters substituted for the template, in order.  systemd carries
+    /// at most one (the `%i` instance string); a vector is the reserved shape
+    /// for backends that template on more than one value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<String>,
+}
+
 /// The unified intermediate representation (IR) for a single unit.
 ///
 /// Every Finder (systemd, SysV, OpenRC, Runit, etc.) produces this type.
@@ -278,7 +306,7 @@ pub struct SocketConfig {
 /// exist yet, a new one is created from the provided fields; missing
 /// required fields (`unit_type`) then cause an error returned to the worker
 /// that submitted the commit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UnitIR {
     /// Canonical unit identifier, e.g. "nginx.service", "network", "sshd".
     pub id: String,
@@ -346,6 +374,38 @@ pub struct UnitIR {
     /// Install section: which targets want this unit.
     pub wanted_by: Option<Vec<String>>,
     pub required_by: Option<Vec<String>>,
+
+    /// Template metadata: set on a template definition (`getty@.service`) or
+    /// on an instance of one.  `None` for ordinary units.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<TemplateInfo>,
+}
+
+impl UnitIR {
+    /// True when this IR is a template definition, not a runnable unit.
+    pub fn is_template(&self) -> bool {
+        self.template.as_ref().is_some_and(|t| t.definition)
+    }
+
+    /// True when this IR is an instance of a template.
+    pub fn is_template_instance(&self) -> bool {
+        self.template
+            .as_ref()
+            .is_some_and(|t| !t.definition && t.of.is_some())
+    }
+
+    /// The template this IR specializes, if it is an instance.
+    pub fn template_of(&self) -> Option<&str> {
+        self.template.as_ref().and_then(|t| t.of.as_deref())
+    }
+
+    /// The parameters substituted for the template, empty for non-instances.
+    pub fn template_parameters(&self) -> &[String] {
+        self.template
+            .as_ref()
+            .map(|t| t.parameters.as_slice())
+            .unwrap_or(&[])
+    }
 }
 
 /// A condition or assert directive.

@@ -300,6 +300,14 @@ pub fn is_valid_staging_name(name: &str) -> bool {
 pub struct AllocatorState {
     /// All loaded unit files.
     pub units: HashMap<String, UnitFile>,
+    /// Template definitions keyed by template name (`getty@.service`).
+    ///
+    /// A template is a definition, not a runnable unit: it never enters
+    /// [`Self::units`], never gets jobs and never appears in `list_units`.  An
+    /// instance that no producer reported is materialized from here on demand
+    /// and merged like any other definition, so it is indistinguishable from a
+    /// reported one.
+    pub templates: HashMap<String, UnitIR>,
     /// Alias names → canonical unit names (e.g. `display-manager.service` →
     /// `lightdm.service`).  Populated on every commit from the Finder's alias
     /// records and from unambiguous declarations; all job dispatch and unit
@@ -422,6 +430,7 @@ impl AllocatorState {
     pub fn new() -> Self {
         let mut state = AllocatorState {
             units: HashMap::new(),
+            templates: HashMap::new(),
             aliases: HashMap::new(),
             alias_records: HashMap::new(),
             desired: HashMap::new(),
@@ -550,8 +559,11 @@ impl AllocatorState {
     ///
     /// The merge is atomic:
     ///
-    /// - Every `UnitIR` is validated (new units require `unit_type`) before
-    ///   anything is mutated; a validation failure aborts the merge and
+    /// - An IR marked `template.definition` is a *template definition*, not a
+    ///   unit: it is stored for on-demand instantiation and never creates a
+    ///   unit of its own (no jobs, no `list_units` entry).
+    /// - Every other `UnitIR` is validated (new units require `unit_type`)
+    ///   before anything is mutated; a validation failure aborts the merge and
     ///   leaves `self.units` untouched.
     /// - Existing units are *merged* (only the entries provided in the IR are
     ///   overwritten); new units are created from the IR.
@@ -565,11 +577,26 @@ impl AllocatorState {
         &mut self,
         units: &HashMap<String, UnitIR>,
     ) -> Result<(usize, usize), String> {
+        // Phase 0 (templates): definitions are kept apart from the unit table.
+        // A malformed template is skipped rather than aborting the commit —
+        // it defines no unit and only disables on-demand instantiation.
+        for ir in units.values().filter(|ir| ir.is_template()) {
+            if ir.unit_type.is_none() {
+                warn!("template '{}' ignored: missing unit_type", ir.id);
+                continue;
+            }
+            self.templates.insert(ir.id.clone(), ir.clone());
+        }
+
         // Phase 1 (plan): build every new UnitFile up front so a missing
         // required field aborts the commit before anything is mutated.
-        // Alias records define no unit and are applied in phase 3.
+        // Alias records and template definitions define no unit and are
+        // applied elsewhere.
         let mut new_units: Vec<(String, UnitFile)> = Vec::with_capacity(units.len());
-        for ir in units.values().filter(|ir| ir.alias_of.is_none()) {
+        for ir in units
+            .values()
+            .filter(|ir| ir.alias_of.is_none() && !ir.is_template())
+        {
             if !self.units.contains_key(&ir.id) {
                 new_units.push(unit_file_from_ir(ir)?);
             }
@@ -579,7 +606,10 @@ impl AllocatorState {
         // steps are infallible, so a failure cannot happen mid-way.
         let mut created = 0usize;
         let mut updated = 0usize;
-        for ir in units.values().filter(|ir| ir.alias_of.is_none()) {
+        for ir in units
+            .values()
+            .filter(|ir| ir.alias_of.is_none() && !ir.is_template())
+        {
             if let Some(existing) = self.units.get_mut(&ir.id) {
                 apply_ir_patch(ir, existing);
                 updated += 1;
@@ -1353,6 +1383,7 @@ mod tests {
             aliases: Vec::new(),
             alias_of: None,
             resource_control: None,
+            template: None,
         }
     }
 
@@ -1660,6 +1691,7 @@ mod tests {
             aliases: Vec::new(),
             alias_of: None,
             resource_control: None,
+            template: None,
         }
     }
 
@@ -1695,6 +1727,7 @@ mod tests {
             aliases: vec!["display-manager.service".to_string()],
             alias_of: None,
             resource_control: None,
+            template: None,
         };
         // `[Install] Alias=display-manager.service` in lightdm.service plus
         // the `/etc/systemd/system/display-manager.service` symlink both feed
@@ -1756,6 +1789,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             resource_control: None,
+            template: None,
         }
     }
 
@@ -2166,5 +2200,57 @@ mod tests {
             Some((1000, 0))
         );
         assert_eq!(sessions.get(&2000).map(|s| s.len()), Some(1));
+    }
+
+    #[test]
+    fn merge_units_stores_templates_without_creating_units() {
+        use systema_sysf::ir::TemplateInfo;
+
+        let mut state = AllocatorState::new();
+        let template = UnitIR {
+            id: "getty@.service".to_string(),
+            unit_type: Some(UnitType::Service),
+            template: Some(TemplateInfo {
+                definition: true,
+                of: None,
+                parameters: Vec::new(),
+            }),
+            ..Default::default()
+        };
+
+        let (created, updated) = state
+            .merge_units(&HashMap::from([("getty@.service".to_string(), template)]))
+            .unwrap();
+
+        // A template defines no unit and is counted as neither created nor
+        // updated; it is kept for on-demand instantiation instead.
+        assert_eq!((created, updated), (0, 0));
+        assert!(!state.units.contains_key("getty@.service"));
+        assert!(state.templates.contains_key("getty@.service"));
+        assert!(state.alias_records.is_empty());
+    }
+
+    #[test]
+    fn merge_units_skips_a_template_without_unit_type() {
+        use systema_sysf::ir::TemplateInfo;
+
+        let mut state = AllocatorState::new();
+        let malformed = UnitIR {
+            id: "getty@.service".to_string(),
+            template: Some(TemplateInfo {
+                definition: true,
+                of: None,
+                parameters: Vec::new(),
+            }),
+            ..Default::default()
+        };
+
+        // The commit itself succeeds: a template defines no unit, so a
+        // malformed one must not take the whole batch down with it.
+        let (created, updated) = state
+            .merge_units(&HashMap::from([("getty@.service".to_string(), malformed)]))
+            .unwrap();
+        assert_eq!((created, updated), (0, 0));
+        assert!(state.templates.is_empty());
     }
 }

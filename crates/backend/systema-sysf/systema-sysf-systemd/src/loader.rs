@@ -76,6 +76,9 @@ pub fn discover_all() -> Result<Vec<UnitFile>> {
             )?;
         }
     }
+    // Instance drop-in directories carry the per-instance specialization that
+    // cannot be derived from the template alone.
+    discover_instance_specializations(&mut units);
     apply_implicit_deps(&mut units, &implicit);
     info!("Systemd finder discovered {} unit(s)", units.len());
     Ok(units)
@@ -156,6 +159,82 @@ fn find_exact_in(dirs: &[String], name: &str) -> Result<Option<UnitFile>> {
         }
     }
     Ok(None)
+}
+
+/// Discover per-instance drop-in directories (`getty@tty3.service.d/*.conf`)
+/// and report the instance they specialize.
+///
+/// The instance usually has no file of its own — it exists only because a
+/// template does.  Parsing the template under the instance name applies the
+/// template's drop-ins (`getty@.service.d`) *and* the instance's own
+/// (`getty@tty3.service.d`), which is exactly the specialization a consumer
+/// cannot reconstruct from the template IR alone.  Instances that discovery
+/// already found (a unit file or an enabling symlink) keep their entry.
+fn discover_instance_specializations(units: &mut Vec<UnitFile>) {
+    let dirs = sysa::paths::instance().unit_search_paths.clone();
+    discover_instance_specializations_in(&dirs, units);
+}
+
+/// [`discover_instance_specializations`] over an explicit search-path list
+/// (testable without touching the global path configuration).
+fn discover_instance_specializations_in(dirs: &[String], units: &mut Vec<UnitFile>) {
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let Some(dir_name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            let Some(name) = dir_name.strip_suffix(".d") else {
+                continue;
+            };
+            if !is_known_extension(name) || !sysa::unit_name::is_instance(name) {
+                continue;
+            }
+            // A real instance file is authoritative: it was parsed from its
+            // own path, so both drop-in scopes were already applied.
+            if dirs
+                .iter()
+                .any(|search| is_regular_file(&Path::new(search).join(name)))
+            {
+                continue;
+            }
+            let Some(template) = sysa::unit_name::template_of(name) else {
+                continue;
+            };
+            let path = Path::new(dir).join(&template);
+            if !path.is_file() {
+                continue;
+            }
+            match parse_unit_from_path_as(&path, name) {
+                Ok(unit) => match units.iter().position(|u| u.name == name) {
+                    Some(index) => {
+                        // Discovered through an enabling symlink in a
+                        // `.wants/` directory: that path carried no drop-in
+                        // scope, so fold the instance's own drop-ins in here.
+                        debug!("Folding instance drop-ins into {}", name);
+                        units[index] = unit;
+                    }
+                    None => {
+                        debug!("Discovered instance specialization {}", name);
+                        units.push(unit);
+                    }
+                },
+                Err(e) => debug!("Skipping instance drop-ins for {}: {}", name, e),
+            }
+        }
+    }
+}
+
+/// True for a regular file (not a symlink) at `path`.
+fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_file())
+        .unwrap_or(false)
 }
 
 /// The kind of dependency implied by a `<unit>.wants/` / `<unit>.requires/`
@@ -245,15 +324,11 @@ fn load_units_from_dir(
         if !is_known_extension(&name) {
             continue;
         }
-        // A template unit (e.g. `getty@.service`) is a definition, not a
-        // runnable unit: only its instances (`getty@tty1.service`) are real
-        // units.  Treating the bare template as a unit would let it be
-        // started with unexpanded `%i`/`%I` specifiers (e.g. a getty with
-        // `TTYPath=/dev/`).  It is never emitted to the committed set.
-        if sysa::unit_name::is_template(&name) {
-            debug!("Skipping template unit {}", name);
-            continue;
-        }
+        // A template unit (e.g. `getty@.service`) is reported as a *definition*,
+        // not as a runnable unit: the parser keeps its `%i`/`%I` specifiers
+        // literal, and the IR marks it `template.definition`, so a consumer
+        // can materialize any instance from it without touching the disk.
+        // Dropping templates here would leave instance names unresolvable.
         // A unit-file symlink aliases its resolved target: the canonical unit
         // name is the target's basename and the symlink's basename becomes an
         // alias of it.  This mirrors systemd, where `display-manager.service`
@@ -615,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_template_unit_is_skipped_in_discovery() {
+    fn bare_template_unit_is_discovered_as_a_definition() {
         let dir = temp_dir("tplskip");
         fs::write(
             dir.join("getty@.service"),
@@ -627,7 +702,91 @@ mod tests {
         let mut implicit = HashMap::new();
         load_units_from_dir_recursive(&dir, &mut units, &mut implicit, None).unwrap();
 
-        assert!(units.iter().all(|u| u.name != "getty@.service"));
+        // The template is reported as a definition; its instance specifiers
+        // are preserved for the consumer that materializes an instance.
+        let tpl = units
+            .iter()
+            .find(|u| u.name == "getty@.service")
+            .expect("template discovered");
+        assert_eq!(tpl.unit.description, "Getty on %I");
+        assert_eq!(tpl.service.as_ref().unwrap().tty_path, "/dev/%I");
+        assert_eq!(tpl.service.as_ref().unwrap().exec_start[0].args, ["%I"]);
+    }
+
+    #[test]
+    fn instance_drop_ins_are_discovered_as_a_specialization() {
+        let dir = temp_dir("tpldropin");
+        fs::write(
+            dir.join("getty@.service"),
+            "[Unit]\nDescription=Getty on %I\n[Service]\nExecStart=/sbin/agetty %I\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("getty@tty3.service.d")).unwrap();
+        fs::write(
+            dir.join("getty@tty3.service.d/override.conf"),
+            "[Service]\nEnvironment=GETTY_MODE=special\n",
+        )
+        .unwrap();
+
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        load_units_from_dir_recursive(&dir, &mut units, &mut implicit, None).unwrap();
+        discover_instance_specializations_in(&dirs, &mut units);
+
+        let instance = units
+            .iter()
+            .find(|u| u.name == "getty@tty3.service")
+            .expect("instance specialization discovered");
+        assert_eq!(instance.unit.description, "Getty on tty3");
+        assert_eq!(
+            instance.service.as_ref().unwrap().environment,
+            ["GETTY_MODE=special"]
+        );
+    }
+
+    #[test]
+    fn enabling_symlink_instance_gets_its_own_drop_ins() {
+        let dir = temp_dir("tpldropin-wants");
+        let unit_dir = dir.join("system");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::write(
+            unit_dir.join("getty@.service"),
+            "[Unit]\nDescription=Getty on %I\n[Service]\nExecStart=/sbin/agetty %I\n",
+        )
+        .unwrap();
+        fs::write(unit_dir.join("getty.target"), "[Unit]\nDescription=Getty\n").unwrap();
+        // The enablement link is parsed from a `.wants/` path, where no
+        // drop-in scope exists; the instance's own directory lives beside
+        // the template and must still be folded in.
+        fs::create_dir_all(unit_dir.join("getty.target.wants")).unwrap();
+        std::os::unix::fs::symlink(
+            unit_dir.join("getty@.service"),
+            unit_dir.join("getty.target.wants/getty@tty1.service"),
+        )
+        .unwrap();
+        fs::create_dir_all(unit_dir.join("getty@tty1.service.d")).unwrap();
+        fs::write(
+            unit_dir.join("getty@tty1.service.d/override.conf"),
+            "[Service]\nEnvironment=GETTY_MODE=special\n",
+        )
+        .unwrap();
+
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        let dirs = vec![unit_dir.to_string_lossy().into_owned()];
+        load_units_from_dir_recursive(&unit_dir, &mut units, &mut implicit, None).unwrap();
+        discover_instance_specializations_in(&dirs, &mut units);
+
+        let instance = units
+            .iter()
+            .find(|u| u.name == "getty@tty1.service")
+            .expect("instance unit from enablement link");
+        assert_eq!(instance.unit.description, "Getty on tty1");
+        assert_eq!(
+            instance.service.as_ref().unwrap().environment,
+            ["GETTY_MODE=special"]
+        );
     }
 
     #[test]
@@ -675,8 +834,13 @@ mod tests {
         load_units_from_dir_recursive(&unit_dir, &mut units, &mut implicit, None).unwrap();
         apply_implicit_deps(&mut units, &implicit);
 
-        // The bare template is never a unit.
-        assert!(units.iter().all(|u| u.name != "getty@.service"));
+        // The bare template is reported as a definition (with %I preserved),
+        // never as a runnable instance.
+        let template = units
+            .iter()
+            .find(|u| u.name == "getty@.service")
+            .expect("template definition reported");
+        assert_eq!(template.unit.description, "Getty on %I");
         // The enablement symlink is an instance unit, with %I expanded.
         let getty = units
             .iter()

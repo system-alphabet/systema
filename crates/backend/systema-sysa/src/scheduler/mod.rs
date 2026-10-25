@@ -318,6 +318,25 @@ pub fn collect_missing_units_multi(
     missing
 }
 
+/// Re-materialize the root unit of a start job from the best available source.
+///
+/// An instance (`xxx@yyy.*`) is resolved from the IR template, never from the
+/// disk: a producer that reported the instance already merged that instance's
+/// own drop-ins into it, and re-parsing the same-named file (which is the
+/// template) under the instance name would replace that evidence with a plain
+/// expansion.  A name with no template keeps the on-disk refresh, where the
+/// unit file is the authority for dependency edges a mirror or discovery path
+/// may have trimmed.
+async fn refresh_root_unit(allocator: AllocatorHandle, unit_name: &str) -> Result<()> {
+    if sysa::unit_name::is_instance(unit_name)
+        && crate::unit::template::materialize(&allocator, unit_name)?
+    {
+        return Ok(());
+    }
+    crate::unit::loader::ensure_loaded_from_disk(allocator, unit_name).await?;
+    Ok(())
+}
+
 /// Request definitions for the given missing units from the workers that
 /// own their unit types (`unit.define` protocol), then commit the returned
 /// definitions into the allocator through the same idempotent merge as the
@@ -334,6 +353,12 @@ pub async fn request_unit_definition(allocator: AllocatorHandle, missing: &[Stri
     //    that no unit file covers (docs/user-slice-todo.md, 未决问题 2).
     let mut dynamic: Vec<String> = Vec::new();
     for name in missing {
+        // Template definitions are already in the table: instantiating one
+        // needs no disk access and no worker, and a reported instance of the
+        // same template keeps its entry.
+        if crate::unit::template::materialize(&allocator, name)? {
+            continue;
+        }
         if !crate::unit::loader::ensure_loaded_from_disk(allocator.clone(), name).await? {
             dynamic.push(name.clone());
         }
@@ -1059,7 +1084,7 @@ pub async fn enqueue_job(
     // /run/user/1000 was not mounted yet and systemd --user refused
     // XDG_RUNTIME_DIR), which is why this refresh runs before every Start.
     if matches!(kind, JobKind::Start | JobKind::Restart) {
-        crate::unit::loader::ensure_loaded_from_disk(allocator.clone(), unit_name).await?;
+        refresh_root_unit(allocator.clone(), unit_name).await?;
     }
     //
     // On-demand materialization (unit.define): before planning, the
@@ -2812,6 +2837,52 @@ mod tests {
     use systema_sysf::ir::{DependencySet, UnitIR, UnitType};
 
     // =========================================================================
+    // Template instantiation on the start path
+    // =========================================================================
+
+    #[tokio::test]
+    async fn start_refreshes_an_instance_from_the_ir_template() {
+        use crate::state::Allocator;
+        use systema_sysf::ir::{ServiceConfig, TemplateInfo};
+
+        let allocator = Allocator::handle();
+        let template = UnitIR {
+            id: "getty@.service".to_string(),
+            unit_type: Some(UnitType::Service),
+            description: Some("Getty on %I".to_string()),
+            service: Some(ServiceConfig {
+                tty_path: "/dev/%i".to_string(),
+                ..Default::default()
+            }),
+            template: Some(TemplateInfo {
+                definition: true,
+                of: None,
+                parameters: Vec::new(),
+            }),
+            ..Default::default()
+        };
+        allocator
+            .write()
+            .merge_units(&HashMap::from([("getty@.service".to_string(), template)]))
+            .unwrap();
+
+        // The start path resolves the instance without touching the disk.
+        refresh_root_unit(allocator.clone(), "getty@tty5.service")
+            .await
+            .unwrap();
+
+        let state = allocator.read();
+        let unit = state
+            .units
+            .get("getty@tty5.service")
+            .expect("instance materialized from the template");
+        assert_eq!(unit.unit.description, "Getty on tty5");
+        assert_eq!(unit.service.as_ref().unwrap().tty_path, "/dev/tty5");
+        // A template is never a unit of its own.
+        assert!(!state.units.contains_key("getty@.service"));
+    }
+
+    // =========================================================================
     // JobMode tests
     // =========================================================================
 
@@ -4135,6 +4206,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            template: None,
         }
     }
 

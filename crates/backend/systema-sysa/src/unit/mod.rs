@@ -9,3 +9,4 @@ pub use systema_sysf_systemd::parser;
 pub use systema_sysf_systemd::types;
 pub mod enable;
 pub mod loader;
+pub mod template;

@@ -768,6 +768,11 @@ fn preprocess_content(content: &str) -> String {
 /// | `%m`      | Machine ID (from `/etc/machine-id`) |
 /// | `%v`      | Kernel release (`uname -r`) |
 /// | `%%`      | Literal `%` |
+///
+/// A template unit name (`getty@.service`) has no instance value, so `%i` and
+/// `%I` are kept literal there: the consumer that materializes an instance
+/// substitutes them.  `%%` also stays escaped in a template, so that consumer
+/// can tell a literal `%` from a specifier it must expand.
 pub fn expand_specifiers(s: &str, name: &str) -> String {
     if !s.contains('%') {
         return s.to_string();
@@ -783,6 +788,11 @@ pub fn expand_specifiers(s: &str, name: &str) -> String {
     } else {
         (unit_no_ext, "")
     };
+    // A template definition has no instance value yet: only the consumer that
+    // materializes an instance can expand `%i`/`%I`, so a template parse
+    // keeps them literal.  Everything else about the name (`%n`, `%p`, ...)
+    // is known and is expanded normally.
+    let template = sysa::unit_name::is_template(name);
 
     // System information — computed lazily (best-effort, empty on error).
     let hostname = || {
@@ -834,7 +844,9 @@ pub fn expand_specifiers(s: &str, name: &str) -> String {
             Some('n') => out.push_str(unit_name),
             Some('N') => out.push_str(unit_no_ext),
             Some('p') => out.push_str(prefix),
+            Some('i') if template => out.push_str("%i"),
             Some('i') => out.push_str(instance),
+            Some('I') if template => out.push_str("%I"),
             Some('I') => out.push_str(&sysa::unit_name::unescape(instance)),
             Some('u') => {
                 let user = std::env::var("USER")
@@ -880,6 +892,7 @@ pub fn expand_specifiers(s: &str, name: &str) -> String {
             Some('H') => out.push_str(&hostname()),
             Some('m') => out.push_str(&machine_id()),
             Some('v') => out.push_str(&kernel_release()),
+            Some('%') if template => out.push_str("%%"),
             Some('%') => out.push('%'),
             Some(other) => {
                 // Unknown specifier — pass through unchanged.
@@ -2896,14 +2909,17 @@ AllowedCPUs=0-3
         let tpl = dir.join("getty@.service");
         std::fs::write(
             &tpl,
-            "[Unit]\nDescription=Getty %I\n[Service]\nExecStart=/sbin/agetty %i\n",
+            "[Unit]\nDescription=Getty %I (100%%)\n[Service]\nExecStart=/sbin/agetty %i\n",
         )
         .unwrap();
 
-        // Parsing the template verbatim keeps %i empty.
+        // Parsing the template verbatim keeps %i/%I literal: only a consumer
+        // that materializes an instance knows the parameter, so the template
+        // stays instantiable instead of silently losing the instance.  A
+        // literal `%%` also stays escaped for that later pass.
         let unit = parse_unit_from_path(&tpl).unwrap();
         assert_eq!(unit.name, "getty@.service");
-        assert_eq!(unit.unit.description, "Getty ");
+        assert_eq!(unit.unit.description, "Getty %I (100%%)");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use systema_sysf::ir::{
     self, AutomountConfig, Condition, DependencySet, ExecCommand, MountConfig, ServiceConfig,
-    SocketConfig, TimerConfig, UnitIR, UnitType,
+    SocketConfig, TemplateInfo, TimerConfig, UnitIR, UnitType,
 };
 use systema_sysf::Finder;
 
@@ -85,7 +85,31 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         aliases: Vec::new(),
         alias_of: None,
         resource_control: extract_resource_control(uf),
+        template: convert_template_info(&uf.name),
     }
+}
+
+/// Describe a name as a template definition or an instance of one.
+///
+/// The naming convention carries the template relation (`getty@tty3.service`
+/// is an instance of `getty@.service`), so the finder can report it without a
+/// separate index.  A template's values keep `%i`/`%I` unexpanded (the parser
+/// preserves them for template names) because only the consumer knows which
+/// instance it will materialize.
+fn convert_template_info(name: &str) -> Option<TemplateInfo> {
+    if sysa::unit_name::is_template(name) {
+        return Some(TemplateInfo {
+            definition: true,
+            of: None,
+            parameters: Vec::new(),
+        });
+    }
+    let template = sysa::unit_name::template_of(name)?;
+    Some(TemplateInfo {
+        definition: false,
+        of: Some(template),
+        parameters: sysa::unit_name::instance_of(name).into_iter().collect(),
+    })
 }
 
 /// Resolve every alias name reported by the discovered unit files to exactly
@@ -111,6 +135,11 @@ fn emit_alias_records(map: &mut HashMap<String, UnitIR>, files: &[UnitFile]) {
     let mut claims: HashMap<&str, (u8, usize, &str)> = HashMap::new();
     let mut seen_files: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for (index, file) in files.iter().enumerate() {
+        // A template's `[Install] Alias=` names another template; those are
+        // template aliases, not names for a unit, and are not resolved here.
+        if sysa::unit_name::is_template(&file.name) {
+            continue;
+        }
         let file_name = file
             .alias_links
             .first()
@@ -167,6 +196,7 @@ fn alias_record(alias: &str, canonical: &str) -> UnitIR {
         aliases: Vec::new(),
         alias_of: Some(canonical.to_string()),
         resource_control: None,
+        template: None,
     }
 }
 
@@ -429,6 +459,26 @@ mod tests {
         }
         emit_alias_records(&mut map, files);
         map
+    }
+
+    #[test]
+    fn convert_unit_file_describes_templates_and_instances() {
+        let tpl = convert_unit_file(&unit_file("getty@.service", &[]));
+        let info = tpl.template.as_ref().expect("template metadata");
+        assert!(tpl.is_template());
+        assert!(info.definition);
+        assert!(info.of.is_none());
+        assert!(info.parameters.is_empty());
+
+        let instance = convert_unit_file(&unit_file("getty@tty3.service", &[]));
+        assert!(!instance.is_template());
+        assert!(instance.is_template_instance());
+        assert_eq!(instance.template_of(), Some("getty@.service"));
+        assert_eq!(instance.template_parameters(), ["tty3"]);
+
+        assert!(convert_unit_file(&unit_file("plain.service", &[]))
+            .template
+            .is_none());
     }
 
     #[test]
