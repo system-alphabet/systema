@@ -22,6 +22,7 @@ members = [
     "crates/backend/systema-sysr/systema-sysr",
     "crates/backend/systema-sysw/systema-sysw-common",
     "crates/backend/systema-sysw/systema-sysw.systemd",
+    "crates/splash/systema-sysh-console",
     "crates/sysa-pager",
     "crates/frontend/systema-stagingctl",
     "crates/frontend/systema-unitstatectl",

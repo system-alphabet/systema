@@ -1535,6 +1535,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "systema-sysh-console"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "libc",
+ "sysa",
+]
+
+[[package]]
 name = "systema-sysi"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,16 @@
+[package]
+name = "systema-sysh-console"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-sysh-console"
+path = "src/main.rs"
+
+[dependencies]
+sysa = { path = "../../libsysa" }
+
+clap.workspace = true
+libc = "0.2"
