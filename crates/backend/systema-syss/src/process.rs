@@ -403,6 +403,11 @@ pub async fn start_service(
     // moves the child into its delegated cgroup while still root, and
     // User=/Group= credentials are applied last, in the child.
     let sa_pre_exec = build_pre_exec(child_envs, &listen_fds, creds, config.cgroup_path.clone());
+    // Whether the TTY hook below acquires a new session for the child.  That
+    // is mutually exclusive with `process_group(0)`: `setsid()` fails with
+    // EPERM when the caller is already a process group leader, so the two
+    // would fight over the same kernel slot and a TTY unit could not start.
+    let tty_owns_the_group = tty_pre_exec.is_some();
     let merged = match (tty_pre_exec, sa_pre_exec) {
         (Some(mut a), Some(mut b)) => Some(Box::new(move || {
             a()?;
@@ -416,6 +421,18 @@ pub async fn start_service(
         unsafe {
             cmd.pre_exec(move || pre());
         }
+    }
+
+    // Own process group: a stop tears the whole tree down (systemd's default
+    // KillMode=control-group), and the process-group fallback kills with
+    // killpg(), which requires the main process to be its own group leader —
+    // process_group(0) is setpgid(0,0) in the child.  The TTY branch instead
+    // calls setsid() in its pre_exec hook, which yields `pgid == pid` as a
+    // side effect (and would fail with EPERM if this ran first), so exactly
+    // one of the two paths claims the group and the stop-time fallback may
+    // always killpg(main_pid).
+    if !tty_owns_the_group {
+        cmd.process_group(0);
     }
 
     // Spawn the child process. We deliberately do NOT wait here — the child
@@ -504,13 +521,55 @@ pub async fn start_service(
     ));
 }
 
-/// Stop a running service by sending SIGTERM (then SIGKILL after timeout).
+/// The main process's process group — but only when the main process is
+/// still its own group leader (`pid == pgid`; the spawn path guarantees it
+/// via `process_group(0)` / the TTY branch's `setsid()`).  A stale main pid
+/// whose leader slot was recycled must never drag an unrelated group into
+/// the kill.
+#[cfg(unix)]
+fn group_leader_of(pid: u32) -> Option<nix::unistd::Pid> {
+    use nix::unistd::Pid;
+    let pgid = nix::unistd::getpgid(Some(Pid::from_raw(pid as i32)));
+    match pgid {
+        Ok(pgid) if pgid == Pid::from_raw(pid as i32) => Some(pgid),
+        _ => None,
+    }
+}
+
+/// Whether the unit's cgroup subtree looks empty.  Prefer the `populated`
+/// flag (it also covers child cgroups; `cgroup.procs` at the root lists
+/// direct members only) and fall back to the direct process list on older
+/// kernels.  No path at all — or an unreadable cgroup — means "nothing
+/// there to wait for"; the main pid check guards that side.
+fn cgroup_tree_clear(path: Option<&str>) -> bool {
+    match path {
+        None => true,
+        Some(p) => match crate::cgroup::populated(p) {
+            Some(v) => !v,
+            None => crate::cgroup::read_pids(p).is_empty(),
+        },
+    }
+}
+
+/// Stop a running service: SIGTERM the whole unit cgroup when its path is
+/// known (catching children that escaped the main process group), degrade
+/// to the classic pid/process-group teardown otherwise, and SIGKILL the
+/// rest after the stop timeout.
+///
+/// The cgroup path is remembered per unit (registry), so only the first
+/// stop pays the lookup round trip, and even that one never waits longer
+/// than the querier's budget before falling back.
 pub async fn stop_service(
     registry: ServiceRegistry,
     unit_name: &str,
     timeout_secs: u32,
+    querier: Option<&crate::cgroup::Querier>,
 ) -> Result<()> {
-    let pid = {
+    // Phase 0 — peek at the instance without disturbing it: `Stopping` is
+    // only set after the (budget-bounded) cgroup lookup, so a state reader
+    // never sees "stopping" while the process is still fully alive.  A
+    // cached path short-circuits the lookup below.
+    let (pid, cached_cgroup) = {
         let mut reg = registry.lock();
         let inst = reg.get_mut(unit_name);
         match inst {
@@ -523,41 +582,131 @@ pub async fn stop_service(
                     debug!("stop_service: {} already stopped", unit_name);
                     return Ok(());
                 }
-                inst.state = ServiceState::Stopping;
-                inst.main_pid
+                (inst.main_pid, inst.cgroup_path.clone())
             }
         }
     };
 
-    if let Some(pid) = pid {
-        #[cfg(unix)]
-        {
-            use nix::sys::signal::{self, Signal};
-            use nix::unistd::Pid;
-            let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
-            info!("Sent SIGTERM to PID {} ({})", pid, unit_name);
+    // Phase 1 — learn the unit's cgroup for this stop.  `None` after a
+    // failed/absent lookup: killing degrades to the process group below.
+    let cgroup_path = match querier {
+        Some(q) => q.resolve(unit_name, cached_cgroup).await,
+        None => None,
+    };
+    // Remember the path for later stops (it is stable for the unit).
+    if cgroup_path.is_some() {
+        let mut reg = registry.lock();
+        if let Some(inst) = reg.get_mut(unit_name) {
+            inst.cgroup_path = cgroup_path.clone();
+        }
+    }
 
-            let deadline = std::time::Instant::now()
-                + std::time::Duration::from_secs(timeout_secs.max(1) as u64);
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                if !is_alive(pid) {
-                    info!("Service {} (PID {}) exited after SIGTERM", unit_name, pid);
-                    break;
+    // Phase 2 — mark the unit as stopping only now.
+    {
+        let mut reg = registry.lock();
+        if let Some(inst) = reg.get_mut(unit_name) {
+            inst.state = ServiceState::Stopping;
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = &cgroup_path;
+        warn!("Signal delivery not supported on this platform");
+    }
+
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{self, Signal};
+        use nix::unistd::Pid;
+
+        // Phase 3 — SIGTERM the whole tree.  The main process group covers
+        // the ordinary children; the cgroup's process list adds members
+        // that escaped the group (deduped against the main pid, which
+        // `killpg`/`kill` already reached).
+        let cgroup_pids: Vec<u32> = cgroup_path
+            .as_deref()
+            .map(crate::cgroup::read_pids)
+            .unwrap_or_default();
+        if let Some(pid) = pid {
+            match group_leader_of(pid) {
+                Some(pgid) => {
+                    let _ = signal::killpg(pgid, Signal::SIGTERM);
                 }
-                if std::time::Instant::now() >= deadline {
-                    warn!(
-                        "Service {} (PID {}) did not exit in {}s; sending SIGKILL",
-                        unit_name, pid, timeout_secs
-                    );
-                    let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
-                    break;
+                None => {
+                    let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
                 }
             }
+            info!("Sent SIGTERM to PID {} ({})", pid, unit_name);
         }
-        #[cfg(not(unix))]
-        {
-            warn!("Signal delivery not supported on this platform");
+        let extra_cgroup_pids: Vec<u32> = cgroup_pids
+            .iter()
+            .copied()
+            .filter(|p| Some(*p) != pid)
+            .collect();
+        for p in &extra_cgroup_pids {
+            let _ = signal::kill(Pid::from_raw(*p as i32), Signal::SIGTERM);
+        }
+        if !extra_cgroup_pids.is_empty() {
+            debug!(
+                "Sent SIGTERM to {} cgroup process(es) of {} on top of the process group",
+                extra_cgroup_pids.len(),
+                unit_name
+            );
+        }
+
+        // Phase 4 — wait for the main process to die AND the unit's cgroup
+        // subtree to empty out (the whole point of cgroup-based stops: a
+        // service is only "stopped" when nothing of its tree survives).
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1) as u64);
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            let main_gone = pid.map_or(true, |p| !is_alive(p));
+            if main_gone && cgroup_tree_clear(cgroup_path.as_deref()) {
+                info!("Service {} exited after SIGTERM", unit_name);
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                warn!(
+                    "Service {} (PID {}) did not exit in {}s; SIGKILLing the unit tree",
+                    unit_name,
+                    pid.map(|p| p.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    timeout_secs
+                );
+
+                // Phase 5 — SIGKILL: the cgroup-wide kill first (atomic,
+                // covers every descendant cgroup), then the pid-based
+                // backstop for kernels without the `cgroup.kill`
+                // interface (or paths that vanished mid-stop).
+                if let Some(p) = cgroup_path.as_deref() {
+                    if crate::cgroup::kill(p) {
+                        debug!(
+                            "Killed the whole unit cgroup of {} via cgroup.kill",
+                            unit_name
+                        );
+                    }
+                }
+                for p in cgroup_path
+                    .as_deref()
+                    .map(crate::cgroup::read_pids)
+                    .unwrap_or_default()
+                {
+                    let _ = signal::kill(Pid::from_raw(p as i32), Signal::SIGKILL);
+                }
+                if let Some(pid) = pid {
+                    match group_leader_of(pid) {
+                        Some(pgid) => {
+                            let _ = signal::killpg(pgid, Signal::SIGKILL);
+                        }
+                        None => {
+                            let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+                        }
+                    }
+                }
+                break;
+            }
         }
     }
 
@@ -2563,5 +2712,316 @@ mod tests {
             xdg_runtime_dir_fallback(&[], &[], Some(uid.as_raw())),
             Some(("XDG_RUNTIME_DIR".to_string(), dir))
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests: which processes a stop reaches
+// ---------------------------------------------------------------------------
+
+/// The stop path's cgroup preference is only observable on real processes
+/// (the question is *which* pids receive a signal), so these tests fork
+/// `sleep` children of the test process and fake the cgroup interface files
+/// in a temporary directory: no root, no cgroupfs, no System R.
+#[cfg(all(test, unix))]
+mod stop_tests {
+    use super::*;
+    use crate::cgroup::Querier;
+    use crate::state::{new_registry, ServiceRegistry, ServiceState};
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+    use prost::Message;
+    use std::collections::HashMap;
+    use std::os::unix::process::CommandExt;
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use sysa::proto::{Envelope, UnitCgroupResult};
+    use sysa::worker_ipc::EventPublisher;
+
+    /// Fake cgroup directory for one test (tests run concurrently, so the
+    /// tag plus the pid keeps them apart).
+    fn fake_cgroup_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("syss-stop-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Spawn a long-running `sleep` child of the test process in a process
+    /// group of its own.  With `own_session` it also gets a session of its
+    /// own (`setsid`), i.e. it is no longer reachable through the main
+    /// process's group — the escaped child a cgroup-wide stop must catch.
+    fn spawn_sleeper(own_session: bool) -> u32 {
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("60").stdout(std::process::Stdio::null());
+        if own_session {
+            // SAFETY: `setsid` is async-signal-safe and cannot fail for a
+            // child that is not yet a process group leader.
+            unsafe {
+                cmd.pre_exec(|| {
+                    nix::libc::setsid();
+                    Ok(())
+                });
+            }
+        } else {
+            cmd.process_group(0);
+        }
+        cmd.spawn().expect("failed to spawn the test sleeper").id()
+    }
+
+    /// A detached sleeper that ignores SIGTERM (`trap ''` survives `exec`),
+    /// so only the SIGKILL half of the teardown can collect it.
+    fn spawn_sigterm_ignorer() -> u32 {
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg("trap '' TERM; exec sleep 60")
+            .stdout(std::process::Stdio::null());
+        // SAFETY: see `spawn_sleeper`.
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::libc::setsid();
+                Ok(())
+            });
+        }
+        cmd.spawn()
+            .expect("failed to spawn the SIGTERM-ignoring child")
+            .id()
+    }
+
+    /// Reap the test's own children as they exit — the job
+    /// `monitor_service` and the orphan reaper do in production.  Without
+    /// it a dead child stays a zombie, `kill(pid, 0)` keeps answering
+    /// success, and the stop would sit out its whole timeout.
+    fn spawn_reaper(pids: Vec<u32>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut left = pids;
+            for _ in 0..600 {
+                left.retain(|pid| {
+                    let mut status = 0;
+                    // SAFETY: `pid` is our own child; WNOHANG never blocks.
+                    unsafe {
+                        nix::libc::waitpid(*pid as i32, &mut status, nix::libc::WNOHANG);
+                    }
+                    is_alive(*pid)
+                });
+                if left.is_empty() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+    }
+
+    /// Wait for `pid` to be gone (the reaper above collects the zombie).
+    async fn assert_gone(pid: u32, what: &str) {
+        for _ in 0..300 {
+            if !is_alive(pid) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("{what} (PID {pid}) should have been terminated");
+    }
+
+    /// Leave nothing running behind a test that expects a survivor.
+    async fn kill_now(pid: u32) {
+        let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+        assert_gone(pid, "the cleanup target").await;
+    }
+
+    /// A registry holding one running service with `pid` as its main pid.
+    fn running_registry(unit: &str, pid: u32) -> ServiceRegistry {
+        let registry = new_registry();
+        {
+            let mut reg = registry.lock();
+            let inst = reg.entry(unit.to_string()).or_default();
+            inst.state = ServiceState::Running;
+            inst.main_pid = Some(pid);
+        }
+        registry
+    }
+
+    /// A querier wired to a fake System A that answers every `unit.cgroup`
+    /// question with `result`, echoing the request_id the way the relay
+    /// does.
+    fn answering_querier(result: UnitCgroupResult) -> Querier {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<bytes::Bytes>();
+        let pending: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<UnitCgroupResult>>>> =
+            Arc::default();
+        let publisher = EventPublisher::new(tx, "system-s-1", Arc::default(), pending.clone());
+        tokio::spawn(async move {
+            while let Some(bytes) = rx.recv().await {
+                let Ok(env) = Envelope::decode(bytes.as_ref()) else {
+                    continue;
+                };
+                assert_eq!(env.method, "unit.cgroup");
+                if let Some(tx) = pending.lock().unwrap().remove(&env.request_id) {
+                    let _ = tx.send(result.clone());
+                }
+            }
+        });
+        Querier::new(publisher, Arc::new(AtomicBool::new(false)))
+    }
+
+    /// A querier whose System A accepts the question and never answers: the
+    /// returned receiver keeps the channel open so the lookup really runs
+    /// into its budget instead of failing on a closed pipe.
+    fn silent_querier() -> (Querier, tokio::sync::mpsc::UnboundedReceiver<bytes::Bytes>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<bytes::Bytes>();
+        let querier = Querier::new(
+            EventPublisher::new(tx, "system-s-1", Arc::default(), Arc::default()),
+            Arc::new(AtomicBool::new(false)),
+        );
+        (querier, rx)
+    }
+
+    /// A known cgroup path makes the stop reach the whole subtree: a child
+    /// that escaped the main process group is signalled too, and the path is
+    /// remembered for the next stop.
+    #[tokio::test]
+    async fn stop_signals_the_whole_unit_cgroup() {
+        let dir = fake_cgroup_dir("tree");
+        // The fake cgroup reports itself empty, so the stop returns as soon
+        // as the main process is gone instead of polling out its timeout;
+        // the escapee still has to receive the SIGTERM fanout.
+        std::fs::write(dir.join("cgroup.events"), "populated 0\n").unwrap();
+        let main = spawn_sleeper(false);
+        let escapee = spawn_sleeper(true);
+        std::fs::write(dir.join("cgroup.procs"), format!("{main}\n{escapee}\n")).unwrap();
+        let reaper = spawn_reaper(vec![main, escapee]);
+
+        let registry = running_registry("app.service", main);
+        let querier = answering_querier(UnitCgroupResult {
+            available: true,
+            found: true,
+            cgroup_path: dir.to_string_lossy().into_owned(),
+            error: String::new(),
+        });
+
+        stop_service(registry.clone(), "app.service", 5, Some(&querier))
+            .await
+            .expect("a stop with a known cgroup must succeed");
+
+        assert_gone(main, "the main process").await;
+        assert_gone(escapee, "the child outside the main process group").await;
+        {
+            let reg = registry.lock();
+            let inst = reg.get("app.service").unwrap();
+            // A stop that saw the tree die marks the unit dead itself.
+            assert_eq!(inst.state, ServiceState::Dead);
+            assert_eq!(inst.main_pid, None);
+            assert_eq!(
+                inst.cgroup_path.as_deref(),
+                Some(dir.to_str().unwrap()),
+                "the path must be remembered for later stops"
+            );
+        }
+
+        reaper.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The SIGTERM round can be ignored: after the stop timeout the cgroup
+    /// (and with it a member that ignores SIGTERM) is SIGKILLed, and the
+    /// kernel's `cgroup.kill` interface is tried first.
+    #[tokio::test]
+    async fn stop_sigkills_a_cgroup_member_that_ignores_sigterm() {
+        let dir = fake_cgroup_dir("kill");
+        // No `cgroup.events`: the emptiness probe falls back to polling
+        // `cgroup.procs`, which still lists the stubborn member — exactly
+        // the situation the SIGKILL round exists for.
+        let main = spawn_sleeper(false);
+        let stubborn = spawn_sigterm_ignorer();
+        std::fs::write(dir.join("cgroup.procs"), format!("{main}\n{stubborn}\n")).unwrap();
+        let reaper = spawn_reaper(vec![main, stubborn]);
+
+        let registry = running_registry("app.service", main);
+        let querier = answering_querier(UnitCgroupResult {
+            available: true,
+            found: true,
+            cgroup_path: dir.to_string_lossy().into_owned(),
+            error: String::new(),
+        });
+
+        stop_service(registry.clone(), "app.service", 1, Some(&querier))
+            .await
+            .expect("the stop must still complete after the SIGKILL round");
+
+        assert_gone(main, "the main process").await;
+        assert_gone(stubborn, "the SIGTERM-ignoring cgroup member").await;
+        assert!(
+            dir.join("cgroup.kill").exists(),
+            "the cgroup-wide kill interface must be tried first"
+        );
+
+        reaper.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No cgroup backend on the machine (`available = false`): the stop
+    /// falls back to the main process group, so the escaped child survives —
+    /// the documented degradation, never a delay.
+    #[tokio::test]
+    async fn stop_without_a_cgroup_backend_kills_only_the_process_group() {
+        let main = spawn_sleeper(false);
+        let escapee = spawn_sleeper(true);
+        let reaper = spawn_reaper(vec![main, escapee]);
+        let registry = running_registry("app.service", main);
+        let querier = answering_querier(UnitCgroupResult {
+            available: false,
+            found: false,
+            cgroup_path: String::new(),
+            error: "no cgroup backend".to_string(),
+        });
+
+        stop_service(registry.clone(), "app.service", 5, Some(&querier))
+            .await
+            .expect("the stop must succeed on the fallback path");
+
+        assert_gone(main, "the main process").await;
+        assert!(
+            is_alive(escapee),
+            "without a cgroup the escaped child is out of reach"
+        );
+        assert!(
+            registry
+                .lock()
+                .get("app.service")
+                .unwrap()
+                .cgroup_path
+                .is_none(),
+            "an unavailable verdict must not be remembered as a path"
+        );
+
+        kill_now(escapee).await;
+        reaper.abort();
+    }
+
+    /// A System A that never answers must not stretch the stop: the lookup
+    /// budget expires and the process-group path runs.
+    #[tokio::test]
+    async fn stop_degrades_when_the_lookup_never_answers() {
+        let main = spawn_sleeper(false);
+        let escapee = spawn_sleeper(true);
+        let reaper = spawn_reaper(vec![main, escapee]);
+        let registry = running_registry("app.service", main);
+        let (querier, _rx) = silent_querier();
+
+        let started = std::time::Instant::now();
+        stop_service(registry.clone(), "app.service", 5, Some(&querier))
+            .await
+            .expect("a silent lookup must not fail the stop");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the lookup budget, not the stop timeout, must bound the query"
+        );
+
+        assert_gone(main, "the main process").await;
+        assert!(is_alive(escapee), "the escaped child survives the fallback");
+
+        kill_now(escapee).await;
+        reaper.abort();
     }
 }

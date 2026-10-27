@@ -28,6 +28,10 @@ message WorkerRegistration {
     // answers pre-start requests that ensure a unit's cgroup hierarchy,
     // apply Delegate= ownership and return the placement path (System R).
     // System A only gates Delegate= start jobs on workers with this flag.
+    // The same worker also answers `resource.cgroup` lookups ("which cgroup
+    // does this unit live in right now?", `resource.cgroup_result`) — there
+    // is no separate flag: both questions are answered by the one cgroup
+    // authority, and unknown answers come from the same failure modes.
     bool supports_resource_prepare = 4;
 }
 
@@ -277,6 +281,38 @@ message ResourcePrepareResult {
     // no cgroup backend is available — placement is then skipped and the
     // unit starts exactly as it did before delegation existed).
     string placement_path = 3;
+}
+
+// System S asks where a unit's cgroup lives, right before it stops the
+// service: killing the whole unit cgroup (systemd's default
+// KillMode=control-group) also catches children that escaped the main
+// process group.  System A only relays: it fills `slice` from the unit's
+// parsed model and forwards the same pair to the resource worker, whose
+// registry is the only place that knows the answer.
+message UnitCgroupQuery {
+    string unit_name = 1;
+    // [Unit] Slice= of the unit; System S leaves it empty, System A fills it
+    // from the unit model.
+    string slice = 2;
+}
+
+// Reply to `unit.cgroup` (resource worker → System A: `resource.cgroup_result`;
+// System A → System S: `unit.cgroup_result`), echoed on the same request_id.
+// System A moves this payload verbatim — no interpretation, no caching —
+// because a second copy of the path would compete with System R's registry.
+message UnitCgroupResult {
+    // A working cgroup backend exists on this machine (false on non-Linux
+    // platforms, when the cgroup filesystem is not mounted, ...).  An
+    // available=false answer is stable for the life of the connection.
+    bool available = 1;
+    // `cgroup_path` refers to a cgroup directory that exists right now.  An
+    // empty-but-present directory (start/stop race) still counts as found —
+    // System S unions it with the main process group anyway.
+    bool found = 2;
+    // Absolute cgroupfs path, e.g. "/sys/fs/cgroup/system.slice/app.service".
+    string cgroup_path = 3;
+    // Diagnostic detail, meaningful only when available/found is false.
+    string error = 4;
 }
 
 // Periodic cgroup runtime metrics pushed by System R to System A.

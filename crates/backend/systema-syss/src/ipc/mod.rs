@@ -1,10 +1,12 @@
 use anyhow::Result;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use sysa::worker_ipc::{EventPublisher, WorkerIpc};
 
+use crate::cgroup::Querier;
 use crate::controller::ServiceController;
 use crate::state::{new_registry, ServiceRegistry, ServiceState};
 
@@ -50,24 +52,48 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
     let fdpass_controller = fdpass.clone();
     let notify = crate::notify::NotifyManager::setup();
     let dbus = crate::dbus::DbusWaiter::new(bus_address);
+    // Shared "no cgroup kill on this machine" verdict: the controller's
+    // querier learns it from an `available = false` answer and stops asking,
+    // and the reconnect hook clears it so a fresh connection asks again
+    // (System R may have come up in the meantime, or the cgroup backend
+    // recovered).
+    let no_cgroup_backend = Arc::new(AtomicBool::new(false));
     // On SIGTERM/SIGINT the IPC loop stops our services *first* — while the
     // connection is still open, so their final states still reach System A —
     // and only then exchanges the `worker.exit` goodbye.
     let shared_for_cleanup = shared.clone();
     WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .on_reconnect({
+            let no_cgroup_backend = no_cgroup_backend.clone();
+            move || {
+                let no_cgroup_backend = no_cgroup_backend.clone();
+                async move { no_cgroup_backend.store(false, Ordering::Relaxed) }
+            }
+        })
         .on_shutdown(move || {
             let shared = shared_for_cleanup.clone();
             async move { crate::shutdown(shared).await }
         })
         .run(
-            move |event_pub| {
-                ServiceController::new(
-                    registry.clone(),
-                    event_pub,
-                    fdpass_controller.clone(),
-                    notify.clone(),
-                    dbus.clone(),
-                )
+            {
+                let no_cgroup_backend = no_cgroup_backend.clone();
+                move |event_pub| {
+                    let cgroup = Querier::new(
+                        event_pub.clone(),
+                        // The querier rides the same fresh-per-connection
+                        // publisher the controller uses for state updates;
+                        // only the no-backend verdict outlives a reconnect.
+                        no_cgroup_backend.clone(),
+                    );
+                    ServiceController::new(
+                        registry.clone(),
+                        event_pub,
+                        cgroup,
+                        fdpass_controller.clone(),
+                        notify.clone(),
+                        dbus.clone(),
+                    )
+                }
             },
             |_, _| Ok(false),
         )

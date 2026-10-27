@@ -41,8 +41,8 @@ const TARGET_TIME_SET: &str = "time-set.target";
 /// for runtime reloads.  Kept for test scaffolding and future use.
 #[allow(dead_code)]
 pub async fn load_default_units(allocator: AllocatorHandle) -> Result<()> {
-    let paths: Vec<PathBuf> = sysa::paths::instance()
-        .unit_search_paths
+    let dirs = sysa::paths::instance().unit_search_paths.clone();
+    let paths: Vec<PathBuf> = dirs
         .iter()
         .map(PathBuf::from)
         .filter(|p| p.exists())
@@ -56,7 +56,7 @@ pub async fn load_default_units(allocator: AllocatorHandle) -> Result<()> {
 
     let mut total = 0usize;
     for dir in &paths {
-        match load_units_from_dir_recursive(dir, allocator.clone()).await {
+        match load_units_from_dir_recursive(dir, &dirs, allocator.clone()).await {
             Ok(n) => {
                 debug!("Loaded {} unit(s) from {}", n, dir.display());
                 total += n;
@@ -71,7 +71,7 @@ pub async fn load_default_units(allocator: AllocatorHandle) -> Result<()> {
     for dir in sysa::paths::instance().generator_search_paths.iter() {
         let path = PathBuf::from(dir);
         if path.exists() {
-            match load_units_from_dir_recursive(&path, allocator.clone()).await {
+            match load_units_from_dir_recursive(&path, &dirs, allocator.clone()).await {
                 Ok(n) => {
                     debug!("Loaded {} unit(s) from generator {}", n, dir);
                     total += n;
@@ -94,11 +94,15 @@ pub async fn load_default_units(allocator: AllocatorHandle) -> Result<()> {
 // --------------------------------------------------------------------------
 
 /// Recursively load all units from a directory and its subdirectories.
-async fn load_units_from_dir_recursive(dir: &Path, allocator: AllocatorHandle) -> Result<usize> {
+async fn load_units_from_dir_recursive(
+    dir: &Path,
+    dirs: &[String],
+    allocator: AllocatorHandle,
+) -> Result<usize> {
     let mut count = 0usize;
 
     // First, load units from the current directory
-    count += load_units_from_dir(dir, allocator.clone()).await?;
+    count += load_units_from_dir(dir, dirs, allocator.clone()).await?;
 
     // Then, recursively load from subdirectories
     let mut entries = tokio::fs::read_dir(dir).await?;
@@ -111,14 +115,23 @@ async fn load_units_from_dir_recursive(dir: &Path, allocator: AllocatorHandle) -
                 continue;
             }
             // Use Box::pin for recursive async call
-            count += Box::pin(load_units_from_dir_recursive(&path, allocator.clone())).await?;
+            count += Box::pin(load_units_from_dir_recursive(
+                &path,
+                dirs,
+                allocator.clone(),
+            ))
+            .await?;
         }
     }
 
     Ok(count)
 }
 
-async fn load_units_from_dir(dir: &Path, allocator: AllocatorHandle) -> Result<usize> {
+async fn load_units_from_dir(
+    dir: &Path,
+    dirs: &[String],
+    allocator: AllocatorHandle,
+) -> Result<usize> {
     let mut count = 0usize;
 
     let mut entries = tokio::fs::read_dir(dir).await?;
@@ -139,7 +152,7 @@ async fn load_units_from_dir(dir: &Path, allocator: AllocatorHandle) -> Result<u
             continue;
         }
 
-        match load_unit_file(&path) {
+        match load_unit_file(dirs, &path) {
             Ok(unit) => {
                 let unit_name = unit.name.clone();
                 let mut state = allocator.write();
@@ -176,28 +189,26 @@ fn is_known_extension(name: &str) -> bool {
     )
 }
 
-/// Load a unit file from disk by name, transparently instantiating a
-/// template when the exact file does not exist.
+/// Load a unit file from disk by name.
 ///
-/// 1. Tries to parse `<search-path>/<name>` verbatim.
-/// 2. Otherwise, if `name` is an instance unit (`foo@bar.service`), falls
-///    back to the template file (`foo@.service`) and parses it under the
-///    requested instance name, so `%i`/`%p`/`%n` specifiers are expanded
-///    with the instance.
+/// Parses `<search-path>/<name>` verbatim.  There is no template fallback: an
+/// instance unit (`foo@bar.service`) is materialized from the Finder-reported
+/// IR template by `unit::template::materialize`, so the template file is never
+/// re-read here (see [`load_unit_flexible_in`]).
 ///
-/// Returns an error if neither the exact file nor a usable template exists.
+/// Returns an error if no exact file exists.
 pub fn load_unit_flexible(name: &str) -> Result<UnitFile> {
     load_unit_flexible_in(&sysa::paths::instance().unit_search_paths, name)
 }
 
 /// Ensure a unit is loaded from disk, if it exists on disk.
 ///
-/// Returns `Ok(true)` when a unit file (or a template to instantiate
-/// `name` from) was found and inserted into the allocator, and `Ok(false)`
-/// when `name` has no on-disk definition — a dynamic unit that only a
-/// worker can define.  The pre-plan scan of the `unit.define` protocol
-/// uses this to keep static units on System A's own loader
-/// (docs/user-slice-todo.md, 未决问题 2) instead of asking workers.
+/// Returns `Ok(true)` when a unit file was found and inserted into the
+/// allocator, and `Ok(false)` when `name` has no on-disk definition — a
+/// dynamic unit that only a worker can define, or an instance (which is
+/// materialized from the IR template, never from disk).  The pre-plan scan of
+/// the `unit.define` protocol uses this to keep static units on System A's own
+/// loader (docs/user-slice-todo.md, 未决问题 2) instead of asking workers.
 pub async fn ensure_loaded_from_disk(allocator: AllocatorHandle, name: &str) -> Result<bool> {
     let dirs = sysa::paths::instance().unit_search_paths.clone();
     ensure_loaded_from_disk_in(allocator, &dirs, name).await
@@ -210,6 +221,19 @@ pub async fn ensure_loaded_from_disk_in(
     dirs: &[String],
     name: &str,
 ) -> Result<bool> {
+    // Diagnostic probe (temporary): this path is supposed to disappear once
+    // the finder reports every unit as IR.  A wall of "a" lines on stdout
+    // means System A still re-read a unit definition from disk.
+    for _ in 0..100 {
+        println!("aaaaaaaaaaa");
+    }
+    // Instances are materialized from the IR template only.  Re-parsing the
+    // template file under the instance name here would bypass the template's
+    // committed drop-ins and reintroduce a second source of truth.
+    if sysa::unit_name::is_instance(name) {
+        debug!("ensure_loaded_from_disk: refusing to load instance '{name}' from disk");
+        return Ok(false);
+    }
     let allocator = allocator.clone();
     let dirs = dirs.to_vec();
     let name = name.to_string();
@@ -264,12 +288,17 @@ pub async fn ensure_loaded_from_disk_in(
 
 /// [`load_unit_flexible`] over an explicit search-path list (testable
 /// without touching the global path configuration).
+///
+/// Only an exact unit file is loaded.  There is deliberately no template
+/// fallback: an instance (`foo@bar.service`) is a definition materialized
+/// from the Finder-reported IR template, and reading the template file here
+/// would bypass that definition's committed drop-ins.
 fn load_unit_flexible_in(dirs: &[String], name: &str) -> Result<UnitFile> {
     // A bare template (e.g. `getty@.service`) is a definition, not a runnable
     // unit: loading it would let `systemctl start getty@.service` dispatch a
     // unit whose `%i`/`%I` specifiers expand to nothing (e.g. a getty with
     // `TTYPath=/dev/`).  Refuse the load so a template is never materialised
-    // as a unit.  Instances such as `getty@tty1.service` are unaffected.
+    // as a unit.  Instances are handled by `unit::template::materialize`.
     if sysa::unit_name::is_template(name) {
         anyhow::bail!(sysa::l10n::fmt(
             sysa::l10n::t_("Unit {name} is a template and cannot be loaded directly"),
@@ -279,16 +308,7 @@ fn load_unit_flexible_in(dirs: &[String], name: &str) -> Result<UnitFile> {
     for dir in dirs {
         let path = std::path::Path::new(dir).join(name);
         if path.is_file() {
-            return load_unit_file(&path);
-        }
-    }
-
-    if let Some(template) = sysa::unit_name::template_of(name) {
-        for dir in dirs {
-            let path = std::path::Path::new(dir).join(&template);
-            if path.is_file() {
-                return super::parser::parse_unit_from_path_as(&path, name);
-            }
+            return load_unit_file(dirs, &path);
         }
     }
 
@@ -309,18 +329,18 @@ fn load_unit_flexible_in(dirs: &[String], name: &str) -> Result<UnitFile> {
 /// basename and records the symlink's basename as an alias, exactly like the
 /// full discovery path (`systema-sysf`'s loader).  Masked units (symlinks to
 /// `/dev/null`) fall through to a plain parse, which fails harmlessly.
-fn load_unit_file(path: &Path) -> Result<UnitFile> {
+fn load_unit_file(dirs: &[String], path: &Path) -> Result<UnitFile> {
     let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return super::parser::parse_unit_from_path(path);
+        return parse_unit_at(dirs, path);
     };
     if !meta.file_type().is_symlink() {
-        return super::parser::parse_unit_from_path(path);
+        return parse_unit_at(dirs, path);
     }
     let Ok(target) = std::fs::canonicalize(path) else {
-        return super::parser::parse_unit_from_path(path);
+        return parse_unit_at(dirs, path);
     };
     let Some(canonical) = target.file_name().and_then(|n| n.to_str()) else {
-        return super::parser::parse_unit_from_path(path);
+        return parse_unit_at(dirs, path);
     };
     let alias = path
         .file_name()
@@ -328,7 +348,7 @@ fn load_unit_file(path: &Path) -> Result<UnitFile> {
         .unwrap_or("")
         .to_string();
     if canonical == alias {
-        return super::parser::parse_unit_from_path(path);
+        return parse_unit_at(dirs, path);
     }
     // An enablement symlink `foo@bar.service -> foo@.service` is an
     // *instance* of the template, not an alias: folding it into the
@@ -339,13 +359,23 @@ fn load_unit_file(path: &Path) -> Result<UnitFile> {
     if sysa::unit_name::is_template(canonical)
         && sysa::unit_name::template_of(&alias).as_deref() == Some(canonical)
     {
-        return super::parser::parse_unit_from_path(path);
+        return parse_unit_at(dirs, path);
     }
-    let mut unit = super::parser::parse_unit_from_path_as(path, canonical)?;
+    let mut unit = super::parser::parse_unit_from_path_as_in(dirs, path, canonical)?;
     if !unit.install.alias.iter().any(|a| a == &alias) {
         unit.install.alias.push(alias);
     }
     Ok(unit)
+}
+
+/// Parse `path` under its own file name, resolving its drop-ins from the unit
+/// search paths.
+fn parse_unit_at(dirs: &[String], path: &Path) -> Result<UnitFile> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    super::parser::parse_unit_from_path_as_in(dirs, path, name)
 }
 
 // --------------------------------------------------------------------------
@@ -1217,7 +1247,7 @@ mod tests {
     }
 
     #[test]
-    fn load_flexible_instantiates_template() {
+    fn load_flexible_never_reads_a_template() {
         let dir = temp_dir("tpl");
         std::fs::write(
             dir.join("getty@.service"),
@@ -1225,14 +1255,11 @@ mod tests {
         )
         .unwrap();
 
+        // Instances are materialized from the Finder-reported IR template;
+        // the template file itself is a definition, not a loadable unit.
         let dirs = vec![dir.to_string_lossy().into_owned()];
-        let unit = load_unit_flexible_in(&dirs, "getty@tty3.service").unwrap();
-
-        assert_eq!(unit.name, "getty@tty3.service");
-        assert_eq!(unit.unit.description, "Getty on tty3");
-        let svc = unit.service.unwrap();
-        assert_eq!(svc.exec_start[0].program, "/sbin/agetty");
-        assert_eq!(svc.exec_start[0].args, vec!["tty3"]);
+        let err = load_unit_flexible_in(&dirs, "getty@tty3.service").unwrap_err();
+        assert!(err.to_string().contains("Unit not found"), "{err}");
     }
 
     #[test]
@@ -1293,10 +1320,12 @@ mod tests {
                 .await
                 .expect("exact file must load")
         );
+        // An instance is never loaded from disk, not even through its
+        // template: it only exists as an IR materialization.
         assert!(
-            ensure_loaded_from_disk_in(alloc.clone(), &dirs, "getty@tty3.service")
+            !ensure_loaded_from_disk_in(alloc.clone(), &dirs, "getty@tty3.service")
                 .await
-                .expect("template instance must load")
+                .expect("instance reports false")
         );
         assert!(
             !ensure_loaded_from_disk_in(alloc.clone(), &dirs, "nope.slice")
@@ -1307,27 +1336,35 @@ mod tests {
         let state = alloc.read();
         assert!(state.units.contains_key("hello.service"));
         assert_eq!(state.units["hello.service"].unit.description, "Hello");
-        assert!(state.units.contains_key("getty@tty3.service"));
+        assert!(!state.units.contains_key("getty@tty3.service"));
         assert!(!state.units.contains_key("nope.slice"));
     }
 
     #[test]
-    fn load_flexible_template_dropin_applied() {
-        let dir = temp_dir("dropin");
+    fn load_flexible_applies_dropins_from_every_search_path() {
+        let root = temp_dir("dropin-paths");
+        let etc = root.join("etc");
+        let lib = root.join("lib");
+        std::fs::create_dir_all(&etc).unwrap();
+        std::fs::create_dir_all(&lib).unwrap();
         std::fs::write(
-            dir.join("getty@.service"),
-            "[Unit]\nDescription=Template\n[Service]\nExecStart=/sbin/agetty %i\n",
+            lib.join("hello.service"),
+            "[Unit]\nDescription=Hello\n[Service]\nExecStart=/bin/true\n",
         )
         .unwrap();
-        std::fs::create_dir_all(dir.join("getty@.service.d")).unwrap();
+        std::fs::create_dir_all(etc.join("hello.service.d")).unwrap();
         std::fs::write(
-            dir.join("getty@.service.d/override.conf"),
+            etc.join("hello.service.d/override.conf"),
             "[Service]\nEnvironment=EXTRA=1\n",
         )
         .unwrap();
 
-        let dirs = vec![dir.to_string_lossy().into_owned()];
-        let unit = load_unit_flexible_in(&dirs, "getty@tty3.service").unwrap();
+        // `hello.service` lives in `lib`; its drop-in lives in `etc`.
+        let dirs = vec![
+            etc.to_string_lossy().into_owned(),
+            lib.to_string_lossy().into_owned(),
+        ];
+        let unit = load_unit_flexible_in(&dirs, "hello.service").unwrap();
         let svc = unit.service.unwrap();
         assert!(svc.environment.contains(&"EXTRA=1".to_string()));
     }
@@ -1372,10 +1409,9 @@ mod tests {
             err.to_string().contains("template"),
             "unexpected error: {err}"
         );
-        // Instances are still resolved through the template.
-        let unit = load_unit_flexible_in(&dirs, "getty@tty3.service").unwrap();
-        assert_eq!(unit.name, "getty@tty3.service");
-        assert_eq!(unit.unit.description, "Getty on tty3");
+        // Instances are IR-only and never resolved from the template file.
+        let err = load_unit_flexible_in(&dirs, "getty@tty3.service").unwrap_err();
+        assert!(err.to_string().contains("Unit not found"), "{err}");
     }
 
     #[test]
@@ -1392,7 +1428,8 @@ mod tests {
         // The enablement symlink is an *instance* of the template, not an
         // alias: it must be loaded under its own instance name with %I
         // expanded, never folded into the bare template.
-        let unit = load_unit_file(&dir.join("getty@tty1.service")).unwrap();
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let unit = load_unit_file(&dirs, &dir.join("getty@tty1.service")).unwrap();
         assert_eq!(unit.name, "getty@tty1.service");
         assert_eq!(unit.unit.description, "Getty on tty1");
         let svc = unit.service.unwrap();

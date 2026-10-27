@@ -45,6 +45,12 @@ pub struct ServiceInstance {
     /// Invocation ID (UUID v4) of the current activation, as provided by
     /// System A.  Cleared when the service exits or is stopped.
     pub invocation_id: Option<String>,
+    /// Absolute cgroup path the service runs in, learned once from a
+    /// `unit.cgroup` lookup and reused for later stops (the path is stable
+    /// for a unit).  `None` on platforms without a cgroup backend or while
+    /// the lookup has not succeeded yet — killing then falls back to the
+    /// main process group.
+    pub cgroup_path: Option<String>,
 }
 
 impl ServiceInstance {
@@ -56,6 +62,7 @@ impl ServiceInstance {
             timeout_stop_secs: None,
             remain_after_exit: false,
             invocation_id: None,
+            cgroup_path: None,
         }
     }
 }

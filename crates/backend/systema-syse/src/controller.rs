@@ -284,7 +284,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel::<bytes::Bytes>();
         let pending: Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<sysa::proto::UnitStateUpdateAck>>>> =
             Arc::new(std::sync::Mutex::new(HashMap::new()));
-        let publisher = EventPublisher::new(tx, "system-e-1", pending);
+        let publisher = EventPublisher::new(tx, "system-e-1", pending, Arc::default());
         (ScopeController::new(registry.clone(), publisher), registry)
     }
 

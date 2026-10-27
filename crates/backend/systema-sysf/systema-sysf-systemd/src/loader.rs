@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use super::parser::{parse_unit_from_path, parse_unit_from_path_as};
+use super::parser::parse_unit_from_path_as_in;
 use super::types::UnitFile;
 pub fn is_known_extension(name: &str) -> bool {
     matches!(
@@ -36,7 +36,7 @@ pub fn is_known_extension(name: &str) -> bool {
 /// neither is an enablement link that *instantiates* a template
 /// (`foo@bar.service` -> `foo@.service`): such a link is an instance of the
 /// template, not another name for it, and must be loaded under its own
-/// instance name so `%i`/`%I` are expanded (see [`parse_unit_from_path`]).
+/// instance name so `%i`/`%I` are expanded.
 fn symlink_alias(path: &Path) -> Option<(String, String)> {
     let meta = std::fs::symlink_metadata(path).ok()?;
     if !meta.file_type().is_symlink() {
@@ -59,21 +59,21 @@ fn symlink_alias(path: &Path) -> Option<(String, String)> {
 /// Discover and parse all systemd unit files from standard search paths.
 pub fn discover_all() -> Result<Vec<UnitFile>> {
     let mut units = Vec::new();
+    let dirs = sysa::paths::instance().unit_search_paths.clone();
     // Units pulled in implicitly by `<unit>.wants/` / `<unit>.requires/`
     // directories, keyed by the name of the unit the directory belongs to
     // (e.g. `sockets.target.wants/dbus.socket` => sockets.target wants dbus.socket).
     let mut implicit: HashMap<String, (HashSet<String>, HashSet<String>)> = HashMap::new();
-    for dir in sysa::paths::instance().unit_search_paths.iter() {
+    for dir in &dirs {
         let path = Path::new(dir);
         if path.exists() {
-            load_units_from_dir_recursive(path, &mut units, &mut implicit, None).with_context(
-                || {
+            load_units_from_dir_recursive(path, &dirs, &mut units, &mut implicit, None)
+                .with_context(|| {
                     sysa::l10n::fmt(
                         sysa::l10n::t_("Scanning {dir} ..."),
                         &[("dir", &dir.to_string())],
                     )
-                },
-            )?;
+                })?;
         }
     }
     // Instance drop-in directories carry the per-instance specialization that
@@ -112,7 +112,7 @@ fn discover_one_in(dirs: &[String], name: &str) -> Result<Option<UnitFile>> {
         for dir in dirs {
             let path = Path::new(dir).join(&template);
             if path.is_file() {
-                match parse_unit_from_path_as(&path, name) {
+                match parse_unit_from_path_as_in(dirs, &path, name) {
                     Ok(unit) => return Ok(Some(unit)),
                     Err(e) => {
                         warn!(
@@ -141,14 +141,14 @@ fn find_exact_in(dirs: &[String], name: &str) -> Result<Option<UnitFile>> {
         if path.exists() {
             let parsed = match symlink_alias(&path) {
                 Some((canonical, _)) => {
-                    let mut unit = parse_unit_from_path_as(&path, &canonical)?;
+                    let mut unit = parse_unit_from_path_as_in(dirs, &path, &canonical)?;
                     if !unit.install.alias.iter().any(|a| a == name) {
                         unit.install.alias.push(name.to_string());
                     }
                     unit.alias_links.push(name.to_string());
                     Ok(unit)
                 }
-                None => parse_unit_from_path(&path),
+                None => parse_unit_from_path_as_in(dirs, &path, name),
             };
             match parsed {
                 Ok(unit) => return Ok(Some(unit)),
@@ -210,7 +210,7 @@ fn discover_instance_specializations_in(dirs: &[String], units: &mut Vec<UnitFil
             if !path.is_file() {
                 continue;
             }
-            match parse_unit_from_path_as(&path, name) {
+            match parse_unit_from_path_as_in(dirs, &path, name) {
                 Ok(unit) => match units.iter().position(|u| u.name == name) {
                     Some(index) => {
                         // Discovered through an enabling symlink in a
@@ -273,12 +273,13 @@ fn apply_implicit_deps(
 
 fn load_units_from_dir_recursive(
     dir: &Path,
+    dirs: &[String],
     units: &mut Vec<UnitFile>,
     implicit: &mut HashMap<String, (HashSet<String>, HashSet<String>)>,
     ctx: Option<(String, DirDepKind)>,
 ) -> Result<usize> {
     let mut count = 0usize;
-    count += load_units_from_dir(dir, units, implicit, ctx.as_ref())?;
+    count += load_units_from_dir(dir, dirs, units, implicit, ctx.as_ref())?;
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -292,7 +293,7 @@ fn load_units_from_dir_recursive(
                 // dependency edge from `unit` to everything inside them;
                 // nested subdirectories inherit that implication.
                 let child_ctx = dep_dir_target(dir_name).or_else(|| ctx.clone());
-                count += load_units_from_dir_recursive(&path, units, implicit, child_ctx)?;
+                count += load_units_from_dir_recursive(&path, dirs, units, implicit, child_ctx)?;
             }
         }
     }
@@ -302,6 +303,7 @@ fn load_units_from_dir_recursive(
 
 fn load_units_from_dir(
     dir: &Path,
+    dirs: &[String],
     units: &mut Vec<UnitFile>,
     implicit: &mut HashMap<String, (HashSet<String>, HashSet<String>)>,
     ctx: Option<&(String, DirDepKind)>,
@@ -334,9 +336,13 @@ fn load_units_from_dir(
         // alias of it.  This mirrors systemd, where `display-manager.service`
         // -> `lightdm.service` is not a second unit but another name for the
         // same one.  Masking (-> /dev/null) is already skipped by `is_file()`.
+        // Drop-ins are resolved from the unit search paths, never from the
+        // directory this entry happens to live in: a `.wants/` link is still
+        // the unit it names, so its template and instance drop-ins sit beside
+        // the template, not inside the `.wants/` directory.
         let unit = match symlink_alias(&path) {
             Some((canonical, alias)) => {
-                let mut unit = match parse_unit_from_path_as(&path, &canonical) {
+                let mut unit = match parse_unit_from_path_as_in(dirs, &path, &canonical) {
                     Ok(u) => u,
                     Err(e) => {
                         debug!("Skipping {}: {}", path.display(), e);
@@ -349,7 +355,7 @@ fn load_units_from_dir(
                 unit.alias_links.push(alias);
                 Ok(unit)
             }
-            None => parse_unit_from_path(&path),
+            None => parse_unit_from_path_as_in(dirs, &path, &name),
         };
         match unit {
             Ok(unit) => {
@@ -517,7 +523,14 @@ mod tests {
         assert!(is_known_extension("poweroff.power"));
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &dir,
+            &[dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
         assert!(units.iter().any(|u| u.name == "poweroff.power"));
 
         // A single-unit lookup works too.
@@ -566,7 +579,14 @@ mod tests {
 
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&unit_dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &unit_dir,
+            &[unit_dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
         apply_implicit_deps(&mut units, &implicit);
 
         let sockets = units.iter().find(|u| u.name == "sockets.target").unwrap();
@@ -595,7 +615,14 @@ mod tests {
 
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&unit_dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &unit_dir,
+            &[unit_dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
         apply_implicit_deps(&mut units, &implicit);
 
         let target = units.iter().find(|u| u.name == "target.service").unwrap();
@@ -619,7 +646,14 @@ mod tests {
 
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &dir,
+            &[dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
 
         // The symlink is never its own unit: every entry that came from it
         // carries the canonical name `lightdm.service` plus the alias.
@@ -662,7 +696,14 @@ mod tests {
 
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&unit_dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &unit_dir,
+            &[unit_dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
         apply_implicit_deps(&mut units, &implicit);
 
         let graphical = units.iter().find(|u| u.name == "graphical.target").unwrap();
@@ -683,7 +724,14 @@ mod tests {
 
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &dir,
+            &[dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
 
         let names: Vec<String> = units.iter().map(|u| u.name.clone()).collect();
         assert_eq!(names, vec!["iodined.service".to_string()]);
@@ -700,7 +748,14 @@ mod tests {
 
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &dir,
+            &[dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
 
         // The template is reported as a definition; its instance specifiers
         // are preserved for the consumer that materializes an instance.
@@ -731,7 +786,7 @@ mod tests {
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
         let dirs = vec![dir.to_string_lossy().into_owned()];
-        load_units_from_dir_recursive(&dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&dir, &dirs, &mut units, &mut implicit, None).unwrap();
         discover_instance_specializations_in(&dirs, &mut units);
 
         let instance = units
@@ -775,7 +830,7 @@ mod tests {
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
         let dirs = vec![unit_dir.to_string_lossy().into_owned()];
-        load_units_from_dir_recursive(&unit_dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
         discover_instance_specializations_in(&dirs, &mut units);
 
         let instance = units
@@ -831,7 +886,14 @@ mod tests {
 
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&unit_dir, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(
+            &unit_dir,
+            &[unit_dir.to_string_lossy().into_owned()],
+            &mut units,
+            &mut implicit,
+            None,
+        )
+        .unwrap();
         apply_implicit_deps(&mut units, &implicit);
 
         // The bare template is reported as a definition (with %I preserved),
@@ -852,5 +914,116 @@ mod tests {
         let target = units.iter().find(|u| u.name == "getty.target").unwrap();
         assert!(target.unit.wants.contains("getty@tty1.service"));
         assert!(!target.unit.wants.contains("getty@.service"));
+    }
+
+    // Incident regression: an instance pulled in only by an enablement link is
+    // parsed from a `.wants/` path, where neither drop-in scope exists.  Its
+    // template drop-ins live beside the template and must still be applied,
+    // or the instance loses the Requires=/After= edges they carry (the
+    // deepin user@<uid> + login-barrier case).
+    #[test]
+    fn wants_instance_inherits_template_dropin_edges() {
+        let dir = temp_dir("wants-tpl-edges");
+        let unit_dir = dir.join("system");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::write(
+            unit_dir.join("user@.service"),
+            "[Unit]\nDescription=User manager %I\nAfter=base.service\n\
+             [Service]\nExecStart=/usr/lib/systemd/systemd --user\n",
+        )
+        .unwrap();
+        fs::write(unit_dir.join("multi-user.target"), "[Unit]\n").unwrap();
+        fs::create_dir_all(unit_dir.join("multi-user.target.wants")).unwrap();
+        std::os::unix::fs::symlink(
+            unit_dir.join("user@.service"),
+            unit_dir.join("multi-user.target.wants/user@1000.service"),
+        )
+        .unwrap();
+        // A separate template drop-in adds the prerequisite edge.
+        fs::create_dir_all(unit_dir.join("user@.service.d")).unwrap();
+        fs::write(
+            unit_dir.join("user@.service.d/10-login-barrier.conf"),
+            "[Unit]\nAfter=systemd-user-sessions.service\nRequires=user-runtime-dir@%i.service\n",
+        )
+        .unwrap();
+
+        let dirs = vec![unit_dir.to_string_lossy().into_owned()];
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
+
+        let instance = units
+            .iter()
+            .find(|u| u.name == "user@1000.service")
+            .expect("enablement link instance discovered");
+        assert!(instance.unit.after.contains("base.service"));
+        assert!(
+            instance
+                .unit
+                .after
+                .contains("systemd-user-sessions.service"),
+            "template drop-in edges lost: {:?}",
+            instance.unit.after
+        );
+        assert!(
+            instance
+                .unit
+                .requires
+                .contains("user-runtime-dir@1000.service"),
+            "template drop-in requirement lost: {:?}",
+            instance.unit.requires
+        );
+    }
+
+    // systemd collects drop-ins from every unit load path, not only from the
+    // directory that holds the unit file: an /etc drop-in extends a unit
+    // shipped in /usr/lib.  Within one directory the instance's own drop-ins
+    // are the more specific scope and override the template's.
+    #[test]
+    fn dropins_are_collected_from_every_search_path() {
+        let root = temp_dir("cross-path");
+        let etc = root.join("etc");
+        let lib = root.join("lib");
+        fs::create_dir_all(&etc).unwrap();
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(
+            lib.join("user@.service"),
+            "[Unit]\nDescription=User manager %I\n\
+             [Service]\nExecStart=/usr/lib/systemd/systemd --user\n",
+        )
+        .unwrap();
+        fs::create_dir_all(lib.join("user@.service.d")).unwrap();
+        fs::write(
+            lib.join("user@.service.d/10-runtime-dir.conf"),
+            "[Unit]\nRequires=user-runtime-dir@%i.service\nAfter=user-runtime-dir@%i.service\n",
+        )
+        .unwrap();
+        fs::create_dir_all(etc.join("user@.service.d")).unwrap();
+        fs::write(
+            etc.join("user@.service.d/20-login.conf"),
+            "[Unit]\nAfter=systemd-user-sessions.service\n",
+        )
+        .unwrap();
+        fs::create_dir_all(etc.join("user@1000.service.d")).unwrap();
+        fs::write(
+            etc.join("user@1000.service.d/30-local.conf"),
+            "[Unit]\nDescription=Local user manager\n",
+        )
+        .unwrap();
+
+        let dirs = vec![
+            etc.to_string_lossy().into_owned(),
+            lib.to_string_lossy().into_owned(),
+        ];
+        let unit = discover_one_in(&dirs, "user@1000.service")
+            .unwrap()
+            .unwrap();
+
+        assert!(unit.unit.requires.contains("user-runtime-dir@1000.service"));
+        assert!(unit.unit.after.contains("user-runtime-dir@1000.service"));
+        assert!(unit.unit.after.contains("systemd-user-sessions.service"));
+        // The instance's drop-in is applied after the template's, so the more
+        // specific scope wins for scalar settings too.
+        assert_eq!(unit.unit.description, "Local user manager");
     }
 }

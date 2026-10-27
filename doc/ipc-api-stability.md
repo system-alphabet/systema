@@ -43,7 +43,7 @@ admin 面与外部兼容面纳入公开契约；**兼容面泛化为 SysW 适配
 
 | 项 | 现状 | 位置 |
 |---|---|---|
-| Worker IPC | Envelope 同构复用；`worker.register` 注册，`worker.ready`/`worker.ack`/`worker.exit`/`worker.slice` 事件；`resource.prepare`/`resource.prepare_result` 任务对；`job.new`/`job.completed` 通知 | `libsysa/src/worker_ipc.rs`（`WorkerClient`/`WorkerHub`） |
+| Worker IPC | Envelope 同构复用；`worker.register` 注册，`worker.ready`/`worker.ack`/`worker.exit`/`worker.slice` 事件；`resource.prepare`/`resource.prepare_result` 任务对；`unit.cgroup`/`unit.cgroup_result` 停止前查询（worker 发起，System A 中继）；`job.new`/`job.completed` 通知 | `libsysa/src/worker_ipc.rs`（`WorkerClient`/`WorkerHub`） |
 | 能力旗标 | **已有雏形**：`supports_unit_define`/`supports_resource_prepare` 构建期能力声明 | `libsysa/src/worker_ipc.rs` |
 | fdpass | 独立 unix socket（`systema_fdpass_sock`），按 `worker_id` 关联通道（`FdPassMap`），SCM_RIGHTS 传 fd | `ipc/server.rs` |
 | Finder 注册 | 单元类型注册会话：`finder.register_units` → `finder.commit_units` → `finder.ack` | `libsysa/src/finder.rs` |
@@ -321,7 +321,7 @@ v1 交付；**initctl 适配器为后续阶段交付**（本文档仅占位模�
 | C 面旁路入口 + 方法族 | `crates/backend/systema-sysa/src/ipc/control.rs` ~L158；`admin.{staging,staging.result,unitstate,unitstate.entry,unitstate.eof}`、`staging.{query,query_result}` |
 | C 面实现 | `crates/libsysa/src/staging_admin.rs`、`crates/libsysa/src/unitstate_admin.rs` |
 | B 面 Worker IPC（`WorkerClient`/`WorkerHub`、`supports_*` 旗标） | `crates/libsysa/src/worker_ipc.rs` |
-| B 面方法/事件字符串 | `worker.{register,ready,ack,exit,slice}`、`resource.{prepare,prepare_result}`、`job.{new,completed}` |
+| B 面方法/事件字符串 | `worker.{register,ready,ack,exit,slice}`、`resource.{prepare,prepare_result}`、`job.{new,completed}`、`unit.cgroup`/`unit.cgroup_result`（worker 发起、System A 中继到 `resource.cgroup`/`resource.cgroup_result`；见 `doc/unit-cgroup-kill.md`） |
 | B 面 fdpass（`FdPassMap`，`worker_id` → UnixStream，SCM_RIGHTS） | `crates/backend/systema-sysa/src/ipc/server.rs` |
 | B 面 Finder 注册（`register_units`/`commit_units`/`finder.ack`） | `crates/libsysa/src/finder.rs` |
 | B 面监督行为契约（worker 死亡 → abort+drain） | `crates/backend/systema-sysi/src/supervise.rs` |

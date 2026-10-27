@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-21 12:41+0800\n"
+        "POT-Creation-Date: 2026-10-27 11:21+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -348,6 +348,11 @@ msgstr  "--job-mode=restart-dependencies 仅对 start 有效。"
 msgid   "Operation refused, unit {unit_name} may not be isolated."
 msgstr  "操作被拒绝，单元 {unit_name} 不可被隔离。"
 #
+# File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 296
+#, rust-format
+msgid   "Unit not found: {name}"
+msgstr  "未找到单元：{name}"
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 382
 #, rust-format
 msgid   "No worker available for unit type '{unit_type}' (units: {names}); unit.define attempt failed. Is the corresponding System Worker running?"
@@ -397,6 +402,26 @@ msgstr  ""
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 581
 #, rust-format
 msgid   "resource.prepare timed out for '{worker}' after {RESOURCE_PREPARE_TIMEOUT}"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 675
+msgid   "no resource worker connected"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 725
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 736
+#, rust-format
+msgid   "Resource worker '{worker}' disconnected while looking up the unit."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 746
+#, rust-format
+msgid   "Resource worker '{worker}' dropped the cgroup lookup reply."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 754
+#, rust-format
+msgid   "resource.cgroup timed out for '{worker}' after {CGROUP_QUERY_TIMEOUT}"
 msgstr  ""
 #
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 539
@@ -469,11 +494,6 @@ msgstr  "ensure_loaded_from_disk 加载“{name_err}”超时"
 #, rust-format
 msgid   "Unit {name} is a template and cannot be loaded directly"
 msgstr  "单元 {name} 是模板，无法直接加载"
-#
-# File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 296
-#, rust-format
-msgid   "Unit not found: {name}"
-msgstr  "未找到单元：{name}"
 #
 # File: ../crates/backend/systema-sysa/src/reload_task.rs, line: 110
 #, rust-format
@@ -1191,20 +1211,10 @@ msgstr  "PAM 服务名“{pam_name}”包含 NUL 字节"
 msgid   "PAM user '{username}' contains a NUL byte"
 msgstr  "PAM 用户“{username}”包含 NUL 字节"
 #
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 249
-#, rust-format
-msgid   "pam_start('{pam_name}') failed: {r}"
-msgstr  "pam_start('{pam_name}') 失败：{r}"
-#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 257
 #, rust-format
 msgid   "PAM tty '{tty}' contains a NUL byte"
 msgstr  "PAM tty“{tty}”包含 NUL 字节"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 280
-#, rust-format
-msgid   "pam_open_session('{pam_name}') failed: {r}"
-msgstr  "pam_open_session('{pam_name}') 失败：{r}"
 #
 # File: ../crates/backend/systema-syss/src/controller.rs, line: 179
 #, rust-format
@@ -1537,6 +1547,33 @@ msgstr  ""
 msgid   "DelegateSubgroup '{subgroup}' must be a single directory name"
 msgstr  ""
 #
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
+msgid   "resource worker not initialised"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
+#, rust-format
+msgid   "cannot synthesize definitions for non-slice units: {invalid}"
+msgstr  "无法为非 slice 单元合成定义：{invalid}"
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
+#, rust-format
+msgid   "cannot serialise synthesized definitions: {e}"
+msgstr  "无法序列化合成定义：{e}"
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/worker.rs, line: 135
+msgid   "no cgroup backend"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/worker.rs, line: 169
+#, rust-format
+msgid   "unit '{unit_name}' has no cgroup directory"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
+msgid   "System R — System Resource Worker"
+msgstr  "System R — 系统资源工作进程"
+#
 # File: ../crates/backend/systema-sysr/systema-sysr/src/register.rs, line: 47
 #. / Description of the static user container (systemd: "User and Session
 #. / Slice").
@@ -1569,24 +1606,6 @@ msgstr  "无法向 System A 提交 slice 单元"
 #, rust-format
 msgid   "System A refused the commit: {message}"
 msgstr  "System A 拒绝了提交：{message}"
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
-msgid   "resource worker not initialised"
-msgstr  ""
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
-#, rust-format
-msgid   "cannot synthesize definitions for non-slice units: {invalid}"
-msgstr  "无法为非 slice 单元合成定义：{invalid}"
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
-#, rust-format
-msgid   "cannot serialise synthesized definitions: {e}"
-msgstr  "无法序列化合成定义：{e}"
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
-msgid   "System R — System Resource Worker"
-msgstr  "System R — 系统资源工作进程"
 #
 # File: ../crates/backend/systema-syse/src/cgroup.rs, line: 32
 #, rust-format
@@ -1715,49 +1734,6 @@ msgstr  "不支持电源操作“{action}”：没有可用的电源后端"
 msgid   "unknown worker name '{unknown}'"
 msgstr  "未知的工作进程名“{unknown}”"
 #
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 188
-msgid   "System A closed the connection during hello"
-msgstr  "System A 在 hello 期间关闭了连接"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 193
-#, rust-format
-msgid   "unexpected reply '{method}' to manager.hello"
-msgstr  "manager.hello 收到意外的应答“{method}”"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 209
-msgid   "System A closed the connection"
-msgstr  "System A 关闭了连接"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 253
-#, rust-format
-msgid   "SysAInit reaper error: {e}"
-msgstr  "SysAInit reaper 错误：{e}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 358
-#, rust-format
-msgid   "cannot install SIGHUP handler: {e}"
-msgstr  "无法安装 SIGHUP 处理程序：{e}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 440
-#, rust-format
-msgid   "System Init received an unknown power action: {action}"
-msgstr  "System Init 收到未知的电源操作：{action}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 734
-#, rust-format
-msgid   "manager.daemon_reload failed: {message}"
-msgstr  "manager.daemon_reload 失败：{message}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 757
-#, rust-format
-msgid   "manager.register_power_units failed: {message}"
-msgstr  "manager.register_power_units 失败：{message}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 780
-#, rust-format
-msgid   "manager.list_units failed: {message}"
-msgstr  "manager.list_units 失败：{message}"
-#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 233
 msgid   "SysAInit — System Alphabet init"
 msgstr  "SysAInit — System Alphabet 初始化"
@@ -1803,6 +1779,55 @@ msgstr  "仅为此工作进程附加的标志（覆盖 --worker-flags）。"
 #, rust-format
 msgid   "{count} required executable(s) missing; aborting (use --no-strict to continue)"
 msgstr  "缺少 {count} 个必需的可执行文件；正在中止（使用 --no-strict 继续）"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 177
+# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 173
+#, rust-format
+msgid   "IPC version exchange with System A failed: {e}"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 188
+msgid   "System A closed the connection during hello"
+msgstr  "System A 在 hello 期间关闭了连接"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 193
+#, rust-format
+msgid   "unexpected reply '{method}' to manager.hello"
+msgstr  "manager.hello 收到意外的应答“{method}”"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 209
+msgid   "System A closed the connection"
+msgstr  "System A 关闭了连接"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 253
+#, rust-format
+msgid   "SysAInit reaper error: {e}"
+msgstr  "SysAInit reaper 错误：{e}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 358
+#, rust-format
+msgid   "cannot install SIGHUP handler: {e}"
+msgstr  "无法安装 SIGHUP 处理程序：{e}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 440
+#, rust-format
+msgid   "System Init received an unknown power action: {action}"
+msgstr  "System Init 收到未知的电源操作：{action}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 734
+#, rust-format
+msgid   "manager.daemon_reload failed: {message}"
+msgstr  "manager.daemon_reload 失败：{message}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 757
+#, rust-format
+msgid   "manager.register_power_units failed: {message}"
+msgstr  "manager.register_power_units 失败：{message}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 780
+#, rust-format
+msgid   "manager.list_units failed: {message}"
+msgstr  "manager.list_units 失败：{message}"
 #
 # File: ../crates/backend/systema-sysn/src/backend/kqueue.rs, line: 65
 #, rust-format
@@ -1867,6 +1892,10 @@ msgstr  "System N — 系统通知工作进程"
 msgid   "connecting to control socket {path}"
 msgstr  "正在连接到控制套接字 {path}"
 #
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 85
+msgid   "IPC version exchange with System A failed"
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 180
 msgid   "manager.hello handshake"
 msgstr  "manager.hello 握手"
@@ -1929,6 +1958,11 @@ msgstr  "未知属性“{prop_name}”。"
 msgid   "Properties are read-only"
 msgstr  "属性为只读"
 #
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 188
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 221
+msgid   "timed out connecting to the bus"
+msgstr  "连接总线超时"
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 66
 #, rust-format
 msgid   "Job mode {mode} invalid"
@@ -1981,11 +2015,6 @@ msgstr  "未找到单元文件 {base}。"
 #, rust-format
 msgid   "No unit with invocation ID {invocation_id}."
 msgstr  "没有调用 ID 为 {invocation_id} 的单元。"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 188
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 221
-msgid   "timed out connecting to the bus"
-msgstr  "连接总线超时"
 #
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/bridge.rs, line: 201
 msgid   "control session ended — reconnect required"
@@ -2261,6 +2290,29 @@ msgstr  "无法解码 Envelope。"
 msgid   "Failed to encode payload."
 msgstr  "无法编码载荷。"
 #
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 143
+msgid   "peer closed the connection during the IPC version exchange"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 148
+#, rust-format
+msgid   "unexpected reply '{method}' during the IPC version exchange"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 153
+msgid   "unreadable ipc.version.result payload"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 157
+#, rust-format
+msgid   "incompatible IPC version: we speak {mine}, the peer announced {theirs}: {message}"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 195
+#, rust-format
+msgid   "this build pins IPC version {have}; the peer announced {want}"
+msgstr  ""
+#
 # File: ../crates/libsysa/src/ipc.rs, line: 83
 msgid   "SCM_RIGHTS send task panicked."
 msgstr  "SCM_RIGHTS 发送任务发生 panic。"
@@ -2291,6 +2343,20 @@ msgstr  "等待监听 fd 时 fdpass 连接已关闭。"
 msgid   "recvmsg did not contain SCM_RIGHTS fd."
 msgstr  "recvmsg 未包含 SCM_RIGHTS fd。"
 #
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 150
+msgid   "request id wraparound"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 172
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 179
+msgid   "connection to System A is closed"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 184
+#, rust-format
+msgid   "unit.cgroup timed out after {timeout}"
+msgstr  ""
+#
 # File: ../crates/libsysa/src/worker_ipc.rs, line: 535
 #, rust-format
 msgid   "Cannot connect to {path}."
@@ -2312,6 +2378,10 @@ msgstr  "写入 System A 套接字。"
 # File: ../crates/libsysa/src/worker_ipc.rs, line: 731
 msgid   "failed to decode ack"
 msgstr  "无法解码 ACK"
+#
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 871
+msgid   "failed to decode the cgroup reply"
+msgstr  ""
 #
 # File: ../crates/libsysa/src/worker_ipc.rs, line: 816
 #, rust-format
@@ -2401,11 +2471,29 @@ msgstr  "l10n_debug：bind_textdomain_codeset 失败：{e}"
 msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
 msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
 #
+# File: ../crates/splash/systema-sysh-console/src/main.rs, line: 90
+msgid   "System H — boot-log console frontend"
+msgstr  ""
+#
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 249
+#, rust-format
+#~ msgid        "pam_start('{pam_name}') failed: {r}"
+#~ msgstr       "pam_start('{pam_name}') 失败：{r}"
+#
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 280
+#, rust-format
+#~ msgid        "pam_open_session('{pam_name}') failed: {r}"
+#~ msgstr       "pam_open_session('{pam_name}') 失败：{r}"
+#
+#
 #
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "无效的日志级别“{level}”（{e}）；使用 info"
+#
 #
 #
 # File: ../crates/backend/systema-sysi/src/supervise.rs, line: 803
@@ -2415,9 +2503,11 @@ msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
 #
 #
 #
@@ -2431,10 +2521,12 @@ msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
 #
 #
 #
@@ -2451,10 +2543,12 @@ msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
 #
 #
 #

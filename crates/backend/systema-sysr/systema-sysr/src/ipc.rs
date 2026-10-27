@@ -28,7 +28,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use prost::Message as ProstMessage;
-use sysa::proto::{Envelope, ResourcePrepareResult, UnitDefineRequest, UnitDefineResult, UnitResourceEvent, UserSessionEvent};
+use sysa::proto::{
+    Envelope, ResourcePrepareResult, UnitCgroupQuery, UnitCgroupResult, UnitDefineRequest,
+    UnitDefineResult, UnitResourceEvent, UserSessionEvent,
+};
 use sysa::worker_ipc::{EventPublisher, WorkerIpc};
 use tracing::{debug, warn};
 
@@ -104,6 +107,10 @@ pub async fn run() -> Result<()> {
                 }
                 if env.method == "resource.prepare" {
                     handle_resource_prepare_envelope(env, &current_for_handler, event_pub);
+                    return Ok(true);
+                }
+                if env.method == "resource.cgroup" {
+                    handle_cgroup_query_envelope(env, &current_for_handler, event_pub);
                     return Ok(true);
                 }
                 Ok(false)
@@ -252,6 +259,50 @@ fn handle_resource_prepare_envelope(
         },
     };
     event_pub.send_reply(env.request_id, "resource.prepare_result", result);
+}
+
+/// Handle a `resource.cgroup` request (System A relaying System S's stop-time
+/// question "where does this unit's cgroup live?"): decode the
+/// [`UnitCgroupQuery`], answer it through the current worker and reply with
+/// `resource.cgroup_result`, echoing the request_id.  Pure reads — no
+/// signals, no state changes; System R neither knows nor cares who asked.
+fn handle_cgroup_query_envelope(
+    env: &Envelope,
+    current: &Arc<Mutex<Option<ResourceWorker>>>,
+    event_pub: &EventPublisher,
+) {
+    let query = match UnitCgroupQuery::decode(env.payload.as_slice()) {
+        Ok(q) => q,
+        Err(e) => {
+            warn!("Cannot decode resource.cgroup UnitCgroupQuery from System A: {e}");
+            event_pub.send_reply(
+                env.request_id,
+                "resource.cgroup_result",
+                UnitCgroupResult {
+                    available: false,
+                    found: false,
+                    cgroup_path: String::new(),
+                    error: sysa::l10n::fmt(
+                        sysa::l10n::t_("decode failed: {e}"),
+                        &[("e", &e.to_string())],
+                    ),
+                },
+            );
+            return;
+        }
+    };
+
+    let worker = current.lock().unwrap();
+    let result = match worker.as_ref() {
+        Some(worker) => worker.handle_cgroup_query(&query),
+        None => UnitCgroupResult {
+            available: false,
+            found: false,
+            cgroup_path: String::new(),
+            error: sysa::l10n::t_("resource worker not initialised").to_string(),
+        },
+    };
+    event_pub.send_reply(env.request_id, "resource.cgroup_result", result);
 }
 
 /// Handle a `unit.define` request: synthesize the definition (and parent

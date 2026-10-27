@@ -11,10 +11,13 @@ use sysa::worker_ipc::EventPublisher;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use crate::cgroup::Querier;
+
 #[derive(Clone)]
 pub struct ServiceController {
     registry: ServiceRegistry,
     event_pub: EventPublisher,
+    cgroup: Querier,
     fdpass: Arc<Mutex<Option<tokio::net::UnixStream>>>,
     notify: Option<NotifyManager>,
     dbus: DbusWaiter,
@@ -24,6 +27,7 @@ impl ServiceController {
     pub fn new(
         registry: ServiceRegistry,
         event_pub: EventPublisher,
+        cgroup: Querier,
         fdpass: Arc<Mutex<Option<tokio::net::UnixStream>>>,
         notify: Option<NotifyManager>,
         dbus: DbusWaiter,
@@ -31,6 +35,7 @@ impl ServiceController {
         ServiceController {
             registry,
             event_pub,
+            cgroup,
             fdpass,
             notify,
             dbus,
@@ -68,7 +73,7 @@ impl ServiceController {
             }
             Err(e) => {
                 warn!("{} (PID {}): notify start failed: {}", unit_name, pid, e);
-                let _ = stop_service(self.registry.clone(), unit_name, 10).await;
+                let _ = stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
                 self.publish_state(unit_name);
                 Err(anyhow!("{}", e))
             }
@@ -206,7 +211,7 @@ impl ServiceController {
                     "Timeout waiting for oneshot {} ({}s), stopping",
                     unit_name, timeout
                 );
-                let _ = stop_service(self.registry.clone(), unit_name, 10).await;
+                let _ = stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
                 self.publish_state(unit_name);
                 Err(anyhow!(sysa::l10n::fmt(
                     sysa::l10n::t_("oneshot service {unit_name} timed out after {timeout}s"),
@@ -256,7 +261,7 @@ impl ServiceController {
             }
             Err(e) => {
                 warn!("{} (PID {}): dbus start failed: {}", unit_name, pid, e);
-                let _ = stop_service(self.registry.clone(), unit_name, 10).await;
+                let _ = stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
                 self.publish_state(unit_name);
                 Err(anyhow!("{}", e))
             }
@@ -435,7 +440,7 @@ impl UnitController for ServiceController {
                 .and_then(|inst| inst.timeout_stop_secs)
                 .unwrap_or(30)
         };
-        stop_service(self.registry.clone(), unit_name, timeout).await?;
+        stop_service(self.registry.clone(), unit_name, timeout, Some(&self.cgroup)).await?;
         self.publish_state(unit_name);
         Ok(())
     }
@@ -459,7 +464,7 @@ impl UnitController for ServiceController {
             .as_ref()
             .map(|s| s.timeout_stop_secs)
             .unwrap_or(30);
-        stop_service(self.registry.clone(), unit_name, timeout).await?;
+        stop_service(self.registry.clone(), unit_name, timeout, Some(&self.cgroup)).await?;
         let inv_id = if invocation_id.is_empty() {
             None
         } else {
@@ -562,9 +567,14 @@ mod tests {
 
     fn controller() -> ServiceController {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (qtx, _qrx) = tokio::sync::mpsc::unbounded_channel();
         ServiceController::new(
             crate::state::new_registry(),
-            EventPublisher::new(tx, "test-worker", Arc::default()),
+            EventPublisher::new(tx, "test-worker", Arc::default(), Arc::default()),
+            Querier::new(
+                EventPublisher::new(qtx, "test-worker", Arc::default(), Arc::default()),
+                Arc::default(),
+            ),
             Arc::new(Mutex::new(None)),
             None,
             DbusWaiter::default(),

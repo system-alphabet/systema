@@ -146,6 +146,11 @@ fn run_sysi(dir: &Path, notify_dir: &Path, extra: &[&str]) -> SysiChild {
         .arg("2")
         .arg("--ready-timeout")
         .arg("2")
+        // The assertions below read informational progress lines ("Spawned
+        // syss", "Control phase: starting ..."), while the daemon default is
+        // `warn`: pin the level the harness parses.
+        .arg("--log-level")
+        .arg("info")
         .env("SYSTEMA_NOTIFY_DIR", notify_dir)
         // The control phase talks to System A over the control socket;
         // point it at the fake listener below.
@@ -296,6 +301,14 @@ fn fake_control(notify_dir: &Path, canned: Vec<UnitInfo>, sent: Arc<Mutex<Vec<St
                     break;
                 };
                 let reply = match env.method.as_str() {
+                    // SysI announces the wire version on the control socket
+                    // before `manager.hello` (see `sysa::ipc::exchange_version`);
+                    // answer the exchange exactly like System A's control port.
+                    "ipc.version" => {
+                        let request = sysa::ipc::version_request_from(&env)
+                            .expect("ipc.version frame without a version request");
+                        sysa::ipc::version_result_envelope(env.request_id, &request).unwrap()
+                    }
                     "manager.hello" => {
                         let result = ManagerHelloResult {
                             success: true,

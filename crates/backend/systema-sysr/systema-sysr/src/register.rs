@@ -222,7 +222,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use prost::Message as ProstMessage;
-    use sysa::ipc::{frame_stream, make_envelope, recv_envelope, send_envelope};
+    use sysa::ipc::{
+        frame_stream, gate_session_first, make_envelope, recv_envelope, send_envelope,
+    };
     use sysa::proto::{CommitUnits, RegisterUnits, UnitRegistrationAck};
     use tokio::net::{UnixListener, UnixStream};
 
@@ -312,6 +314,13 @@ mod tests {
     ) -> Result<()> {
         let mut framed = frame_stream(stream);
         let Some(env) = recv_envelope(&mut framed).await? else {
+            return Ok(());
+        };
+        // The finder client announces the IPC version before its first real
+        // frame (`gate_session_first` mirrors System A's side of that
+        // exchange); without it the version frame itself is what the mock
+        // tries to hang a staging-area answer on.
+        let Some(env) = gate_session_first(&mut framed, env).await? else {
             return Ok(());
         };
         let ack = match env.method.as_str() {

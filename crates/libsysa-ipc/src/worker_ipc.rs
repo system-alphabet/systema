@@ -38,6 +38,7 @@ pub struct EventPublisher {
     worker_id: String,
     next_request_id: Arc<AtomicU64>,
     pending_acks: Arc<Mutex<HashMap<u64, oneshot::Sender<UnitStateUpdateAck>>>>,
+    pending_cgroups: Arc<Mutex<HashMap<u64, oneshot::Sender<UnitCgroupResult>>>>,
 }
 
 impl EventPublisher {
@@ -45,12 +46,14 @@ impl EventPublisher {
         tx: mpsc::UnboundedSender<bytes::Bytes>,
         worker_id: &str,
         pending_acks: Arc<Mutex<HashMap<u64, oneshot::Sender<UnitStateUpdateAck>>>>,
+        pending_cgroups: Arc<Mutex<HashMap<u64, oneshot::Sender<UnitCgroupResult>>>>,
     ) -> Self {
         EventPublisher {
             tx,
             worker_id: worker_id.to_string(),
             next_request_id: Arc::new(AtomicU64::new(1)),
             pending_acks,
+            pending_cgroups,
         }
     }
 
@@ -125,6 +128,64 @@ impl EventPublisher {
             }
             error!("Giving up on unit.state_update after {MAX_ATTEMPTS} attempts");
         });
+    }
+
+    /// Ask System A where a unit's cgroup lives (`unit.cgroup`).
+    ///
+    /// System A relays the question to the resource worker and ships the
+    /// [`UnitCgroupResult`] back on the same request_id; the `slice` field is
+    /// filled System-A-side from the unit model, so the caller always sends
+    /// it empty.  Times out after `timeout` (with the pending entry removed);
+    /// every failure — connection gone, decode failure on the other end,
+    /// timeout — is an `Err`, and the caller degrades to its process-group
+    /// stop path (System A answers `available = false` results as `Ok`, not
+    /// `Err`: only the *transport* fails here).
+    pub async fn query_unit_cgroup(
+        &self,
+        unit_name: &str,
+        timeout: Duration,
+    ) -> Result<UnitCgroupResult, String> {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        if request_id == 0 {
+            return Err(crate::l10n::t_("request id wraparound").to_string());
+        }
+        let env = make_envelope(
+            request_id,
+            &self.worker_id,
+            "system-a",
+            "unit.cgroup",
+            UnitCgroupQuery {
+                unit_name: unit_name.to_string(),
+                slice: String::new(),
+            },
+        )
+        .and_then(encode_envelope)
+        .map_err(|e| e.to_string())?;
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.pending_cgroups
+            .lock()
+            .unwrap()
+            .insert(request_id, reply_tx);
+        if self.tx.send(env).is_err() {
+            self.pending_cgroups.lock().unwrap().remove(&request_id);
+            return Err(crate::l10n::t_("connection to System A is closed").to_string());
+        }
+
+        match tokio::time::timeout(timeout, reply_rx).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(_)) => {
+                self.pending_cgroups.lock().unwrap().remove(&request_id);
+                Err(crate::l10n::t_("connection to System A is closed").to_string())
+            }
+            Err(_) => {
+                self.pending_cgroups.lock().unwrap().remove(&request_id);
+                Err(crate::l10n::fmt(
+                    crate::l10n::t_("unit.cgroup timed out after {timeout}"),
+                    &[("timeout", &format!("{timeout:?}"))],
+                ))
+            }
+        }
     }
 
     /// Send a fire-and-forget envelope with the given method name and payload
@@ -261,6 +322,10 @@ fn encode_envelope(env: Envelope) -> Result<bytes::Bytes> {
 /// the hook can be an `async` block without generics infecting the struct.
 type ShutdownCleanup = Pin<Box<dyn Future<Output = ()> + Send>>;
 
+/// Hook run after every successful (re)connection registration, produced by
+/// [`WorkerIpc::on_reconnect`].  Boxed for the same reason.
+type ReconnectHook = Pin<Box<dyn Future<Output = ()> + Send>>;
+
 /// Encapsulated worker IPC loop.
 ///
 /// Handles connection, registration, method dispatch, state synchronisation,
@@ -272,6 +337,7 @@ pub struct WorkerIpc {
     supports_unit_define: bool,
     supports_resource_prepare: bool,
     on_shutdown: Option<Arc<dyn Fn() -> ShutdownCleanup + Send + Sync>>,
+    on_reconnect: Option<Arc<dyn Fn() -> ReconnectHook + Send + Sync>>,
     /// Test-only override of System A's socket path, so the fake System A in
     /// the tests need not live at the compiled-in `/run/...` location.
     #[cfg(test)]
@@ -290,6 +356,7 @@ impl WorkerIpc {
             supports_unit_define: false,
             supports_resource_prepare: false,
             on_shutdown: None,
+            on_reconnect: None,
             #[cfg(test)]
             socket_path: None,
         }
@@ -318,6 +385,23 @@ impl WorkerIpc {
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.on_shutdown = Some(Arc::new(move || Box::pin(cleanup())));
+        self
+    }
+
+    /// Arrange for `hook` to run after every successful (re)connection,
+    /// right before the reader loop starts — registration accepted, initial
+    /// snapshot queued, `worker.ready` declared.
+    ///
+    /// Use it to clear caches that only hold for the life of one connection:
+    /// an answer learned over a previous connection ("the resource worker
+    /// reported `available = false`") says nothing about the next one, where
+    /// System R may have come up with a cgroup backend.
+    pub fn on_reconnect<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_reconnect = Some(Arc::new(move || Box::pin(hook())));
         self
     }
 
@@ -589,9 +673,15 @@ impl WorkerIpc {
 
         let pending_acks: Arc<Mutex<HashMap<u64, oneshot::Sender<UnitStateUpdateAck>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let pending_cgroups: Arc<Mutex<HashMap<u64, oneshot::Sender<UnitCgroupResult>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
-        let event_publisher =
-            EventPublisher::new(out_tx.clone(), &self.worker_id, pending_acks.clone());
+        let event_publisher = EventPublisher::new(
+            out_tx.clone(),
+            &self.worker_id,
+            pending_acks.clone(),
+            pending_cgroups.clone(),
+        );
         let controller = Arc::new(controller_factory(event_publisher.clone()));
 
         // Writer task: drain out_rx → write to socket
@@ -638,6 +728,13 @@ impl WorkerIpc {
                 }
             }
 
+            // The connection is fully established.  Let the controller reset
+            // per-connection caches (e.g. negative answers learned on the
+            // previous connection) before the first envelope can arrive.
+            if let Some(hook) = self.on_reconnect.as_ref() {
+                hook().await;
+            }
+
             loop {
                 let bytes = match reader.next().await {
                     None => {
@@ -675,12 +772,20 @@ impl WorkerIpc {
 
                         // start/restart/reload may block for a long time
                         // (Type=notify waits for READY=1, up to
-                        // TimeoutStartSec).  Run them in a spawned task so
-                        // the reader loop keeps servicing other envelopes
-                        // (state acks, status/stop requests, ...) meanwhile;
-                        // the result is sent by the task itself.
-                        let deferred =
-                            matches!(call.method.as_str(), "start" | "restart" | "reload");
+                        // TimeoutStartSec); stop may block just as long
+                        // (TimeoutStopSec, scaled by a cgroup-wide wait for
+                        // the whole tree to die).  Run them in a spawned
+                        // task so the reader loop keeps servicing other
+                        // envelopes (state acks, status requests, further
+                        // method calls, ...) meanwhile; the result is sent
+                        // by the task itself.  Keeping stop synchronous here
+                        // would also deadlock any call that asks System A
+                        // something while stopping: the answer could only
+                        // arrive through this reader loop.
+                        let deferred = matches!(
+                            call.method.as_str(),
+                            "start" | "restart" | "reload" | "stop"
+                        );
                         if deferred {
                             let controller = controller.clone();
                             let out_tx = out_tx.clone();
@@ -749,6 +854,27 @@ impl WorkerIpc {
                         } else {
                             debug!(
                                 "unit.state_update_ack with unknown request_id {} — ignoring",
+                                env.request_id
+                            );
+                        }
+                    }
+
+                    "unit.cgroup_result" => {
+                        if let Some(reply_tx) =
+                            pending_cgroups.lock().unwrap().remove(&env.request_id)
+                        {
+                            let result = UnitCgroupResult::decode(env.payload.as_slice())
+                                .unwrap_or_else(|_| UnitCgroupResult {
+                                    available: false,
+                                    found: false,
+                                    cgroup_path: String::new(),
+                                    error: crate::l10n::t_("failed to decode the cgroup reply")
+                                        .to_string(),
+                                });
+                            let _ = reply_tx.send(result);
+                        } else {
+                            debug!(
+                                "unit.cgroup_result with unknown request_id {} — ignoring",
                                 env.request_id
                             );
                         }
@@ -1041,6 +1167,30 @@ mod tests {
                         return Ok(()); // drop the socket
                     }
                 }
+                "unit.cgroup" => {
+                    // Answer stop-time cgroup questions with an echo on the
+                    // same request_id — this is how a relayed `resource.cgroup`
+                    // rides back to the asking worker in production.
+                    let q = UnitCgroupQuery::decode(env.payload.as_slice())?;
+                    push(&log, format!("unit.cgroup:{}:{}", q.unit_name, q.slice));
+                    let result = UnitCgroupResult {
+                        available: true,
+                        found: true,
+                        cgroup_path: "/sys/fs/cgroup/system.slice/app.service".to_string(),
+                        error: String::new(),
+                    };
+                    send_envelope(
+                        &mut framed,
+                        &make_envelope(
+                            env.request_id,
+                            "system-a",
+                            "system-t-1",
+                            "unit.cgroup_result",
+                            result,
+                        )?,
+                    )
+                    .await?;
+                }
                 "worker.exit" => {
                     let exit = WorkerExit::decode(env.payload.as_slice())?;
                     push(&log, format!("worker.exit:{}", exit.reason));
@@ -1131,6 +1281,80 @@ mod tests {
         assert!(
             ready < start && start < update && update < done && done < exit,
             "cleanup must run, and be seen by System A, before the goodbye: {entries:?}"
+        );
+    }
+
+    /// A stop-time cgroup question (`unit.cgroup`) goes out on the live
+    /// connection and its answer comes back on the same request_id — the
+    /// round trip behind `stop_service`'s cgroup path discovery.
+    #[tokio::test]
+    async fn cgroup_query_round_trips_with_the_same_request_id() {
+        let sock = test_socket("cgroup-query");
+
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+        let (a_log, a_sock) = (log.clone(), sock.clone());
+        tokio::spawn(async move {
+            let _ = fake_system_a(listener, a_log, ready_tx, None).await;
+        });
+
+        let publisher: Arc<Mutex<Option<EventPublisher>>> = Arc::new(Mutex::new(None));
+        let (pub_for_factory, pub_for_query) = (publisher.clone(), publisher.clone());
+        let log_for_query = log.clone();
+
+        let ipc = WorkerIpc::new("system-t-1", &["timer"])
+            .with_socket_path(a_sock)
+            .on_shutdown(move || {
+                let (publisher, log) = (pub_for_query.clone(), log_for_query.clone());
+                async move {
+                    let publisher = publisher.lock().unwrap().clone();
+                    let ep = publisher.expect("factory installed the publisher on connect");
+                    let result = ep
+                        .query_unit_cgroup("app.service", Duration::from_secs(2))
+                        .await
+                        .expect("the fake System A must answer the cgroup question");
+                    // The client always ships an empty slice: System A fills
+                    // it from the unit model.
+                    assert!(result.available && result.found);
+                    assert_eq!(
+                        result.cgroup_path,
+                        "/sys/fs/cgroup/system.slice/app.service"
+                    );
+                    push(&log, "query-done");
+                }
+            });
+
+        let signal = async move {
+            ready_rx
+                .await
+                .expect("fake System A disappeared before the handshake finished");
+            "SIGTERM"
+        };
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            ipc.run_until_shutdown(
+                signal,
+                move |event_pub| {
+                    *pub_for_factory.lock().unwrap() = Some(event_pub);
+                    NoopController
+                },
+                |_, _| Ok(false),
+            ),
+        )
+        .await
+        .expect("graceful shutdown must not hang");
+        assert!(result.is_ok(), "worker must exit cleanly: {result:?}");
+
+        let entries = snapshot(&log);
+        let ready = index_of(&entries, "ready");
+        let query = index_of(&entries, "unit.cgroup:app.service:");
+        let done = index_of(&entries, "query-done");
+        let exit = index_of(&entries, "worker.exit:SIGTERM");
+        assert!(
+            ready < query && query < done && done < exit,
+            "the cgroup answer must ride the still-open connection: {entries:?}"
         );
     }
 

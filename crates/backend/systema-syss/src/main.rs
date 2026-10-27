@@ -5,6 +5,7 @@
 //! - Execute service processes (fork/exec), track their lifecycle.
 //! - Report `method.result` and `unit.state_update` messages back to System A.
 
+mod cgroup;
 mod controller;
 mod dbus;
 mod ipc;

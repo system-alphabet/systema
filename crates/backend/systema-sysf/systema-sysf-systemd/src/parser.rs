@@ -27,9 +27,8 @@ pub fn parse_unit(name: &str, content: &str) -> Result<UnitFile> {
     parse_unit_content(name, content)
 }
 
-/// Parse a unit file from a filesystem path, also applying drop-in
-/// configuration files found in `<base>.d/*.conf` directories alongside
-/// every search-path directory the base file was found in.
+/// Parse a unit file from a filesystem path, applying the drop-ins found in
+/// its own directory.
 pub fn parse_unit_from_path(path: &Path) -> Result<UnitFile> {
     let name = path
         .file_name()
@@ -45,11 +44,33 @@ pub fn parse_unit_from_path(path: &Path) -> Result<UnitFile> {
 /// (e.g. `getty@tty3.service`), so `%i`/`%p`/`%n` specifiers are expanded
 /// with the instance name and the resulting unit is named accordingly.
 ///
-/// Drop-ins are applied from both the instance drop-in directory
-/// (`<dir>/<name>.d/`) and, when `name` is an instance unit, the template
-/// drop-in directory (`<dir>/<template>.d/`), mirroring systemd's
-/// `unit_find_dropin_paths()`.
+/// Drop-ins are resolved from the directory that holds the file; callers that
+/// know the full unit search path must use [`parse_unit_from_path_as_in`] so
+/// that drop-ins from every load path are applied too.
 pub fn parse_unit_from_path_as(path: &Path, name: &str) -> Result<UnitFile> {
+    let dirs: Vec<String> = path
+        .parent()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .into_iter()
+        .collect();
+    parse_unit_from_path_as_in(&dirs, path, name)
+}
+
+/// Parse the unit file at `path` as `name`, applying the drop-ins that the
+/// unit load path collects.
+///
+/// `dirs` lists the unit search paths in priority order (highest first), the
+/// same shape as `sysa::paths::Paths::unit_search_paths`.  systemd collects
+/// `<name>.d/*.conf` from *every* load path, not only from the directory the
+/// unit file lives in, so a drop-in in `/etc/systemd/system` extends a unit
+/// shipped in `/usr/lib/systemd/system`.  Directories are therefore applied
+/// from the lowest priority upwards, letting a higher-priority directory
+/// override a lower one.
+///
+/// An instance unit also inherits its template's drop-ins; within one search
+/// directory they are applied before the instance's own, because the instance
+/// is the more specific scope.
+pub fn parse_unit_from_path_as_in(dirs: &[String], path: &Path, name: &str) -> Result<UnitFile> {
     let content = std::fs::read_to_string(path).with_context(|| {
         sysa::l10n::fmt(
             sysa::l10n::t_("Reading unit file {path} ..."),
@@ -58,18 +79,18 @@ pub fn parse_unit_from_path_as(path: &Path, name: &str) -> Result<UnitFile> {
     })?;
     let mut unit = parse_unit_content(name, &content)?;
 
-    // Apply drop-in files from `<dir>/<name>.d/*.conf`.
-    let dropin_dir = path.with_file_name(format!("{}.d", name));
-    if dropin_dir.is_dir() {
-        apply_dropin_dir(&dropin_dir, &mut unit)?;
-    }
-
-    // For instance units, also apply the template drop-in directory so that
-    // configuration shared by every instance of the template is picked up.
-    if let Some(template) = sysa::unit_name::template_of(name) {
-        let tpl_dropin_dir = path.with_file_name(format!("{}.d", template));
-        if tpl_dropin_dir.is_dir() {
-            apply_dropin_dir(&tpl_dropin_dir, &mut unit)?;
+    let template = sysa::unit_name::template_of(name);
+    for dir in dirs.iter().rev() {
+        // The template provides the shared scope; the instance refines it.
+        if let Some(template) = &template {
+            let tpl_dropin_dir = Path::new(dir).join(format!("{template}.d"));
+            if tpl_dropin_dir.is_dir() {
+                apply_dropin_dir(&tpl_dropin_dir, &mut unit)?;
+            }
+        }
+        let dropin_dir = Path::new(dir).join(format!("{name}.d"));
+        if dropin_dir.is_dir() {
+            apply_dropin_dir(&dropin_dir, &mut unit)?;
         }
     }
 

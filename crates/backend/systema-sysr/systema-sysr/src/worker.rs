@@ -27,7 +27,10 @@ use systema_sysr_common::{
     user_slice_cgroup_path, user_slice_name, user_slice_root_path,
 };
 use sysa::controller::{UnitController, UnitStatus};
-use sysa::proto::{CgroupMetricsUpdate, CgroupProcess, UnitCgroupMetrics, UnitResourceEvent, UserSessionEvent};
+use sysa::proto::{
+    CgroupMetricsUpdate, CgroupProcess, UnitCgroupMetrics, UnitCgroupQuery, UnitCgroupResult,
+    UnitResourceEvent, UserSessionEvent,
+};
 use sysa::worker_ipc::EventPublisher;
 use tracing::{debug, info, warn};
 
@@ -112,6 +115,62 @@ impl ResourceWorker {
     /// Whether resource control is actually enforced by the backend.
     pub fn available(&self) -> bool {
         self.controller.available()
+    }
+
+    /// Answer a `resource.cgroup` lookup: return the unit's **root** cgroup
+    /// path (never the `DelegateSubgroup=` child — stopping must cover the
+    /// whole subtree) plus whether that directory exists right now.
+    ///
+    /// Pure reads: no state checks, no signals, nothing beyond the registry
+    /// lookup and a filesystem probe.  An empty-but-present cgroup
+    /// (start/stop race) still reports `found = true` — killing unifies it
+    /// with the main process group anyway, and System S degrades cleanly
+    /// when the path cannot be learned.
+    pub fn handle_cgroup_query(&self, query: &UnitCgroupQuery) -> UnitCgroupResult {
+        if !self.available() {
+            return UnitCgroupResult {
+                available: false,
+                found: false,
+                cgroup_path: String::new(),
+                error: sysa::l10n::t_("no cgroup backend").to_string(),
+            };
+        }
+
+        // The registry is authoritative while the worker manages the unit:
+        // the entry exists from the `active` event until release, so the
+        // directory is known to exist (possibly empty).
+        if let Some(unit) = self.registry.lock().unwrap().get(&query.unit_name) {
+            return UnitCgroupResult {
+                available: true,
+                found: true,
+                cgroup_path: unit.cgroup_path.clone(),
+                error: String::new(),
+            };
+        }
+
+        // Fall back to the pure path derivation + a filesystem probe: the
+        // unit may live in a cgroup this worker never managed, and the path
+        // does not depend on the registry at all.
+        let path = Self::cgroup_path(&query.unit_name, &query.slice);
+        let found = self.controller.exists(&path);
+        if found {
+            UnitCgroupResult {
+                available: true,
+                found: true,
+                cgroup_path: path,
+                error: String::new(),
+            }
+        } else {
+            UnitCgroupResult {
+                available: true,
+                found: false,
+                cgroup_path: String::new(),
+                error: sysa::l10n::fmt(
+                    sysa::l10n::t_("unit '{unit_name}' has no cgroup directory"),
+                    &[("unit_name", &query.unit_name)],
+                ),
+            }
+        }
     }
 
     /// The absolute cgroup filesystem path for `unit_name` living in the
@@ -565,6 +624,7 @@ mod tests {
             tx,
             "test",
             Arc::new(std::sync::Mutex::new(HashMap::new())),
+            Arc::new(std::sync::Mutex::new(HashMap::new())),
         )
     }
 
@@ -780,6 +840,8 @@ mod tests {
         delegated: Mutex<Vec<(String, String, String, String)>>,
         attached: Mutex<Vec<String>>,
         fail_ensure: bool,
+        /// Paths that answer `exists() == true` (cgroup lookup probes).
+        existing: Mutex<Vec<String>>,
     }
 
     impl ResourceController for RecordingController {
@@ -821,6 +883,10 @@ mod tests {
             Vec::new()
         }
 
+        fn exists(&self, path: &str) -> bool {
+            self.existing.lock().unwrap().iter().any(|p| p == path)
+        }
+
         fn has_child_cgroups(&self, _path: &str) -> bool {
             false
         }
@@ -851,6 +917,78 @@ mod tests {
             dummy_publisher(),
         );
         (w, ctrl)
+    }
+
+    fn cgroup_query(unit_name: &str, slice: &str) -> UnitCgroupQuery {
+        UnitCgroupQuery {
+            unit_name: unit_name.to_string(),
+            slice: slice.to_string(),
+        }
+    }
+
+    #[test]
+    fn cgroup_query_with_no_backend_reports_unavailable() {
+        let w = worker();
+        let r = w.handle_cgroup_query(&cgroup_query("app.service", ""));
+        assert!(!r.available);
+        assert!(!r.found);
+        assert!(r.cgroup_path.is_empty());
+        assert!(!r.error.is_empty());
+    }
+
+    #[test]
+    fn cgroup_query_registry_hit_returns_the_stored_root_path() {
+        let (w, _ctrl) = recording_worker();
+        w.registry.lock().unwrap().insert(
+            "app.service".to_string(),
+            ManagedUnit {
+                config: ResourceConfig::default(),
+                cgroup_path: "/sys/fs/cgroup/system.slice/app.service".to_string(),
+                parent_slice: "system.slice".to_string(),
+                main_pid: 0,
+            },
+        );
+        let r = w.handle_cgroup_query(&cgroup_query("app.service", ""));
+        assert!(r.available);
+        assert!(r.found);
+        assert_eq!(r.cgroup_path, "/sys/fs/cgroup/system.slice/app.service");
+        assert!(r.error.is_empty());
+    }
+
+    #[test]
+    fn cgroup_query_missed_derives_the_path_and_probes_it() {
+        let (w, ctrl) = recording_worker();
+
+        // Empty slice → the default parent; the probe only answers for the
+        // path the worker would derive.
+        let derived = ResourceWorker::cgroup_path("app.service", "");
+        assert_eq!(derived, "/sys/fs/cgroup/system.slice/app.service");
+        ctrl.existing.lock().unwrap().push(derived.clone());
+        let r = w.handle_cgroup_query(&cgroup_query("app.service", ""));
+        assert!(r.available && r.found);
+        assert_eq!(r.cgroup_path, derived);
+
+        // A unit with no directory answers found=false with no path.
+        let r = w.handle_cgroup_query(&cgroup_query("other.service", "user.slice"));
+        assert!(r.available);
+        assert!(!r.found);
+        assert!(r.cgroup_path.is_empty());
+        assert!(!r.error.is_empty());
+    }
+
+    #[test]
+    fn cgroup_path_derivation_follows_slice_rules() {
+        // Empty slice → the default system.slice parent.
+        assert_eq!(
+            ResourceWorker::cgroup_path("ssh.service", ""),
+            "/sys/fs/cgroup/system.slice/ssh.service"
+        );
+        // A slice unit points at its own cgroup (nested slices keep only the
+        // last component as the directory name).
+        assert_eq!(
+            ResourceWorker::cgroup_path("app-foo.slice", "app-foo.slice"),
+            "/sys/fs/cgroup/app.slice/foo.slice"
+        );
     }
 
     #[test]

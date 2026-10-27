@@ -300,6 +300,7 @@ fn convert_restart(policy: &SdRestartPolicy) -> ir::RestartPolicy {
 
 fn convert_service(svc: &ServiceSection) -> ServiceConfig {
     ServiceConfig {
+        service_type: svc.service_type.as_str().to_string(),
         exec_start: svc.exec_start.iter().map(convert_exec).collect(),
         exec_stop: svc.exec_stop.iter().map(convert_exec).collect(),
         exec_reload: svc.exec_reload.iter().map(convert_exec).collect(),
@@ -488,6 +489,22 @@ mod tests {
         assert_eq!(ir.id, "lightdm.service");
         assert!(ir.aliases.is_empty());
         assert!(ir.alias_of.is_none());
+    }
+
+    #[test]
+    fn convert_unit_file_carries_the_service_type() {
+        // Type= decides when a start job completes, so it must survive the
+        // conversion into the IR instead of being re-inferred downstream.
+        let mut uf = unit_file("user@.service", &[]);
+        uf.service = Some(crate::types::ServiceSection {
+            service_type: crate::types::ServiceType::NotifyReload,
+            ..Default::default()
+        });
+        let ir = convert_unit_file(&uf);
+        assert_eq!(
+            ir.service.as_ref().expect("service config").service_type,
+            "notify-reload"
+        );
     }
 
     #[test]

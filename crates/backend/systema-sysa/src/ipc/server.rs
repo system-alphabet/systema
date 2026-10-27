@@ -21,9 +21,9 @@ use sysa::ipc::{frame_stream, make_envelope, recv_envelope, send_envelope};
 use sysa::proto::{
     AdminStagingOp, AdminStagingResult, CgroupMetricsUpdate, CommitUnits, Envelope, EventSubscribe,
     EventUnsubscribe, MethodResult, PathFired, RegisterAck, RegisterUnits, ResourcePrepareResult,
-    StagingAreaEntry, StagingQuery, StagingQueryResult, TimerFired, UnitDefineResult,
-    UnitRegistrationAck, UnitStateUpdate, UnitStateUpdateAck, UnitSyncReport, WorkerExit,
-    WorkerRegistration,
+    StagingAreaEntry, StagingQuery, StagingQueryResult, TimerFired, UnitCgroupQuery,
+    UnitCgroupResult, UnitDefineResult, UnitRegistrationAck, UnitStateUpdate, UnitStateUpdateAck,
+    UnitSyncReport, WorkerExit, WorkerRegistration,
 };
 
 use crate::events::load_unit_sync;
@@ -603,6 +603,64 @@ async fn handle_worker_session(
                                 "resource.prepare_result from worker '{}' with unknown request_id {} — ignoring",
                                 worker_id_recv, qid
                             );
+                        }
+                        continue;
+                    }
+
+                    if env.method == "resource.cgroup_result" {
+                        let qid = env.request_id;
+                        let result = match UnitCgroupResult::decode(env.payload.as_slice()) {
+                            Ok(r) => r,
+                            Err(e) => UnitCgroupResult {
+                                available: false,
+                                found: false,
+                                cgroup_path: String::new(),
+                                error: sysa::l10n::fmt(
+                                    sysa::l10n::t_("decode failed: {e}"),
+                                    &[("e", &e.to_string())],
+                                ),
+                            },
+                        };
+                        let mut state = alloc_for_recv.write();
+                        if let Some(tx) = state.cgroup_query_txs.remove(&qid) {
+                            let _ = tx.send(result);
+                        } else {
+                            drop(state);
+                            debug!(
+                                "resource.cgroup_result from worker '{}' with unknown request_id {} — ignoring",
+                                worker_id_recv, qid
+                            );
+                        }
+                        continue;
+                    }
+
+                    // A worker (today: System S) asks where a unit's cgroup
+                    // lives before it stops the service.  The whole answer
+                    // hops through the resource worker, possibly timing out:
+                    // relay it in a spawned task so this session loop never
+                    // waits for another worker.
+                    if env.method == "unit.cgroup" {
+                        match UnitCgroupQuery::decode(env.payload.as_slice()) {
+                            Ok(query) => {
+                                let origin = worker_id_recv.clone();
+                                let origin_request_id = env.request_id;
+                                let allocator = alloc_for_recv.clone();
+                                tokio::spawn(async move {
+                                    crate::scheduler::relay_unit_cgroup_query(
+                                        allocator,
+                                        origin,
+                                        origin_request_id,
+                                        query,
+                                    )
+                                    .await;
+                                });
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "unit.cgroup decode from worker '{}': {} — ignoring",
+                                    worker_id_recv, e
+                                );
+                            }
                         }
                         continue;
                     }

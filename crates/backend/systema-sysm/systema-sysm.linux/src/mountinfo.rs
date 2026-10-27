@@ -566,7 +566,8 @@ mod tests {
             rt.block_on(async {
                 let registry = crate::linux::state::new_mount_registry();
                 tokio::spawn(async move {
-                    let publisher = EventPublisher::new(tx, "system-m-1", Default::default());
+                    let publisher =
+                        EventPublisher::new(tx, "system-m-1", Default::default(), Default::default());
                     let mut monitor = MountInfoMonitor::new(registry, publisher);
                     monitor.run().await;
                 });

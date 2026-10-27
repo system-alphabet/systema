@@ -265,7 +265,9 @@ pub struct WorkerEntry {
     pub supports_unit_define: bool,
     /// Whether the worker implements the `resource.prepare` protocol: it
     /// answers pre-start requests that ensure a Delegate= unit's cgroup
-    /// hierarchy before the start job is dispatched (System R).
+    /// hierarchy before the start job is dispatched.  The same worker also
+    /// answers `resource.cgroup` stop-time cgroup lookups (`resource.cgroup`
+    /// / `resource.cgroup_result`) — one flag, one cgroup authority.
     pub supports_resource_prepare: bool,
     /// Whether the worker declared itself ready (`worker.ready` envelope).
     pub ready: bool,
@@ -357,6 +359,13 @@ pub struct AllocatorState {
     /// prepared Delegate= placement path.
     pub resource_prepare_txs:
         HashMap<u64, tokio::sync::oneshot::Sender<sysa::proto::ResourcePrepareResult>>,
+    /// Completion senders for pending `resource.cgroup` lookups relayed to
+    /// System R — keyed by the request_id of the envelope sent to System R.
+    /// The IPC receiver completes the channel when `resource.cgroup_result`
+    /// arrives, letting the relay answer the originating worker's
+    /// `unit.cgroup` question.  The result is moved through verbatim: this
+    /// map never caches or interprets the path.
+    pub cgroup_query_txs: HashMap<u64, tokio::sync::oneshot::Sender<sysa::proto::UnitCgroupResult>>,
     /// Restart rate-limiting state, keyed by unit name.
     pub start_limit_state: HashMap<String, StartLimitState>,
     /// In-process event bus for pub/sub event distribution.
@@ -443,6 +452,7 @@ impl AllocatorState {
             serial_completion_txs: HashMap::new(),
             unit_define_txs: HashMap::new(),
             resource_prepare_txs: HashMap::new(),
+            cgroup_query_txs: HashMap::new(),
             start_limit_state: HashMap::new(),
             event_bus: Arc::new(TokioRwLock::new(EventBus::new())),
             staging_areas: HashMap::new(),
@@ -1055,9 +1065,17 @@ fn service_config_to_section(
     cfg: &systema_sysf::ir::ServiceConfig,
 ) -> crate::unit::types::ServiceSection {
     use crate::unit::types::ServiceType;
-    let svc_type = match cfg.exec_start.first() {
-        Some(_) => ServiceType::Simple,
-        None => ServiceType::Oneshot,
+    // The plane that parsed the definition owns `Type=`; only synthesized
+    // configs (which carry none) fall back to the ExecStart shape.  Guessing
+    // `simple` for a `notify`/`notify-reload` unit would complete its start
+    // job at spawn time, i.e. before the service is ready.
+    let svc_type = if cfg.service_type.is_empty() {
+        match cfg.exec_start.first() {
+            Some(_) => ServiceType::Simple,
+            None => ServiceType::Oneshot,
+        }
+    } else {
+        ServiceType::from(cfg.service_type.as_str())
     };
     crate::unit::types::ServiceSection {
         service_type: svc_type,

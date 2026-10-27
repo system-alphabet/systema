@@ -471,6 +471,12 @@ fn pam_child_main(
         unsafe { libc::_exit(EXIT_FAILURE) };
     }
 
+    // The frame ends at EOF, so the write side must go before parking:
+    // keeping it open leaves the parent's read loop blocked until its 30 s
+    // deadline, which turns every first `user@UID.service` start into a
+    // half-minute stall and throws the environment away.
+    unsafe { libc::close(env_write) };
+
     // -- park --------------------------------------------------------------
     // Hold the PAM session open until the parent closes the lifecycle pipe
     // (service's main process exited) or syss dies (PDEATHSIG).
@@ -678,13 +684,16 @@ pub fn pam_session_open(
     unsafe { libc::close(env_write) };
     unsafe { libc::close(end_read) };
 
-    match read_child_result(env_read) {
+    let result = read_child_result(env_read);
+    // The frame has been read (success or failure): the env pipe is done.
+    unsafe { libc::close(env_read) };
+
+    match result {
         Ok(env) => Ok((env, PamSession { pid, end_write })),
         Err(detail) => {
             // The child either reported a failure or died: make sure it is
             // gone and collected, then surface the failure to the caller
             // (which continues without the PAM environment).
-            unsafe { libc::close(env_read) };
             unsafe { libc::close(end_write) };
             collect_holder_child(pid, Duration::from_secs(2));
             Err(detail)
@@ -779,6 +788,119 @@ fn read_child_result(fd: RawFd) -> Result<Vec<(String, String)>, String> {
 mod tests {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use super::*;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use std::time::Instant;
+
+    /// Environment handed back by the stub `pam_getenvlist()` below.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    static TEST_ENVLIST: AtomicPtr<*mut c_char> = AtomicPtr::new(ptr::null_mut());
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn holder_child_hands_the_environment_over_before_parking() {
+        // Exercise the real child path (frame → close → park) with a stub
+        // PAM stack: the parent must read the environment immediately, not
+        // sit on `read_child_result()` until its 30 s deadline because the
+        // env pipe's write end is still open in the parked child.
+        unsafe extern "C" fn start(
+            _service: *const c_char,
+            _user: *const c_char,
+            _conv: *const PamConv,
+            pamh: *mut *mut c_void,
+        ) -> c_int {
+            unsafe { *pamh = 1 as *mut c_void };
+            PAM_SUCCESS
+        }
+        unsafe extern "C" fn end(_pamh: *mut c_void, _status: c_int) -> c_int {
+            PAM_SUCCESS
+        }
+        unsafe extern "C" fn set_item(
+            _pamh: *mut c_void,
+            _item: c_int,
+            _value: *const c_void,
+        ) -> c_int {
+            PAM_SUCCESS
+        }
+        unsafe extern "C" fn set_cred(_pamh: *mut c_void, _flags: c_int) -> c_int {
+            PAM_SUCCESS
+        }
+        unsafe extern "C" fn open_session(_pamh: *mut c_void, _flags: c_int) -> c_int {
+            PAM_SUCCESS
+        }
+        unsafe extern "C" fn close_session(_pamh: *mut c_void, _flags: c_int) -> c_int {
+            PAM_SUCCESS
+        }
+        unsafe extern "C" fn get_envlist(_pamh: *mut c_void) -> *mut *mut c_char {
+            TEST_ENVLIST.load(Ordering::SeqCst)
+        }
+
+        let pam = PamLib {
+            _handle: ptr::null_mut(),
+            start,
+            end,
+            set_item,
+            set_cred,
+            open_session,
+            close_session,
+            get_envlist,
+        };
+
+        // libpam hands the child a malloc'd strv; the child frees it.
+        let entries = [
+            c"XDG_RUNTIME_DIR=/run/user/1000",
+            c"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+        ];
+        let list = unsafe {
+            libc::calloc(entries.len() + 1, std::mem::size_of::<*mut c_char>()) as *mut *mut c_char
+        };
+        assert!(!list.is_null());
+        for (i, entry) in entries.iter().enumerate() {
+            unsafe { *list.add(i) = libc::strdup(entry.as_ptr()) };
+        }
+        TEST_ENVLIST.store(list, Ordering::SeqCst);
+
+        let service = c"systema-test";
+        let user = c"root";
+        let (env_read, env_write) = pipe_cloexec().expect("env pipe");
+        let (end_read, end_write) = pipe_cloexec().expect("lifecycle pipe");
+
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            pam_child_main(&pam, service, user, None, env_write, end_read);
+        }
+
+        unsafe {
+            libc::close(env_write);
+            libc::close(end_read);
+        }
+
+        let started = Instant::now();
+        let env = read_child_result(env_read).expect("holder child must report its environment");
+        let elapsed = started.elapsed();
+        unsafe { libc::close(env_read) };
+
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "environment handover took {elapsed:?}: the child kept the env pipe open"
+        );
+        assert_eq!(
+            env,
+            vec![
+                ("XDG_RUNTIME_DIR".to_string(), "/run/user/1000".to_string()),
+                (
+                    "DBUS_SESSION_BUS_ADDRESS".to_string(),
+                    "unix:path=/run/user/1000/bus".to_string()
+                ),
+            ]
+        );
+
+        // End the session and collect the parked child.
+        unsafe { libc::close(end_write) };
+        collect_holder_child(pid, Duration::from_secs(2));
+    }
 
     #[test]
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -802,10 +924,17 @@ mod tests {
     #[test]
     fn write_int_formats_decimal() {
         let mut b = [0u8; 12];
-        assert_eq!(&b[..write_int(0, &mut b)], b"0");
-        assert_eq!(&b[..write_int(1, &mut b)], b"1");
-        assert_eq!(&b[..write_int(14, &mut b)], b"14");
-        assert_eq!(&b[..write_int(29239070, &mut b)], b"29239070");
-        assert_eq!(&b[..write_int(-1, &mut b)], b"-1");
+        // `&mut b` is passed straight into the index expression, whose
+        // receiver borrows `b` first — take the length in its own step.
+        for (value, expected) in [
+            (0, &b"0"[..]),
+            (1, &b"1"[..]),
+            (14, &b"14"[..]),
+            (29239070, &b"29239070"[..]),
+            (-1, &b"-1"[..]),
+        ] {
+            let len = write_int(value, &mut b);
+            assert_eq!(&b[..len], expected);
+        }
     }
 }

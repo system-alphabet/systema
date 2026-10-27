@@ -91,6 +91,13 @@ pub struct ExecCommand {
 /// Service-specific configuration in a unified form.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ServiceConfig {
+    /// `Type=` — the startup/readiness model (`simple`, `notify`,
+    /// `notify-reload`, `oneshot`, `dbus`, `forking`, `idle`).  Carried
+    /// verbatim from the definition: consumers must not re-derive it from
+    /// `ExecStart=`, because the notify/dbus types decide when a start job
+    /// completes (and `notify` additionally gets `$NOTIFY_SOCKET`).
+    #[serde(default)]
+    pub service_type: String,
     pub exec_start: Vec<ExecCommand>,
     pub exec_stop: Vec<ExecCommand>,
     pub exec_reload: Vec<ExecCommand>,

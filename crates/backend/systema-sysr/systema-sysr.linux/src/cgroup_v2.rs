@@ -748,6 +748,11 @@ impl ResourceController for CgroupV2Controller {
             .any(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
     }
 
+    fn exists(&self, path: &str) -> bool {
+        self.rel(path)
+            .is_some_and(|rel| self.full(&rel).is_dir())
+    }
+
     fn remove(&self, path: &str) -> Result<(), ResourceError> {
         let rel = self.rel(path).ok_or_else(|| ResourceError::Invalid {
             path: path.to_string(),

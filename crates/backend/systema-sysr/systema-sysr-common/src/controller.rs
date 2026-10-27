@@ -168,6 +168,12 @@ pub trait ResourceController: Send + Sync {
     /// List the PIDs directly present in `path` (not its child cgroups).
     fn processes(&self, path: &str) -> Vec<u32>;
 
+    /// Whether `path` (absolute cgroupfs path) is a cgroup directory right
+    /// now.  Read-only probe used to answer unit cgroup lookups: an empty
+    /// but existing directory (start/stop race) counts as existing, and a
+    /// missing directory must be distinguishable from "exists but empty".
+    fn exists(&self, path: &str) -> bool;
+
     /// True when `path` has no child cgroup directories.
     fn has_child_cgroups(&self, path: &str) -> bool;
 
@@ -230,6 +236,10 @@ impl ResourceController for NoopController {
 
     fn processes(&self, _path: &str) -> Vec<u32> {
         Vec::new()
+    }
+
+    fn exists(&self, _path: &str) -> bool {
+        false
     }
 
     fn has_child_cgroups(&self, _path: &str) -> bool {

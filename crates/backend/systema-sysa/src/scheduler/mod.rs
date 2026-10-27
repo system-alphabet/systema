@@ -259,6 +259,12 @@ const UNIT_DEFINE_TIMEOUT: Duration = Duration::from_secs(60);
 /// the bound only exists so a wedged worker cannot hang the start forever.
 const RESOURCE_PREPARE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long System A waits for System R's `resource.cgroup_result` before
+/// answering the relayed `unit.cgroup` with `available = false`.  A stop that
+/// falls back to the process group is always better than a stop that waits,
+/// so the bound is far below any stop timeout.
+const CGROUP_QUERY_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Upper bound for the per-transaction `unit.define` materialisation
 /// rounds.  Dependency chains can be arbitrarily deep, but each round
 /// loads the exact missing unit, so a handful of rounds covers realistic
@@ -318,25 +324,6 @@ pub fn collect_missing_units_multi(
     missing
 }
 
-/// Re-materialize the root unit of a start job from the best available source.
-///
-/// An instance (`xxx@yyy.*`) is resolved from the IR template, never from the
-/// disk: a producer that reported the instance already merged that instance's
-/// own drop-ins into it, and re-parsing the same-named file (which is the
-/// template) under the instance name would replace that evidence with a plain
-/// expansion.  A name with no template keeps the on-disk refresh, where the
-/// unit file is the authority for dependency edges a mirror or discovery path
-/// may have trimmed.
-async fn refresh_root_unit(allocator: AllocatorHandle, unit_name: &str) -> Result<()> {
-    if sysa::unit_name::is_instance(unit_name)
-        && crate::unit::template::materialize(&allocator, unit_name)?
-    {
-        return Ok(());
-    }
-    crate::unit::loader::ensure_loaded_from_disk(allocator, unit_name).await?;
-    Ok(())
-}
-
 /// Request definitions for the given missing units from the workers that
 /// own their unit types (`unit.define` protocol), then commit the returned
 /// definitions into the allocator through the same idempotent merge as the
@@ -347,18 +334,38 @@ async fn refresh_root_unit(allocator: AllocatorHandle, unit_name: &str) -> Resul
 /// worker handles a unit's type, or the worker refuses / does not answer
 /// within [`UNIT_DEFINE_TIMEOUT`].
 pub async fn request_unit_definition(allocator: AllocatorHandle, missing: &[String]) -> Result<()> {
-    // 1. Static loader first: units that exist on disk (or can be
-    //    instantiated from a template) are System A's own on-demand load.
-    //    The unit.define protocol is only for dynamic units (slices etc.)
-    //    that no unit file covers (docs/user-slice-todo.md, 未决问题 2).
+    // 1. Definitions already in the table: an instance is materialized from
+    //    the Finder-reported IR template, and a reported instance of the same
+    //    template keeps its entry.  Neither path touches the disk.
     let mut dynamic: Vec<String> = Vec::new();
     for name in missing {
-        // Template definitions are already in the table: instantiating one
-        // needs no disk access and no worker, and a reported instance of the
-        // same template keeps its entry.
         if crate::unit::template::materialize(&allocator, name)? {
             continue;
         }
+        // An instance has no other source: template discovery belongs to the
+        // Finder, so a missing template is a not-found definition — never a
+        // reason to re-read the template file here.
+        if sysa::unit_name::is_instance(name) {
+            anyhow::bail!(sysa::l10n::fmt(
+                sysa::l10n::t_("Unit not found: {name}"),
+                &[("name", name)],
+            ));
+        }
+        // 2. Runtime-created types: a scope never has a unit file, and a
+        //    slice missing from the table is synthesized by the slice owner
+        //    (System R) — a `*.slice` file is reported by the Finder at commit
+        //    time.  Probing the disk here would stat every unit directory on
+        //    each PAM login for `user-<uid>.slice` and only log a not-found.
+        if matches!(
+            UnitKind::from_extension(name),
+            UnitKind::Slice | UnitKind::Scope
+        ) {
+            dynamic.push(name.clone());
+            continue;
+        }
+        // 3. Static units on disk are System A's own on-demand load.  The
+        //    unit.define protocol is only for dynamic units that no unit file
+        //    covers (docs/user-slice-todo.md, 未决问题 2).
         if !crate::unit::loader::ensure_loaded_from_disk(allocator.clone(), name).await? {
             dynamic.push(name.clone());
         }
@@ -367,7 +374,7 @@ pub async fn request_unit_definition(allocator: AllocatorHandle, missing: &[Stri
         return Ok(());
     }
 
-    // 2a. `.power` units need no on-demand materialization here: System Init
+    // `.power` units need no on-demand materialization here: System Init
     // owns the `power` unit type and registers every `.power` definition
     // (poweroff.power, reboot.power, ...) with System A during its control
     // phase via `manager.register_power_units`, so they are already in the
@@ -375,7 +382,7 @@ pub async fn request_unit_definition(allocator: AllocatorHandle, missing: &[Stri
     // falls through to the general grouping below and fails with "No worker
     // available for unit type 'power'".
 
-    // 2. Group the remaining (dynamic) units by the worker that owns their
+    // 4. Group the remaining (dynamic) units by the worker that owns their
     // unit type.  Only workers that declared `unit.define` support
     // (WorkerRegistration.supports_unit_define) are asked; a worker that
     // owns a type without implementing the protocol is skipped, leaving
@@ -614,6 +621,188 @@ pub async fn prepare_unit_cgroup(
                 ]
             ));
         }
+    }
+}
+
+/// Relay a worker's `unit.cgroup` question ("where does this unit's cgroup
+/// live?") to the resource worker and ship the answer back to the asking
+/// worker session.
+///
+/// System A is a pure relay:
+/// - `slice` is filled from the unit model (the origin leaves it empty);
+/// - the [`UnitCgroupResult`] payload is forwarded verbatim — no
+///   interpretation, no caching (System R's registry remains the only
+///   authority on the path);
+/// - every failure mode (no resource worker, send failure, timeout) degrades
+///   to `available = false` instead of stretching the caller beyond
+///   [`CGROUP_QUERY_TIMEOUT`].
+///
+/// The whole relay runs as one spawned task so a worker session loop never
+/// waits for another worker.
+pub async fn relay_unit_cgroup_query(
+    allocator: AllocatorHandle,
+    origin: String,
+    origin_request_id: u64,
+    mut query: sysa::proto::UnitCgroupQuery,
+) {
+    query.slice = {
+        let state = allocator.read();
+        state
+            .units
+            .get(&query.unit_name)
+            .map(|u| u.unit.slice.clone())
+            .unwrap_or_default()
+    };
+
+    let resource_worker = {
+        let state = allocator.read();
+        state
+            .workers
+            .values()
+            .find(|w| w.supports_resource_prepare)
+            .map(|w| w.worker_id.clone())
+    };
+    let result = match resource_worker {
+        None => {
+            debug!(
+                "unit.cgroup for '{}': no resource worker connected",
+                query.unit_name
+            );
+            sysa::proto::UnitCgroupResult {
+                available: false,
+                found: false,
+                cgroup_path: String::new(),
+                error: sysa::l10n::t_("no resource worker connected").to_string(),
+            }
+        }
+        Some(worker_id) => match lookup_unit_cgroup(&allocator, &worker_id, query).await {
+            Ok(result) => result,
+            Err(e) => sysa::proto::UnitCgroupResult {
+                available: false,
+                found: false,
+                cgroup_path: String::new(),
+                error: e,
+            },
+        },
+    };
+
+    ship_unit_cgroup_result(&allocator, &origin, origin_request_id, result).await;
+}
+
+/// The System A ↔ System R hop of a `unit.cgroup` lookup: send
+/// `resource.cgroup` to `worker_id`, wait for the `resource.cgroup_result`
+/// echoed on the same request_id (bounded by [`CGROUP_QUERY_TIMEOUT`]), and
+/// remove the pending sender in every exit path.
+async fn lookup_unit_cgroup(
+    allocator: &AllocatorHandle,
+    worker_id: &str,
+    query: sysa::proto::UnitCgroupQuery,
+) -> Result<sysa::proto::UnitCgroupResult, String> {
+    let request_id = next_request_id();
+    let (tx, rx) = tokio::sync::oneshot::channel::<sysa::proto::UnitCgroupResult>();
+    {
+        let mut state = allocator.write();
+        state.cgroup_query_txs.insert(request_id, tx);
+    }
+
+    let drop_pending = |allocator: &AllocatorHandle| {
+        let mut state = allocator.write();
+        state.cgroup_query_txs.remove(&request_id);
+    };
+
+    let env = sysa::ipc::make_envelope(request_id, "system-a", worker_id, "resource.cgroup", query)
+        .map_err(|e| {
+            drop_pending(allocator);
+            e.to_string()
+        })?;
+    let envelope_tx = {
+        let state = allocator.read();
+        state.workers.get(worker_id).map(|w| w.envelope_tx.clone())
+    };
+    let Some(envelope_tx) = envelope_tx else {
+        drop_pending(allocator);
+        return Err(sysa::l10n::fmt(
+            sysa::l10n::t_("Resource worker '{worker}' disconnected while looking up the unit."),
+            &[("worker", &worker_id.to_string())],
+        ));
+    };
+    let mut buf = bytes::BytesMut::new();
+    env.encode(&mut buf)
+        .map_err(|e| e.to_string())
+        .inspect_err(|_| drop_pending(allocator))?;
+    if envelope_tx.send(buf.freeze()).await.is_err() {
+        drop_pending(allocator);
+        return Err(sysa::l10n::fmt(
+            sysa::l10n::t_("Resource worker '{worker}' disconnected while looking up the unit."),
+            &[("worker", &worker_id.to_string())],
+        ));
+    }
+
+    match tokio::time::timeout(CGROUP_QUERY_TIMEOUT, rx).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(_)) => {
+            drop_pending(allocator);
+            Err(sysa::l10n::fmt(
+                sysa::l10n::t_("Resource worker '{worker}' dropped the cgroup lookup reply."),
+                &[("worker", &worker_id.to_string())],
+            ))
+        }
+        Err(_) => {
+            drop_pending(allocator);
+            Err(sysa::l10n::fmt(
+                sysa::l10n::t_(
+                    "resource.cgroup timed out for '{worker}' after {CGROUP_QUERY_TIMEOUT}",
+                ),
+                &[
+                    ("worker", &worker_id.to_string()),
+                    (
+                        "CGROUP_QUERY_TIMEOUT",
+                        &format!("{:?}", CGROUP_QUERY_TIMEOUT),
+                    ),
+                ],
+            ))
+        }
+    }
+}
+
+/// Ship a `unit.cgroup_result` envelope to a worker session, echoing the
+/// request the worker asked with.  The worker may have disconnected while the
+/// lookup ran: a failed delivery is only logged (the worker degraded to its
+/// process-group kill path the moment its query timed out anyway).
+async fn ship_unit_cgroup_result(
+    allocator: &AllocatorHandle,
+    origin: &str,
+    request_id: u64,
+    result: sysa::proto::UnitCgroupResult,
+) {
+    let envelope_tx = {
+        let state = allocator.read();
+        state.workers.get(origin).map(|w| w.envelope_tx.clone())
+    };
+    let Some(envelope_tx) = envelope_tx else {
+        debug!("unit.cgroup_result: worker '{origin}' not registered anymore");
+        return;
+    };
+    let env = match sysa::ipc::make_envelope(
+        request_id,
+        "system-a",
+        origin,
+        "unit.cgroup_result",
+        result,
+    ) {
+        Ok(env) => env,
+        Err(e) => {
+            warn!("unit.cgroup_result: cannot build the reply envelope: {e}");
+            return;
+        }
+    };
+    let mut buf = bytes::BytesMut::new();
+    if let Err(e) = env.encode(&mut buf) {
+        warn!("unit.cgroup_result: cannot encode the reply envelope: {e}");
+        return;
+    }
+    if envelope_tx.send(buf.freeze()).await.is_err() {
+        debug!("unit.cgroup_result: worker '{origin}' went away");
     }
 }
 
@@ -1072,20 +1261,10 @@ pub async fn enqueue_job(
     // PartOf/PropagatesReloadTo), merged to one job per unit, ordered by the
     // After=/Before= ordering graph, with ordering cycles broken.
     //
-    // Reload the root from disk first: the unit table may hold a definition
-    // delivered through mirrors or discovery whose dependency edges were
-    // trimmed (e.g. user@1000.service without Requires=user-runtime-dir@…),
-    // and the on-disk unit file is the authority.  Units without an on-disk
-    // definition (transient scopes, worker-defined slices) keep their table
-    // entry — `ensure_loaded_from_disk` returns false for them.  Units with
-    // a table entry whose Requires/After edges were dropped would start their
-    // root while its required prerequisites are not even scheduled (observed:
-    // user@1000.service exec'd before user-runtime-dir@1000.service, so
-    // /run/user/1000 was not mounted yet and systemd --user refused
-    // XDG_RUNTIME_DIR), which is why this refresh runs before every Start.
-    if matches!(kind, JobKind::Start | JobKind::Restart) {
-        refresh_root_unit(allocator.clone(), unit_name).await?;
-    }
+    // The plan consumes the committed unit table as-is: the Finder reports
+    // every definition with its complete dependency edges, including the
+    // drop-ins of a template instance, so System A must never refresh a unit
+    // from disk before planning.
     //
     // On-demand materialization (unit.define): before planning, the
     // dependency closure is walked and every referenced-but-missing unit
@@ -2829,11 +3008,13 @@ fn is_first_boot() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{CachedUnitState, StartLimitState, WorkerEntry};
+    use crate::state::{Allocator, CachedUnitState, StartLimitState, WorkerEntry};
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
-    use sysa::proto::{Envelope, UnitDefineRequest, UnitDefineResult};
+    use sysa::proto::{
+        Envelope, UnitCgroupQuery, UnitCgroupResult, UnitDefineRequest, UnitDefineResult,
+    };
     use systema_sysf::ir::{DependencySet, UnitIR, UnitType};
 
     // =========================================================================
@@ -2841,7 +3022,7 @@ mod tests {
     // =========================================================================
 
     #[tokio::test]
-    async fn start_refreshes_an_instance_from_the_ir_template() {
+    async fn request_unit_definition_materializes_an_instance_from_the_ir_template() {
         use crate::state::Allocator;
         use systema_sysf::ir::{ServiceConfig, TemplateInfo};
 
@@ -2866,8 +3047,9 @@ mod tests {
             .merge_units(&HashMap::from([("getty@.service".to_string(), template)]))
             .unwrap();
 
-        // The start path resolves the instance without touching the disk.
-        refresh_root_unit(allocator.clone(), "getty@tty5.service")
+        // The pre-plan definition request resolves the instance from the IR
+        // template, without touching the disk or any worker.
+        request_unit_definition(allocator.clone(), &["getty@tty5.service".to_string()])
             .await
             .unwrap();
 
@@ -2880,6 +3062,84 @@ mod tests {
         assert_eq!(unit.service.as_ref().unwrap().tty_path, "/dev/tty5");
         // A template is never a unit of its own.
         assert!(!state.units.contains_key("getty@.service"));
+    }
+
+    #[tokio::test]
+    async fn request_unit_definition_has_no_disk_template_fallback() {
+        use crate::state::Allocator;
+
+        let allocator = Allocator::handle();
+        let err = request_unit_definition(allocator.clone(), &["getty@tty5.service".to_string()])
+            .await
+            .expect_err("an instance without a reported template stays not-found");
+        assert!(err.to_string().contains("Unit not found"), "{err}");
+        assert!(!allocator.read().units.contains_key("getty@tty5.service"));
+    }
+
+    #[tokio::test]
+    async fn request_unit_definition_asks_the_worker_for_a_runtime_slice() {
+        // `user-<uid>.slice` has no on-disk file: it is synthesized by System
+        // R.  It must go straight to the worker, never through the static
+        // disk probe (which ran on every PAM login).
+        let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
+        let (slice_tx, mut slice_rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(16);
+        {
+            let mut state = alloc.write();
+            state.workers.insert(
+                "system-r-1".to_string(),
+                WorkerEntry {
+                    worker_id: "system-r-1".to_string(),
+                    unit_types: vec!["slice".to_string()],
+                    supports_unit_define: true,
+                    supports_resource_prepare: false,
+                    ready: false,
+                    envelope_tx: slice_tx,
+                },
+            );
+        }
+
+        let alloc_fake = alloc.clone();
+        let requested: Arc<std::sync::Mutex<Vec<Vec<String>>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requested_fake = requested.clone();
+        tokio::spawn(async move {
+            while let Some(bytes) = slice_rx.recv().await {
+                let env = Envelope::decode(&mut bytes.as_ref()).expect("valid envelope");
+                assert_eq!(env.method, "unit.define");
+                let req = UnitDefineRequest::decode(env.payload.as_slice()).expect("valid request");
+                requested_fake.lock().unwrap().push(req.unit_names.clone());
+                let units: HashMap<String, UnitIR> = req
+                    .unit_names
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            make_slice_ir(name, crate::state::ROOT_SLICE_NAME, false),
+                        )
+                    })
+                    .collect();
+                let tx = alloc_fake
+                    .write()
+                    .unit_define_txs
+                    .remove(&env.request_id)
+                    .expect("pending unit.define oneshot");
+                let _ = tx.send(UnitDefineResult {
+                    success: true,
+                    error: String::new(),
+                    units_json: serde_json::to_vec(&units).unwrap(),
+                });
+            }
+        });
+
+        request_unit_definition(alloc.clone(), &["user-1000.slice".to_string()])
+            .await
+            .expect("runtime slice resolved by its worker");
+
+        assert_eq!(
+            requested.lock().unwrap().as_slice(),
+            &[vec!["user-1000.slice".to_string()]]
+        );
+        assert!(alloc.read().units.contains_key("user-1000.slice"));
     }
 
     // =========================================================================
@@ -4945,5 +5205,161 @@ mod tests {
         let job = state.jobs.get(&job_id).expect("foo job recorded");
         assert_eq!(job.unit_name, "foo.service");
         assert_eq!(job.status, JobStatus::Running);
+    }
+
+    // =========================================================================
+    // unit.cgroup relay: System S asks, System A fills `slice` from the unit
+    // model and hops to the resource worker; every failure mode degrades to
+    // `available = false` without stretching the asker
+    // =========================================================================
+
+    async fn next_envelope(rx: &mut tokio::sync::mpsc::Receiver<bytes::Bytes>) -> Envelope {
+        let bytes = rx.recv().await.expect("worker channel closed unexpectedly");
+        Envelope::decode(bytes).expect("decodeable envelope")
+    }
+
+    fn insert_worker(
+        alloc: &AllocatorHandle,
+        id: &str,
+        resource: bool,
+    ) -> tokio::sync::mpsc::Receiver<bytes::Bytes> {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        alloc.write().workers.insert(
+            id.to_string(),
+            WorkerEntry {
+                worker_id: id.to_string(),
+                unit_types: vec!["service".to_string()],
+                supports_unit_define: false,
+                supports_resource_prepare: resource,
+                ready: true,
+                envelope_tx: tx,
+            },
+        );
+        rx
+    }
+
+    #[tokio::test]
+    async fn cgroup_relay_without_a_resource_worker_answers_unavailable() {
+        let alloc = Allocator::handle();
+        let mut origin = insert_worker(&alloc, "system-s-1", false);
+
+        relay_unit_cgroup_query(
+            alloc.clone(),
+            "system-s-1".to_string(),
+            42,
+            UnitCgroupQuery {
+                unit_name: "app.service".to_string(),
+                slice: String::new(),
+            },
+        )
+        .await;
+
+        let env = next_envelope(&mut origin).await;
+        assert_eq!(env.method, "unit.cgroup_result");
+        assert_eq!(env.target, "system-s-1");
+        assert_eq!(env.request_id, 42, "the origin's request id is echoed");
+        let result = UnitCgroupResult::decode(env.payload.as_slice()).unwrap();
+        assert!(!result.available);
+        assert!(!result.found);
+        assert!(!result.error.is_empty());
+        // The relay left no pending sender behind.
+        assert!(alloc.read().cgroup_query_txs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cgroup_relay_relays_through_the_resource_worker_and_echoes_the_origin() {
+        let alloc = Allocator::handle();
+        let mut origin = insert_worker(&alloc, "system-s-1", false);
+        let mut sysr = insert_worker(&alloc, "system-r-1", true);
+
+        // The unit model supplies the [Unit] Slice= for the forward hop.
+        let ir = UnitIR {
+            id: "app.service".to_string(),
+            unit_type: Some(UnitType::Service),
+            slice: Some("user.slice".to_string()),
+            ..Default::default()
+        };
+        alloc
+            .write()
+            .merge_units(&HashMap::from([("app.service".to_string(), ir)]))
+            .unwrap();
+
+        let relay = tokio::spawn(relay_unit_cgroup_query(
+            alloc.clone(),
+            "system-s-1".to_string(),
+            42,
+            UnitCgroupQuery {
+                unit_name: "app.service".to_string(),
+                slice: String::new(),
+            },
+        ));
+
+        // The resource worker receives the same question, slice filled
+        // unit-model-side.
+        let forward = next_envelope(&mut sysr).await;
+        assert_eq!(forward.method, "resource.cgroup");
+        assert_eq!(forward.target, "system-r-1");
+        let query = UnitCgroupQuery::decode(forward.payload.as_slice()).unwrap();
+        assert_eq!(query.unit_name, "app.service");
+        assert_eq!(query.slice, "user.slice");
+
+        // Its answer is passed back verbatim and re-echoed on the origin's
+        // request id.  (This is the ipc/server arm's job, emulated here.)
+        let result = UnitCgroupResult {
+            available: true,
+            found: true,
+            cgroup_path: "/sys/fs/cgroup/user.slice/app.service".to_string(),
+            error: String::new(),
+        };
+        alloc
+            .write()
+            .cgroup_query_txs
+            .remove(&forward.request_id)
+            .expect("a pending relay")
+            .send(result.clone())
+            .unwrap();
+
+        relay.await.unwrap();
+        let reply = next_envelope(&mut origin).await;
+        assert_eq!(reply.method, "unit.cgroup_result");
+        assert_eq!(reply.request_id, 42);
+        assert_eq!(
+            UnitCgroupResult::decode(reply.payload.as_slice()).unwrap(),
+            result
+        );
+        assert!(alloc.read().cgroup_query_txs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cgroup_relay_degrades_when_the_resource_worker_never_answers() {
+        let alloc = Allocator::handle();
+        let mut origin = insert_worker(&alloc, "system-s-1", false);
+        // Keep the resource worker's channel alive but its inbox unread: the
+        // relay hits CGROUP_QUERY_TIMEOUT and answers degraded.
+        let _sysr = insert_worker(&alloc, "system-r-1", true);
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            relay_unit_cgroup_query(
+                alloc.clone(),
+                "system-s-1".to_string(),
+                7,
+                UnitCgroupQuery {
+                    unit_name: "slow.service".to_string(),
+                    slice: String::new(),
+                },
+            ),
+        )
+        .await
+        .expect("the relay must return, not hang on the missing answer");
+
+        let env = next_envelope(&mut origin).await;
+        assert_eq!(env.method, "unit.cgroup_result");
+        assert_eq!(env.request_id, 7);
+        let result = UnitCgroupResult::decode(env.payload.as_slice()).unwrap();
+        assert!(!result.available);
+        assert!(!result.found);
+        assert!(result.error.contains("timed out"), "{}", result.error);
+        assert!(alloc.read().cgroup_query_txs.is_empty());
     }
 }
