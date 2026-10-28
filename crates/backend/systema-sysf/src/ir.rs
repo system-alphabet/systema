@@ -98,6 +98,9 @@ pub struct ServiceConfig {
     /// completes (and `notify` additionally gets `$NOTIFY_SOCKET`).
     #[serde(default)]
     pub service_type: String,
+    /// `BusName=` required by `Type=dbus` and used to detect service readiness.
+    #[serde(default)]
+    pub bus_name: String,
     pub exec_start: Vec<ExecCommand>,
     pub exec_stop: Vec<ExecCommand>,
     pub exec_reload: Vec<ExecCommand>,
@@ -457,5 +460,23 @@ impl DependencySet {
             && self.on_success.is_empty()
             && self.on_failure.is_empty()
             && self.propagates_reload_to.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServiceConfig;
+
+    #[test]
+    fn service_config_defaults_bus_name_when_reading_legacy_ir() {
+        let mut value = serde_json::to_value(ServiceConfig::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("bus_name")
+            .expect("serialized bus_name");
+
+        let config: ServiceConfig = serde_json::from_value(value).unwrap();
+        assert!(config.bus_name.is_empty());
     }
 }

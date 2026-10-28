@@ -301,6 +301,7 @@ fn convert_restart(policy: &SdRestartPolicy) -> ir::RestartPolicy {
 fn convert_service(svc: &ServiceSection) -> ServiceConfig {
     ServiceConfig {
         service_type: svc.service_type.as_str().to_string(),
+        bus_name: svc.bus_name.clone(),
         exec_start: svc.exec_start.iter().map(convert_exec).collect(),
         exec_stop: svc.exec_stop.iter().map(convert_exec).collect(),
         exec_reload: svc.exec_reload.iter().map(convert_exec).collect(),
@@ -505,6 +506,21 @@ mod tests {
             ir.service.as_ref().expect("service config").service_type,
             "notify-reload"
         );
+    }
+
+    #[test]
+    fn convert_unit_file_carries_dbus_bus_name() {
+        let mut uf = unit_file("deepin-authenticate.service", &[]);
+        uf.service = Some(crate::types::ServiceSection {
+            service_type: crate::types::ServiceType::Dbus,
+            bus_name: "org.deepin.dde.Authenticate1".to_string(),
+            ..Default::default()
+        });
+
+        let ir = convert_unit_file(&uf);
+        let service = ir.service.expect("service config");
+        assert_eq!(service.service_type, "dbus");
+        assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
     }
 
     #[test]

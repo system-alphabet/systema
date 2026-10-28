@@ -1079,6 +1079,7 @@ fn service_config_to_section(
     };
     crate::unit::types::ServiceSection {
         service_type: svc_type,
+        bus_name: cfg.bus_name.clone(),
         exec_start: cfg.exec_start.iter().map(exec_cmd_from_ir).collect(),
         exec_stop: cfg.exec_stop.iter().map(exec_cmd_from_ir).collect(),
         exec_reload: cfg.exec_reload.iter().map(exec_cmd_from_ir).collect(),
@@ -1372,7 +1373,7 @@ pub fn generate_invocation_id() -> String {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use systema_sysf::ir::{DependencySet, MountConfig, UnitType};
+    use systema_sysf::ir::{DependencySet, MountConfig, ServiceConfig, UnitType};
 
     fn mount_ir(id: &str, where_: &str) -> UnitIR {
         UnitIR {
@@ -1430,6 +1431,31 @@ mod tests {
         let tmp = state.units.get("tmp.mount").unwrap();
         assert_eq!(tmp.kind, UnitKind::Mount);
         assert_eq!(tmp.mount.as_ref().unwrap().where_, "/tmp");
+    }
+
+    #[test]
+    fn commit_preserves_dbus_type_and_bus_name() {
+        let mut state = AllocatorState::new();
+        let mut ir = UnitIR {
+            id: "deepin-authenticate.service".to_string(),
+            unit_type: Some(UnitType::Service),
+            ..Default::default()
+        };
+        ir.service = Some(ServiceConfig {
+            service_type: "dbus".to_string(),
+            bus_name: "org.deepin.dde.Authenticate1".to_string(),
+            ..Default::default()
+        });
+        stage(&mut state, 7, vec![ir]);
+
+        state.commit_staging(7, "test").unwrap();
+
+        let service = state.units["deepin-authenticate.service"]
+            .service
+            .as_ref()
+            .expect("service section");
+        assert_eq!(service.service_type, crate::unit::types::ServiceType::Dbus);
+        assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
     }
 
     #[test]

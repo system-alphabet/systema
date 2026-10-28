@@ -3007,6 +3007,22 @@ mod tests {
     };
     use systema_sysf::ir::{DependencySet, UnitIR, UnitType};
 
+    #[test]
+    fn build_unit_config_preserves_dbus_bus_name() {
+        let mut unit = crate::unit::types::UnitFile::new("deepin-authenticate.service");
+        unit.service = Some(crate::unit::types::ServiceSection {
+            service_type: crate::unit::types::ServiceType::Dbus,
+            bus_name: "org.deepin.dde.Authenticate1".to_string(),
+            ..Default::default()
+        });
+
+        let config = build_unit_config(&unit, &HashMap::new(), "");
+
+        let service = config.service.expect("service config");
+        assert_eq!(service.service_type, "dbus");
+        assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
+    }
+
     // =========================================================================
     // Template instantiation on the start path
     // =========================================================================

@@ -233,6 +233,20 @@ impl ServiceController {
             .unwrap_or(false)
     }
 
+    fn validate_dbus_config(cfg: &UnitConfig) -> Result<()> {
+        if Self::is_dbus_type(cfg)
+            && cfg
+                .service
+                .as_ref()
+                .is_some_and(|service| service.bus_name.is_empty())
+        {
+            anyhow::bail!(sysa::l10n::t_(
+                "Service is of type D-Bus but no D-Bus service name has been specified. Refusing."
+            ));
+        }
+        Ok(())
+    }
+
     /// Wait for the service to acquire its `BusName=` on the system bus
     /// (Type=dbus).  On failure the service is stopped and the unit is
     /// marked failed, like systemd's TimeoutStartSec kill.
@@ -240,16 +254,9 @@ impl ServiceController {
         if !Self::is_dbus_type(cfg) {
             return Ok(());
         }
+        Self::validate_dbus_config(cfg)?;
         let svc = cfg.service.as_ref().expect("dbus type implies service");
         let bus_name = svc.bus_name.as_str();
-        // systemd refuses such a unit at load (service_verify()); the sysa
-        // parser enforces the same.  Defend in depth: never wait on an
-        // empty name.
-        if bus_name.is_empty() {
-            return Err(anyhow!(sysa::l10n::t_(
-                "Service is of type D-Bus but no D-Bus service name has been specified. Refusing."
-            )));
-        }
         let timeout = svc.timeout_start_secs.max(1) as u64;
         match self.dbus.wait_name_owned(bus_name, pid, timeout).await {
             Ok(()) => {
@@ -261,7 +268,14 @@ impl ServiceController {
             }
             Err(e) => {
                 warn!("{} (PID {}): dbus start failed: {}", unit_name, pid, e);
-                let _ = stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
+                if let Err(stop_err) =
+                    stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await
+                {
+                    warn!(
+                        "{} (PID {}): failed to stop service after D-Bus start failure: {}",
+                        unit_name, pid, stop_err
+                    );
+                }
                 self.publish_state(unit_name);
                 Err(anyhow!("{}", e))
             }
@@ -375,6 +389,7 @@ impl UnitController for ServiceController {
 
     async fn start(&self, unit_name: &str, config: &[u8], invocation_id: &str) -> Result<()> {
         let cfg = decode_unit_config(config)?;
+        Self::validate_dbus_config(&cfg)?;
         let inv_id = if invocation_id.is_empty() {
             None
         } else {
@@ -447,6 +462,7 @@ impl UnitController for ServiceController {
 
     async fn restart(&self, unit_name: &str, config: &[u8], invocation_id: &str) -> Result<()> {
         let cfg = decode_unit_config(config)?;
+        Self::validate_dbus_config(&cfg)?;
         if Self::is_noop_service(&cfg) {
             // ExecStart-less "action" service: restart is a no-op success
             // (there was never a process to stop or start).
@@ -625,6 +641,29 @@ mod tests {
         assert!(
             err.to_string().contains("no D-Bus service name"),
             "unexpected: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_rejects_empty_bus_name_before_spawning() {
+        use prost::Message;
+
+        let ctrl = controller();
+        let mut cfg = dbus_cfg("");
+        cfg.service.as_mut().unwrap().exec_start = "/usr/bin/true".to_string();
+
+        let err = ctrl
+            .start("dbus-test.service", &cfg.encode_to_vec(), "")
+            .await
+            .expect_err("Type=dbus without BusName= must be rejected");
+
+        assert!(
+            err.to_string().contains("no D-Bus service name"),
+            "unexpected: {err}"
+        );
+        assert!(
+            !ctrl.registry.lock().contains_key("dbus-test.service"),
+            "invalid D-Bus config must be rejected before the process is registered"
         );
     }
 
