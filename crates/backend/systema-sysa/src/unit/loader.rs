@@ -1,18 +1,13 @@
 //! Unit file loader: discovers and loads unit files from standard search paths.
 //!
 //! This module handles:
-//! - Loading unit files from standard search paths
-//! - Recursive directory scanning for unit files
-//! - Unit generators
-//! - Transient unit registration
-//! - Unit unloading
-//! - Unit alias resolution
-//! - Unit masking detection
+//! - Loading a single unit file from the standard search paths
+//! - Symlink alias resolution
+//! - Default dependency injection
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
-use tracing::{debug, info, trace, warn};
 
 use super::types::UnitFile;
 use crate::state::AllocatorHandle;
@@ -35,160 +30,6 @@ const TARGET_NETWORK_ONLINE: &str = "network-online.target";
 const TARGET_TIME_SYNC: &str = "time-sync.target";
 const TARGET_TIME_SET: &str = "time-set.target";
 
-/// Load all unit files from the default search paths into the allocator.
-///
-/// This is the direct-scan path, now superseded by the ReloadTask pipeline
-/// for runtime reloads.  Kept for test scaffolding and future use.
-#[allow(dead_code)]
-pub async fn load_default_units(allocator: AllocatorHandle) -> Result<()> {
-    let dirs = sysa::paths::instance().unit_search_paths.clone();
-    let paths: Vec<PathBuf> = dirs
-        .iter()
-        .map(PathBuf::from)
-        .filter(|p| p.exists())
-        .collect();
-
-    info!(
-        "Loading units from {} director{}",
-        paths.len(),
-        if paths.len() == 1 { "y" } else { "ies" }
-    );
-
-    let mut total = 0usize;
-    for dir in &paths {
-        match load_units_from_dir_recursive(dir, &dirs, allocator.clone()).await {
-            Ok(n) => {
-                debug!("Loaded {} unit(s) from {}", n, dir.display());
-                total += n;
-            }
-            Err(e) => {
-                warn!("Error loading units from {}: {}", dir.display(), e);
-            }
-        }
-    }
-
-    // Also load from generator directories
-    for dir in sysa::paths::instance().generator_search_paths.iter() {
-        let path = PathBuf::from(dir);
-        if path.exists() {
-            match load_units_from_dir_recursive(&path, &dirs, allocator.clone()).await {
-                Ok(n) => {
-                    debug!("Loaded {} unit(s) from generator {}", n, dir);
-                    total += n;
-                }
-                Err(e) => {
-                    warn!("Error loading units from generator {}: {}", dir, e);
-                }
-            }
-        }
-    }
-
-    info!("Loaded {} unit(s) total", total);
-    inject_default_dependencies(allocator.clone());
-    allocator.write().rebuild_alias_map();
-    Ok(())
-}
-
-// --------------------------------------------------------------------------
-// Private helpers
-// --------------------------------------------------------------------------
-
-/// Recursively load all units from a directory and its subdirectories.
-async fn load_units_from_dir_recursive(
-    dir: &Path,
-    dirs: &[String],
-    allocator: AllocatorHandle,
-) -> Result<usize> {
-    let mut count = 0usize;
-
-    // First, load units from the current directory
-    count += load_units_from_dir(dir, dirs, allocator.clone()).await?;
-
-    // Then, recursively load from subdirectories
-    let mut entries = tokio::fs::read_dir(dir).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if path.is_dir() {
-            // Skip .d directories (drop-in configs) and hidden directories
-            let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if dir_name.starts_with('.') || dir_name.ends_with(".d") {
-                continue;
-            }
-            // Use Box::pin for recursive async call
-            count += Box::pin(load_units_from_dir_recursive(
-                &path,
-                dirs,
-                allocator.clone(),
-            ))
-            .await?;
-        }
-    }
-
-    Ok(count)
-}
-
-async fn load_units_from_dir(
-    dir: &Path,
-    dirs: &[String],
-    allocator: AllocatorHandle,
-) -> Result<usize> {
-    let mut count = 0usize;
-
-    let mut entries = tokio::fs::read_dir(dir).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-
-        // Only process known unit extensions; bare templates (e.g.
-        // `getty@.service`) are definitions, not runnable units, and are
-        // never loaded into the unit set.
-        if !is_known_extension(&name) || sysa::unit_name::is_template(&name) {
-            continue;
-        }
-
-        match load_unit_file(dirs, &path) {
-            Ok(unit) => {
-                let unit_name = unit.name.clone();
-                let mut state = allocator.write();
-                state.units.insert(unit_name.clone(), unit);
-                // Notify the event bus if it's already running.
-                if let Some(ref tx) = state.unit_loaded_tx {
-                    let _ = tx.send(unit_name);
-                }
-                count += 1;
-            }
-            Err(e) => {
-                warn!("Skipping {}: {}", path.display(), e);
-            }
-        }
-    }
-
-    Ok(count)
-}
-
-fn is_known_extension(name: &str) -> bool {
-    matches!(
-        name.rsplit('.').next().unwrap_or(""),
-        "service"
-            | "target"
-            | "mount"
-            | "automount"
-            | "timer"
-            | "socket"
-            | "slice"
-            | "scope"
-            | "swap"
-            | "path"
-            | "device"
-    )
-}
-
 /// Load a unit file from disk by name.
 ///
 /// Parses `<search-path>/<name>` verbatim.  There is no template fallback: an
@@ -199,91 +40,6 @@ fn is_known_extension(name: &str) -> bool {
 /// Returns an error if no exact file exists.
 pub fn load_unit_flexible(name: &str) -> Result<UnitFile> {
     load_unit_flexible_in(&sysa::paths::instance().unit_search_paths, name)
-}
-
-/// Ensure a unit is loaded from disk, if it exists on disk.
-///
-/// Returns `Ok(true)` when a unit file was found and inserted into the
-/// allocator, and `Ok(false)` when `name` has no on-disk definition — a
-/// dynamic unit that only a worker can define, or an instance (which is
-/// materialized from the IR template, never from disk).  The pre-plan scan of
-/// the `unit.define` protocol uses this to keep static units on System A's own
-/// loader (docs/user-slice-todo.md, 未决问题 2) instead of asking workers.
-pub async fn ensure_loaded_from_disk(allocator: AllocatorHandle, name: &str) -> Result<bool> {
-    let dirs = sysa::paths::instance().unit_search_paths.clone();
-    ensure_loaded_from_disk_in(allocator, &dirs, name).await
-}
-
-/// [`ensure_loaded_from_disk`] over an explicit search-path list (testable
-/// without touching the global path configuration).
-pub async fn ensure_loaded_from_disk_in(
-    allocator: AllocatorHandle,
-    dirs: &[String],
-    name: &str,
-) -> Result<bool> {
-    // Diagnostic probe (temporary): this path is supposed to disappear once
-    // the finder reports every unit as IR.  A wall of "a" lines on stdout
-    // means System A still re-read a unit definition from disk.
-    for _ in 0..100 {
-        println!("aaaaaaaaaaa");
-    }
-    // Instances are materialized from the IR template only.  Re-parsing the
-    // template file under the instance name here would bypass the template's
-    // committed drop-ins and reintroduce a second source of truth.
-    if sysa::unit_name::is_instance(name) {
-        debug!("ensure_loaded_from_disk: refusing to load instance '{name}' from disk");
-        return Ok(false);
-    }
-    let allocator = allocator.clone();
-    let dirs = dirs.to_vec();
-    let name = name.to_string();
-    let name_err = name.clone();
-    let task = tokio::task::spawn_blocking(move || {
-        trace!("ensure_loaded_from_disk: blocking task started for '{name}'");
-        let requested = allocator.read().resolve_unit_name(&name);
-        let mut unit = match load_unit_flexible_in(&dirs, &requested) {
-            Ok(unit) => unit,
-            Err(e) => {
-                warn!(
-                    "ensure_loaded_from_disk: no on-disk definition for '{name}' (requested '{requested}'; search paths: {dirs:?}): {e}"
-                );
-                return Ok(false);
-            }
-        };
-        let canonical = unit.name.clone();
-        trace!("ensure_loaded_from_disk: '{name}' loaded from disk, taking write lock");
-        let mut state = allocator.write();
-        // Preserve aliases already declared on an existing entry: the
-        // on-disk file may be the canonical target of unit-file symlinks
-        // whose aliases were recorded by the finder (e.g. `default.target`
-        // -> `graphical.target`).  Re-loading the canonical file must not
-        // erase those aliases, or name resolution breaks for them.
-        if let Some(existing) = state.units.get(&canonical) {
-            for alias in &existing.install.alias {
-                if !unit.install.alias.contains(alias) {
-                    unit.install.alias.push(alias.clone());
-                }
-            }
-        }
-        state.units.insert(canonical.clone(), unit);
-        state.rebuild_alias_map();
-        // Notify the event bus so it can register a per-unit object,
-        // mirroring the other on-demand load paths.
-        if let Some(ref tx) = state.unit_loaded_tx {
-            let _ = tx.send(canonical);
-        }
-        trace!("ensure_loaded_from_disk: '{name}' committed");
-        Ok(true)
-    });
-    let result = tokio::time::timeout(std::time::Duration::from_secs(10), task)
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!(sysa::l10n::fmt(
-                sysa::l10n::t_("ensure_loaded_from_disk timed out loading '{name_err}'"),
-                &[("name_err", &name_err.to_string())]
-            ))
-        })?;
-    result?
 }
 
 /// [`load_unit_flexible`] over an explicit search-path list (testable
@@ -901,23 +657,6 @@ mod tests {
     use crate::state::Allocator;
     use crate::unit::types::{MountSection, SwapSection, UnitKind};
 
-    #[test]
-    fn test_is_known_extension() {
-        assert!(is_known_extension("sshd.service"));
-        assert!(is_known_extension("multi-user.target"));
-        assert!(is_known_extension("data.mount"));
-        assert!(is_known_extension("data.automount"));
-        assert!(is_known_extension("backup.timer"));
-        assert!(is_known_extension("sshd.socket"));
-        assert!(is_known_extension("system.slice"));
-        assert!(is_known_extension("test.scope"));
-        assert!(is_known_extension("swap.swap"));
-        assert!(is_known_extension("watch.path"));
-        assert!(is_known_extension("sda.device"));
-        assert!(!is_known_extension("unknown.txt"));
-        assert!(!is_known_extension("noextension"));
-    }
-
     // =========================================================================
     // Default dependency injection
     // =========================================================================
@@ -1289,55 +1028,6 @@ mod tests {
         let dirs = vec![dir.to_string_lossy().into_owned()];
         assert!(load_unit_flexible_in(&dirs, "nonexistent.service").is_err());
         assert!(load_unit_flexible_in(&dirs, "getty@tty9.service").is_err());
-    }
-
-    // ensure_loaded_from_disk: the pre-scan keeps static units on System
-    // A's own loader; only units with no on-disk definition reach
-    // unit.define (docs/user-slice-todo.md 未决问题 2).
-
-    #[tokio::test]
-    async fn ensure_loaded_from_disk_loads_existing_units() {
-        let dir = temp_dir("ensure");
-        std::fs::write(
-            dir.join("hello.service"),
-            "[Unit]\nDescription=Hello\n[Service]\nExecStart=/bin/true\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("getty@.service"),
-            "[Unit]\nDescription=Getty on %I\n[Service]\nExecStart=/sbin/agetty %i\n",
-        )
-        .unwrap();
-        let dirs = vec![dir.to_string_lossy().into_owned()];
-        let alloc = Allocator::handle();
-        let state = alloc.read();
-        assert!(!state.units.contains_key("hello.service"));
-        assert!(!state.units.contains_key("getty@tty3.service"));
-        drop(state);
-
-        assert!(
-            ensure_loaded_from_disk_in(alloc.clone(), &dirs, "hello.service")
-                .await
-                .expect("exact file must load")
-        );
-        // An instance is never loaded from disk, not even through its
-        // template: it only exists as an IR materialization.
-        assert!(
-            !ensure_loaded_from_disk_in(alloc.clone(), &dirs, "getty@tty3.service")
-                .await
-                .expect("instance reports false")
-        );
-        assert!(
-            !ensure_loaded_from_disk_in(alloc.clone(), &dirs, "nope.slice")
-                .await
-                .expect("missing unit reports false")
-        );
-
-        let state = alloc.read();
-        assert!(state.units.contains_key("hello.service"));
-        assert_eq!(state.units["hello.service"].unit.description, "Hello");
-        assert!(!state.units.contains_key("getty@tty3.service"));
-        assert!(!state.units.contains_key("nope.slice"));
     }
 
     #[test]

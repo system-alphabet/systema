@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-27 11:21+0800\n"
+        "POT-Creation-Date: 2026-10-28 10:49+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -484,11 +484,6 @@ msgstr  "已超过 TimeoutStopSec"
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 2241
 msgid   "Reload timeout exceeded"
 msgstr  "重新加载超时"
-#
-# File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 258
-#, rust-format
-msgid   "ensure_loaded_from_disk timed out loading '{name_err}'"
-msgstr  "ensure_loaded_from_disk 加载“{name_err}”超时"
 #
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
@@ -1192,30 +1187,6 @@ msgstr  "服务进程（PID {pid}）在获取 D-Bus 名称“{bus_name}”之前
 msgid   "TimeoutStartSec exceeded waiting for D-Bus name '{bus_name}'."
 msgstr  "等待 D-Bus 名称“{bus_name}”时超过 TimeoutStartSec。"
 #
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 161
-#, rust-format
-msgid   "cannot load libpam: {e}"
-msgstr  "无法加载 libpam：{e}"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 164
-msgid   "cannot load libpam"
-msgstr  "无法加载 libpam"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 229
-#, rust-format
-msgid   "PAM service name '{pam_name}' contains a NUL byte"
-msgstr  "PAM 服务名“{pam_name}”包含 NUL 字节"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 235
-#, rust-format
-msgid   "PAM user '{username}' contains a NUL byte"
-msgstr  "PAM 用户“{username}”包含 NUL 字节"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 257
-#, rust-format
-msgid   "PAM tty '{tty}' contains a NUL byte"
-msgstr  "PAM tty“{tty}”包含 NUL 字节"
-#
 # File: ../crates/backend/systema-syss/src/controller.rs, line: 179
 #, rust-format
 msgid   "oneshot service {unit_name} exited with code {code}"
@@ -1387,6 +1358,30 @@ msgstr  "要使用的 D-Bus 地址（默认：系统总线）。"
 #, rust-format
 msgid   "invalid --bus-address: {err}"
 msgstr  "无效的 --bus-address：{err}"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 161
+#, rust-format
+msgid   "cannot load libpam: {e}"
+msgstr  "无法加载 libpam：{e}"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 164
+msgid   "cannot load libpam"
+msgstr  "无法加载 libpam"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 229
+#, rust-format
+msgid   "PAM service name '{pam_name}' contains a NUL byte"
+msgstr  "PAM 服务名“{pam_name}”包含 NUL 字节"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 235
+#, rust-format
+msgid   "PAM user '{username}' contains a NUL byte"
+msgstr  "PAM 用户“{username}”包含 NUL 字节"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 257
+#, rust-format
+msgid   "PAM tty '{tty}' contains a NUL byte"
+msgstr  "PAM tty“{tty}”包含 NUL 字节"
 #
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
@@ -2476,10 +2471,18 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+# File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 258
+#, rust-format
+#~ msgid        "ensure_loaded_from_disk timed out loading '{name_err}'"
+#~ msgstr       "ensure_loaded_from_disk 加载“{name_err}”超时"
+#
+#
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') 失败：{r}"
+#
 #
 #
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 280
@@ -2489,10 +2492,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "无效的日志级别“{level}”（{e}）；使用 info"
+#
 #
 #
 #
@@ -2504,9 +2509,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
 #
 #
 #
@@ -2522,10 +2529,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
 #
 #
 #
@@ -2544,10 +2553,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
 #
 #
 #

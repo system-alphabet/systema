@@ -51,7 +51,6 @@ zbus = { version = "4", default-features = false, features = ["tokio"] }
 zvariant = { version = "4" }
 
 # Dependency graph
-petgraph = "0.6"
 
 # Unit file parsing
 configparser = "3"

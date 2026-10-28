@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-27 11:21+0800\n"
+        "POT-Creation-Date: 2026-10-28 10:49+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -484,11 +484,6 @@ msgstr  "TimeoutStopSec exceeded"
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 2241
 msgid   "Reload timeout exceeded"
 msgstr  "Reload timeout exceeded"
-#
-# File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 258
-#, rust-format
-msgid   "ensure_loaded_from_disk timed out loading '{name_err}'"
-msgstr  "ensure_loaded_from_disk timed out loading '{name_err}'"
 #
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
@@ -1193,30 +1188,6 @@ msgstr  "Service process (PID {pid}) exited before acquiring D-Bus name '{bus_na
 msgid   "TimeoutStartSec exceeded waiting for D-Bus name '{bus_name}'."
 msgstr  "TimeoutStartSec exceeded waiting for D-Bus name '{bus_name}'."
 #
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 161
-#, rust-format
-msgid   "cannot load libpam: {e}"
-msgstr  "cannot load libpam: {e}"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 164
-msgid   "cannot load libpam"
-msgstr  "cannot load libpam"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 229
-#, rust-format
-msgid   "PAM service name '{pam_name}' contains a NUL byte"
-msgstr  "PAM service name '{pam_name}' contains a NUL byte"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 235
-#, rust-format
-msgid   "PAM user '{username}' contains a NUL byte"
-msgstr  "PAM user '{username}' contains a NUL byte"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 257
-#, rust-format
-msgid   "PAM tty '{tty}' contains a NUL byte"
-msgstr  "PAM tty '{tty}' contains a NUL byte"
-#
 # File: ../crates/backend/systema-syss/src/controller.rs, line: 179
 #, rust-format
 msgid   "oneshot service {unit_name} exited with code {code}"
@@ -1388,6 +1359,30 @@ msgstr  "D-Bus address to use (default: the system bus)."
 #, rust-format
 msgid   "invalid --bus-address: {err}"
 msgstr  "invalid --bus-address: {err}"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 161
+#, rust-format
+msgid   "cannot load libpam: {e}"
+msgstr  "cannot load libpam: {e}"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 164
+msgid   "cannot load libpam"
+msgstr  "cannot load libpam"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 229
+#, rust-format
+msgid   "PAM service name '{pam_name}' contains a NUL byte"
+msgstr  "PAM service name '{pam_name}' contains a NUL byte"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 235
+#, rust-format
+msgid   "PAM user '{username}' contains a NUL byte"
+msgstr  "PAM user '{username}' contains a NUL byte"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 257
+#, rust-format
+msgid   "PAM tty '{tty}' contains a NUL byte"
+msgstr  "PAM tty '{tty}' contains a NUL byte"
 #
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
@@ -2477,10 +2472,18 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+# File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 258
+#, rust-format
+#~ msgid        "ensure_loaded_from_disk timed out loading '{name_err}'"
+#~ msgstr       "ensure_loaded_from_disk timed out loading '{name_err}'"
+#
+#
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') failed: {r}"
+#
 #
 #
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 280
@@ -2490,10 +2493,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "Invalid log level '{level}' ({e}); using info"
+#
 #
 #
 #
@@ -2505,9 +2510,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 #
@@ -2523,10 +2530,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2545,10 +2554,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #

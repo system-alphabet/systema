@@ -351,24 +351,14 @@ pub async fn request_unit_definition(allocator: AllocatorHandle, missing: &[Stri
                 &[("name", name)],
             ));
         }
-        // 2. Runtime-created types: a scope never has a unit file, and a
-        //    slice missing from the table is synthesized by the slice owner
-        //    (System R) — a `*.slice` file is reported by the Finder at commit
-        //    time.  Probing the disk here would stat every unit directory on
-        //    each PAM login for `user-<uid>.slice` and only log a not-found.
-        if matches!(
-            UnitKind::from_extension(name),
-            UnitKind::Slice | UnitKind::Scope
-        ) {
-            dynamic.push(name.clone());
-            continue;
-        }
-        // 3. Static units on disk are System A's own on-demand load.  The
-        //    unit.define protocol is only for dynamic units that no unit file
-        //    covers (docs/user-slice-todo.md, 未决问题 2).
-        if !crate::unit::loader::ensure_loaded_from_disk(allocator.clone(), name).await? {
-            dynamic.push(name.clone());
-        }
+        // 2. Everything else has no definition source of its own: a scope
+        //    never has a unit file, a slice missing from the table is
+        //    synthesized by its owner (System R), and a static unit the
+        //    Finder has never committed is not re-read from disk.  Group by
+        //    unit type and ask the worker that owns it (`unit.define`); a
+        //    type whose worker does not implement the protocol leaves the
+        //    unit missing, and the plan reports UnitNotFound.
+        dynamic.push(name.clone());
     }
     if dynamic.is_empty() {
         return Ok(());

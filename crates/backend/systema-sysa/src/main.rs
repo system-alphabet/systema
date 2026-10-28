@@ -11,7 +11,6 @@
 
 mod event;
 mod events;
-mod graph;
 mod ipc;
 mod reload_task;
 mod scheduler;

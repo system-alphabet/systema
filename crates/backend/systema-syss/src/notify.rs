@@ -665,7 +665,10 @@ mod tests {
         // Bind a real sd_notify socket in a scratch path and exercise the
         // whole chain: socket → reader thread (SO_PASSCRED ucred) →
         // tracker → wait_ready.
-        let sock_path = format!("/tmp/opencode/sd-notify-test-{}.sock", std::process::id());
+        let sock_path = std::env::temp_dir()
+            .join(format!("sd-notify-test-{}.sock", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         let _ = std::fs::remove_file(&sock_path);
         let manager = NotifyManager::setup_at(&sock_path).expect("socket setup must succeed");
         // Regression: fchmod(2) on an AF_UNIX socket fd is a silent no-op
