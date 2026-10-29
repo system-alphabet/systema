@@ -932,7 +932,7 @@ impl WorkerIpc {
 }
 
 /// Execute a `method.call` against the unit controller and build the
-/// `method.result` payload.  Long-running methods (start/restart/reload)
+/// `method.result` payload.  Long-running methods (start/restart/reload/stop)
 /// are invoked through a spawned task so the reader loop is never blocked.
 async fn run_method<C: UnitController>(controller: &C, call: &MethodCall) -> MethodResult {
     let result = match call.method.as_str() {
@@ -960,23 +960,29 @@ async fn run_method<C: UnitController>(controller: &C, call: &MethodCall) -> Met
     };
     match result {
         Ok(payload) => {
-            // For start/restart calls, if the controller returned an empty
+            // For stop calls, always include the final status. For
+            // start/restart calls, if the controller returned an empty
             // payload (the common case for non-oneshot types), fetch the
-            // current unit status and include it.  This ensures sysa's
+            // current unit status and include it. This ensures sysa's
             // `apply_state_to_cache()` overwrites the stale optimistic
             // update from `update_cache_on_task_result()` with the
             // controller's actual state (critical for oneshot services
             // that have already exited by the time the start job completes).
-            let result =
-                if payload.is_empty() && matches!(call.method.as_str(), "start" | "restart") {
+            let result = if call.method == "stop"
+                || (payload.is_empty() && matches!(call.method.as_str(), "start" | "restart"))
+            {
+                if call.method == "stop" {
+                    post_stop_status(controller, &call.unit_name).await.0
+                } else {
                     controller
                         .status(&call.unit_name)
                         .await
                         .map(|s| s.encode_to_vec())
                         .unwrap_or(payload)
-                } else {
-                    payload
-                };
+                }
+            } else {
+                payload
+            };
             MethodResult {
                 method: call.method.clone(),
                 unit_name: call.unit_name.clone(),
@@ -985,19 +991,146 @@ async fn run_method<C: UnitController>(controller: &C, call: &MethodCall) -> Met
                 result,
             }
         }
-        Err(e) => MethodResult {
-            method: call.method.clone(),
-            unit_name: call.unit_name.clone(),
-            success: false,
-            error: e.to_string(),
-            result: vec![],
-        },
+        Err(e) => {
+            let (result, status_error) = if call.method == "stop" {
+                post_stop_status(controller, &call.unit_name).await
+            } else {
+                (vec![], None)
+            };
+            MethodResult {
+                method: call.method.clone(),
+                unit_name: call.unit_name.clone(),
+                success: false,
+                error: format!("{e}{}", status_error.unwrap_or_default()),
+                result,
+            }
+        }
+    }
+}
+
+async fn post_stop_status<C: UnitController>(
+    controller: &C,
+    unit_name: &str,
+) -> (Vec<u8>, Option<String>) {
+    match controller.status(unit_name).await {
+        Ok(status) => (status.encode_to_vec(), None),
+        Err(error) => {
+            error!(
+                "Failed to query final state after stop of {}: {}",
+                unit_name, error
+            );
+            (
+                UnitStatus {
+                    unit_name: unit_name.to_string(),
+                    active_state: "unknown".to_string(),
+                    sub_state: "unknown".to_string(),
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+                Some(format!("; failed to query final unit state: {error}")),
+            )
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+
+    struct StopResultController {
+        status: UnitStatus,
+        stop_result: Result<()>,
+        fail_status: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl UnitController for StopResultController {
+        async fn status(&self, _unit_name: &str) -> Result<UnitStatus> {
+            if self.fail_status {
+                anyhow::bail!("status unavailable");
+            }
+            Ok(self.status.clone())
+        }
+
+        async fn start(
+            &self,
+            _unit_name: &str,
+            _config: &[u8],
+            _invocation_id: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn stop(&self, _unit_name: &str) -> Result<()> {
+            self.stop_result
+                .as_ref()
+                .map(|()| ())
+                .map_err(|error| anyhow::anyhow!("{error}"))
+        }
+
+        async fn restart(
+            &self,
+            _unit_name: &str,
+            _config: &[u8],
+            _invocation_id: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn reload(&self, _unit_name: &str, _config: &[u8]) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_stop_result_includes_actual_unit_state() {
+        let controller = StopResultController {
+            status: UnitStatus {
+                unit_name: "run-user-1000-doc.mount".to_string(),
+                active_state: "inactive".to_string(),
+                sub_state: "dead".to_string(),
+                ..Default::default()
+            },
+            stop_result: Err(anyhow::anyhow!("umount failed")),
+            fail_status: false,
+        };
+        let call = crate::proto::MethodCall {
+            method: "stop".to_string(),
+            unit_name: "run-user-1000-doc.mount".to_string(),
+            ..Default::default()
+        };
+
+        let result = run_method(&controller, &call).await;
+
+        assert!(!result.success);
+        assert_eq!(result.error, "umount failed");
+        let status = UnitStatus::decode_from(&result.result).expect("final status payload");
+        assert_eq!(status.active_state, "inactive");
+        assert_eq!(status.sub_state, "dead");
+    }
+
+    #[tokio::test]
+    async fn failed_stop_reports_unknown_when_final_status_is_unavailable() {
+        let controller = StopResultController {
+            status: UnitStatus::default(),
+            stop_result: Err(anyhow::anyhow!("umount failed")),
+            fail_status: true,
+        };
+        let call = crate::proto::MethodCall {
+            method: "stop".to_string(),
+            unit_name: "run-user-1000-doc.mount".to_string(),
+            ..Default::default()
+        };
+
+        let result = run_method(&controller, &call).await;
+
+        assert!(!result.success);
+        assert!(result.error.contains("failed to query final unit state"));
+        let status = UnitStatus::decode_from(&result.result).expect("unknown state payload");
+        assert_eq!(status.active_state, "unknown");
+        assert_eq!(status.sub_state, "unknown");
+    }
 
     /// What the fake System A observed, in arrival order — shared with the
     /// worker side so both can be interleaved in assertions.

@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-28 10:49+0800\n"
+        "POT-Creation-Date: 2026-10-28 19:00+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -26,16 +26,6 @@ msgstr  "Cannot open log file {path} ({e}); falling back to stderr"
 #, rust-format
 msgid   "Invalid log level '{level}' ({e}); using warn"
 msgstr  ""
-#
-# File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 130
-#, rust-format
-msgid   "Dependency cycle detected involving unit: {unit} (unable to break)."
-msgstr  "Dependency cycle detected involving unit: {unit} (unable to break)."
-#
-# File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
-#, rust-format
-msgid   "Unable to resolve dependency cycles after removing {count} edges."
-msgstr  "Unable to resolve dependency cycles after removing {count} edges."
 #
 # File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
 #, rust-format
@@ -1121,6 +1111,11 @@ msgstr  "mkdir -p for mount point failed"
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 38
 msgid   "chmod for mount point failed"
 msgstr  "chmod for mount point failed"
+#
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 280
+#, rust-format
+msgid   "Mount point {mount_point} remained mounted after umount."
+msgstr  "Mount point {mount_point} remained mounted after umount."
 #
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/automount.rs, line: 101
 msgid   "Failed to open /dev/autofs (is autofs kernel module loaded?)"
@@ -2472,6 +2467,19 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+# File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 130
+#, rust-format
+#~ msgid        "Dependency cycle detected involving unit: {unit} (unable to break)."
+#~ msgstr       "Dependency cycle detected involving unit: {unit} (unable to break)."
+#
+#
+# File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
+#, rust-format
+#~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
+#~ msgstr       "Unable to resolve dependency cycles after removing {count} edges."
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 258
 #, rust-format
 #~ msgid        "ensure_loaded_from_disk timed out loading '{name_err}'"
@@ -2479,10 +2487,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') failed: {r}"
+#
 #
 #
 #
@@ -2494,10 +2504,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "Invalid log level '{level}' ({e}); using info"
+#
 #
 #
 #
@@ -2511,9 +2523,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 #
@@ -2531,10 +2545,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2555,10 +2571,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #

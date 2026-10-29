@@ -515,8 +515,9 @@ impl UnitController for MountController {
     async fn stop(&self, unit_name: &str) -> Result<()> {
         match resolve_unit_type(&self.mount_registry, &self.automount_registry, unit_name) {
             "mount" => {
-                do_umount(self.mount_registry.clone(), unit_name, None).await?;
+                let result = do_umount(self.mount_registry.clone(), unit_name, None).await;
                 self.publish_mount_state(unit_name);
+                result?;
             }
             "automount" => {
                 // Boundary B: if the companion real fs is mounted (state
@@ -538,8 +539,10 @@ impl UnitController for MountController {
                 };
                 if partner_mounted {
                     let partner = companion_mount_unit(unit_name);
-                    do_umount(self.mount_registry.clone(), &partner, mount_cfg.as_ref()).await?;
+                    let result =
+                        do_umount(self.mount_registry.clone(), &partner, mount_cfg.as_ref()).await;
                     self.publish_mount_state(&partner);
+                    result?;
                 }
                 automount_enter_dead(self.automount_registry.clone(), unit_name).await?;
                 self.publish_automount_state(unit_name);

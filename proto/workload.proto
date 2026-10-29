@@ -65,7 +65,9 @@ message MethodResult {
     // Human-readable error message (empty on success).
     string error = 4;
     // Method-specific serialized result.
-    // For "status" this is a serialized UnitStatus.
+    // For "status" this is a serialized UnitStatus. For "stop", this is the
+    // post-operation UnitStatus even when the stop failed, so System A can
+    // reconcile its cache with the worker's actual state.
     // For other methods this is empty.
     bytes result = 5;
 }

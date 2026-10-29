@@ -12,8 +12,8 @@
 //!   `../usr/lib/systemd/system/foo.service`).  Aliases (a link whose
 //!   basename differs from its target) are *not* enablement.
 //!
-//! The scan never follows into `.d/` drop-in directories or hidden
-//! directories, mirroring the unit loader.
+//! The scan only inspects enablement metadata and never reads unit definitions
+//! or follows into `.d/` drop-in directories.
 
 use std::collections::HashSet;
 use std::path::Path;

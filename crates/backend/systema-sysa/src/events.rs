@@ -118,38 +118,3 @@ pub async fn run(allocator: AllocatorHandle) -> Result<()> {
     futures::future::pending::<()>().await;
     Ok(())
 }
-
-/// Load a single unit file from disk into the allocator registry.
-///
-/// Resolves aliases, canonicalises the name, and notifies the unit-loaded
-/// channel so the event bus (and therefore the control plane) sees the new
-/// unit.  Errors when the unit cannot be loaded.
-pub fn load_unit_sync(allocator: &AllocatorHandle, name: &str) -> Result<()> {
-    // Resolve known aliases first; the on-disk loader also canonicalises
-    // symlink aliases, so the returned unit carries the canonical name.
-    let requested = allocator.read().resolve_unit_name(name);
-    // An instance is materialized from the Finder-reported IR template, never
-    // re-parsed from the template file: the file read would drop the
-    // template's committed drop-ins and make the disk a second source of
-    // truth.  Only an exact, non-template definition may come from disk.
-    if sysa::unit_name::is_instance(&requested) {
-        if crate::unit::template::materialize(allocator, &requested)? {
-            return Ok(());
-        }
-        anyhow::bail!(sysa::l10n::fmt(
-            sysa::l10n::t_("Unit not found: {name}"),
-            &[("name", &requested.to_string())],
-        ));
-    }
-    let unit = crate::unit::loader::load_unit_flexible(&requested)?;
-    let canonical = unit.name.clone();
-    let mut state = allocator.write();
-    state.units.insert(canonical.clone(), unit);
-    state.rebuild_alias_map();
-    // Notify the event layer so a unit.new is pushed to control-plane
-    // consumers (bridge flavors) which register their Unit object.
-    if let Some(ref tx) = state.unit_loaded_tx {
-        let _ = tx.send(canonical);
-    }
-    Ok(())
-}

@@ -324,7 +324,7 @@ pub mod calls {
         Ok(reply.jobs)
     }
 
-    /// Ensure a unit is loaded and fetch its snapshot.
+    /// Confirm a unit is registered and fetch its snapshot.
     pub async fn load_unit_snapshot(
         client: &ControlClient,
         name: &str,

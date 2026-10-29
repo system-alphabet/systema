@@ -8,12 +8,11 @@
 //!
 //! # Precedence
 //!
-//! A reported definition always wins.  A producer that reported `xxx@yyy.*`
+//! A reported definition always wins. A producer that reported `xxx@yyy.*`
 //! has already merged that instance's own drop-ins into it, so the existing
-//! table entry is kept and the template is not consulted.  Only a missing
-//! instance is materialized; a plain name, or an instance whose template was
-//! never reported, resolves nowhere here and is left to the caller's other
-//! sources (the on-disk definition and `unit.define`).
+//! table entry is kept and the template is not consulted. Only a missing
+//! instance with a reported template can be materialized; all other missing
+//! definitions must be reported by their owning producer.
 
 use std::collections::HashMap;
 
@@ -58,16 +57,32 @@ pub fn materialize(allocator: &AllocatorHandle, name: &str) -> Result<bool> {
     );
 
     let mut state = allocator.write();
+    if state.units.contains_key(&canonical) {
+        return Ok(true);
+    }
     state
         .merge_units(&HashMap::from([(canonical, ir)]))
         .map_err(anyhow::Error::msg)?;
     drop(state);
     // Default dependencies are a System A pass over the unit table, not part
-    // of any definition: the commit pipeline and the on-disk loader both rely
-    // on it, so a materialized instance gets the same edges as a committed
-    // one.
+    // of any definition: the commit pipeline relies on it, so a materialized
+    // instance gets the same edges as a committed one.
     crate::unit::loader::inject_default_dependencies(allocator.clone());
     Ok(true)
+}
+
+/// Require a unit definition from the registry or a registered IR template.
+///
+/// System A does not resolve missing static units by reading unit files.
+pub fn ensure_defined(allocator: &AllocatorHandle, name: &str) -> Result<String> {
+    let canonical = allocator.read().resolve_unit_name(name);
+    if allocator.read().units.contains_key(&canonical) || materialize(allocator, &canonical)? {
+        return Ok(canonical);
+    }
+    anyhow::bail!(sysa::l10n::fmt(
+        sysa::l10n::t_("Unit not found: {name}"),
+        &[("name", &canonical)],
+    ))
 }
 
 #[cfg(test)]
@@ -175,5 +190,23 @@ mod tests {
         let state = allocator.read();
         assert!(!state.units.contains_key("getty@tty3.service"));
         assert!(state.templates.is_empty());
+    }
+
+    #[test]
+    fn ensure_defined_rejects_unregistered_units() {
+        let allocator = crate::state::Allocator::handle();
+        let error = ensure_defined(&allocator, "missing.service").unwrap_err();
+        assert!(error.to_string().contains("Unit not found"));
+        assert!(!allocator.read().units.contains_key("missing.service"));
+    }
+
+    #[test]
+    fn ensure_defined_materializes_only_registered_templates() {
+        let allocator = allocator_with_template();
+        assert_eq!(
+            ensure_defined(&allocator, "getty@tty3.service").unwrap(),
+            "getty@tty3.service"
+        );
+        assert!(allocator.read().units.contains_key("getty@tty3.service"));
     }
 }

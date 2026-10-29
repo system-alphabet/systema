@@ -26,7 +26,6 @@ use sysa::proto::{
     UnitSyncReport, WorkerExit, WorkerRegistration,
 };
 
-use crate::events::load_unit_sync;
 use crate::event::{replay_active_units, WorkerEventForwarder};
 use crate::state::{next_request_id, AllocatorHandle, CachedUnitState, WorkerEntry};
 
@@ -454,7 +453,11 @@ async fn handle_worker_session(
                             // failed).
                             {
                                 let mut state = alloc_for_recv.write();
-                                if unit_has_failed_start_job(&state, &result.unit_name) {
+                                if matches!(
+                                    kind,
+                                    crate::state::JobKind::Start | crate::state::JobKind::Restart
+                                ) && unit_has_failed_start_job(&state, &result.unit_name)
+                                {
                                     revert_cache_to_inactive(&mut state, &result.unit_name);
                                 } else if !result.result.is_empty() {
                                     if let Some(unit_status) =
@@ -734,31 +737,14 @@ async fn handle_worker_session(
                             fired.timer_unit, fired.elapse_epoch, target
                         );
 
-                        // Ensure the target unit is loaded before enqueueing.
-                        if !alloc_for_recv.read().units.contains_key(&target) {
-                            let alloc2 = alloc_for_recv.clone();
-                            let name2 = target.clone();
-                            let loaded = tokio::task::spawn_blocking(move || {
-                                load_unit_sync(&alloc2, &name2)
-                            })
-                            .await;
-                            match loaded {
-                                Ok(Ok(())) => {}
-                                Ok(Err(e)) => {
-                                    warn!(
-                                        "Failed to load timer-triggered unit '{}': {}",
-                                        target, e
-                                    );
-                                    continue;
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to load timer-triggered unit '{}': {}",
-                                        target, e
-                                    );
-                                    continue;
-                                }
-                            }
+                        if let Err(e) =
+                            crate::unit::template::ensure_defined(&alloc_for_recv, &target)
+                        {
+                            warn!(
+                                "Timer-triggered unit '{}' has no registered definition: {}",
+                                target, e
+                            );
+                            continue;
                         }
 
                         match crate::scheduler::enqueue_start_with_mode(
@@ -795,25 +781,14 @@ async fn handle_worker_session(
                             fired.path_unit, fired.fired_epoch, target
                         );
 
-                        // Ensure the target unit is loaded before enqueueing.
-                        if !alloc_for_recv.read().units.contains_key(&target) {
-                            let alloc2 = alloc_for_recv.clone();
-                            let name2 = target.clone();
-                            let loaded = tokio::task::spawn_blocking(move || {
-                                load_unit_sync(&alloc2, &name2)
-                            })
-                            .await;
-                            match loaded {
-                                Ok(Ok(())) => {}
-                                Ok(Err(e)) => {
-                                    warn!("Failed to load path-triggered unit '{}': {}", target, e);
-                                    continue;
-                                }
-                                Err(e) => {
-                                    warn!("Failed to load path-triggered unit '{}': {}", target, e);
-                                    continue;
-                                }
-                            }
+                        if let Err(e) =
+                            crate::unit::template::ensure_defined(&alloc_for_recv, &target)
+                        {
+                            warn!(
+                                "Path-triggered unit '{}' has no registered definition: {}",
+                                target, e
+                            );
+                            continue;
                         }
 
                         match crate::scheduler::enqueue_start_with_mode(
@@ -865,31 +840,14 @@ async fn handle_worker_session(
                             continue;
                         }
 
-                        // Ensure the target unit is loaded before enqueueing.
-                        if !alloc_for_recv.read().units.contains_key(&target) {
-                            let alloc2 = alloc_for_recv.clone();
-                            let name2 = target.clone();
-                            let loaded = tokio::task::spawn_blocking(move || {
-                                load_unit_sync(&alloc2, &name2)
-                            })
-                            .await;
-                            match loaded {
-                                Ok(Ok(())) => {}
-                                Ok(Err(e)) => {
-                                    warn!(
-                                        "Failed to load socket-triggered unit '{}': {}",
-                                        target, e
-                                    );
-                                    continue;
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to load socket-triggered unit '{}': {}",
-                                        target, e
-                                    );
-                                    continue;
-                                }
-                            }
+                        if let Err(e) =
+                            crate::unit::template::ensure_defined(&alloc_for_recv, &target)
+                        {
+                            warn!(
+                                "Socket-triggered unit '{}' has no registered definition: {}",
+                                target, e
+                            );
+                            continue;
                         }
 
                         match crate::scheduler::enqueue_start_with_mode(
@@ -1598,6 +1556,7 @@ fn apply_state_to_cache(entry: &mut CachedUnitState, status: &UnitStatus) {
     let prev_inactive = matches!(entry.active_state.as_str(), "inactive" | "failed");
     let now_active = status.active_state == "active";
     let now_inactive = matches!(status.active_state.as_str(), "inactive" | "failed");
+    let now_unknown = status.active_state == "unknown";
 
     let now = now_usec();
     if now_active && !prev_active {
@@ -1613,7 +1572,11 @@ fn apply_state_to_cache(entry: &mut CachedUnitState, status: &UnitStatus) {
     entry.sub_state = status.sub_state.clone();
     entry.main_pid = status.main_pid;
     entry.extensions = status.extensions.clone();
-    if !status.invocation_id.is_empty() {
+    if now_unknown {
+        entry.active_enter_timestamp = 0;
+        entry.inactive_enter_timestamp = 0;
+        entry.invocation_id.clear();
+    } else if !status.invocation_id.is_empty() {
         entry.invocation_id = status.invocation_id.clone();
     } else if now_inactive {
         entry.invocation_id.clear();
@@ -2013,6 +1976,32 @@ mod tests {
             state.unit_states.get("foo.service").unwrap().active_state,
             "inactive"
         );
+    }
+
+    #[test]
+    fn applying_unknown_state_clears_stale_runtime_metadata() {
+        let mut cached = crate::state::CachedUnitState {
+            active_state: "active".to_string(),
+            sub_state: "mounted".to_string(),
+            invocation_id: "stale-invocation".to_string(),
+            active_enter_timestamp: 123,
+            inactive_enter_timestamp: 456,
+            ..Default::default()
+        };
+        let status = UnitStatus {
+            unit_name: "run-user-1000-doc.mount".to_string(),
+            active_state: "unknown".to_string(),
+            sub_state: "unknown".to_string(),
+            ..Default::default()
+        };
+
+        apply_state_to_cache(&mut cached, &status);
+
+        assert_eq!(cached.active_state, "unknown");
+        assert_eq!(cached.sub_state, "unknown");
+        assert!(cached.invocation_id.is_empty());
+        assert_eq!(cached.active_enter_timestamp, 0);
+        assert_eq!(cached.inactive_enter_timestamp, 0);
     }
 
     #[test]

@@ -269,7 +269,8 @@ message AbandonScopeRequest {
     string name = 1;
 }
 
-// `manager.load_unit` — load a unit file from disk into the registry.
+// `manager.load_unit` — confirm a registered unit definition, materializing
+// an instance only when its IR template has already been registered.
 message LoadUnitRequest {
     string name = 1;
 }

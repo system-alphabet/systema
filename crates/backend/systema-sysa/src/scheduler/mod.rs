@@ -1283,8 +1283,8 @@ pub async fn enqueue_job(
             request_unit_definition(allocator.clone(), &missing).await?;
         }
 
-        // Build the plan, materialising on-disk/dynamic definitions one
-        // layer at a time: the pre-plan scan above only expands the
+        // Build the plan, materialising worker-provided dynamic definitions
+        // one layer at a time: the pre-plan scan above only expands the
         // dependency closure one level (missing units' own dependencies are
         // not yet known), so a chain `a -> b -> c` can still hit
         // `UnitNotFound` for the second layer.  Loop until the plan builds

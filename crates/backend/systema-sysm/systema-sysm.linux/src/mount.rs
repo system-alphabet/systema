@@ -156,6 +156,15 @@ pub async fn do_umount(
         ));
     }
 
+    if !mountinfo::mount_point_is_mounted(&mount_point) {
+        reconcile_umount_state(&registry, unit_name, false);
+        info!(
+            "Mount point is already unmounted, skipping: {}",
+            mount_point
+        );
+        return Ok(());
+    }
+
     // Mark as unmounting.
     {
         let mut reg = registry.lock();
@@ -191,34 +200,50 @@ pub async fn do_umount(
             .unwrap_or(30),
     );
 
-    let output = tokio::time::timeout(timeout, cmd.output())
-        .await
-        .context(sysa::l10n::t_("umount timed out"))?
-        .context(sysa::l10n::t_("umount command failed to start"))?;
+    let output = match tokio::time::timeout(timeout, cmd.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            let still_mounted = mountinfo::mount_point_is_mounted(&mount_point);
+            reconcile_umount_state(&registry, unit_name, still_mounted);
+            if !still_mounted {
+                info!(
+                    "Mount point disappeared while starting umount, treating stop as complete: {}",
+                    mount_point
+                );
+                return Ok(());
+            }
+            return Err(error).context(sysa::l10n::t_("umount command failed to start"));
+        }
+        Err(_) => {
+            let still_mounted = mountinfo::mount_point_is_mounted(&mount_point);
+            reconcile_umount_state(&registry, unit_name, still_mounted);
+            if !still_mounted {
+                info!(
+                        "Mount point disappeared while waiting for umount, treating stop as complete: {}",
+                        mount_point
+                    );
+                return Ok(());
+            }
+            anyhow::bail!(sysa::l10n::t_("umount timed out"));
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("umount {} failed: {}", mount_point, stderr.trim());
-        // Restore the state from the kernel: a failed umount leaves the fs
-        // mounted (or it may have gone away concurrently).  Do not linger in
-        // Unmounting.
         let still_mounted = mountinfo::mount_point_is_mounted(&mount_point);
-        {
-            let mut reg = registry.lock();
-            if let Some(inst) = reg.get_mut(unit_name) {
-                if still_mounted {
-                    inst.state = MountState::Mounted;
-                } else {
-                    inst.state = MountState::Dead;
-                    inst.from_mountinfo = false;
-                }
-            }
+        reconcile_umount_state(&registry, unit_name, still_mounted);
+        if !still_mounted {
+            info!(
+                "Mount point disappeared during failed umount; treating stop as complete: {}",
+                mount_point
+            );
+            return Ok(());
         }
-        let err = anyhow::anyhow!(sysa::l10n::fmt(
+        error!("umount {} failed: {}", mount_point, stderr.trim());
+        anyhow::bail!(sysa::l10n::fmt(
             sysa::l10n::t_("umount failed: {stderr}"),
             &[("stderr", &(stderr.trim()).to_string())]
         ));
-        return Err(err);
     }
 
     // Verify against kernel: re-check /proc/self/mountinfo.
@@ -227,26 +252,22 @@ pub async fn do_umount(
 
     let mut reg = registry.lock();
     if let Some(inst) = reg.get_mut(unit_name) {
-        if still_mounted && inst.n_retry_umount < 32 {
-            // Layered mount — retry
+        if still_mounted {
+            // The umount command may remove only one layer of a stacked mount.
+            // Keep the worker state aligned with the kernel and fail this stop
+            // rather than claiming the unit is dead.
             inst.n_retry_umount += 1;
-            inst.state = MountState::Unmounting;
-            info!(
-                "Layered mount still present, retry {}/32 for {}",
-                inst.n_retry_umount, mount_point
-            );
-        } else if !still_mounted {
-            inst.state = MountState::Dead;
-            inst.from_mountinfo = false;
-            info!("Unmount succeeded: {}", mount_point);
-        } else {
-            // still_mounted && retries exhausted
-            inst.state = MountState::Dead;
-            inst.from_mountinfo = false;
+            inst.state = MountState::Mounted;
+            inst.from_mountinfo = true;
             warn!(
-                "Giving up on {} after {} retries; still in mountinfo",
+                "Mount point {} remains mounted after umount attempt {}",
                 mount_point, inst.n_retry_umount
             );
+        } else {
+            inst.state = MountState::Dead;
+            inst.from_mountinfo = false;
+            inst.n_retry_umount = 0;
+            info!("Unmount succeeded: {}", mount_point);
         }
     } else {
         // Registry entry vanished under us; nothing to update
@@ -254,7 +275,30 @@ pub async fn do_umount(
     }
     drop(reg);
 
+    if still_mounted {
+        anyhow::bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("Mount point {mount_point} remained mounted after umount."),
+            &[("mount_point", &mount_point)]
+        ));
+    }
+
     Ok(())
+}
+
+/// Reconcile the worker's mount state with the kernel after an umount failure.
+/// Returns whether the mount point is still mounted.
+fn reconcile_umount_state(registry: &MountRegistry, unit_name: &str, still_mounted: bool) {
+    let mut reg = registry.lock();
+    if let Some(inst) = reg.get_mut(unit_name) {
+        if still_mounted {
+            inst.state = MountState::Mounted;
+            inst.from_mountinfo = true;
+        } else {
+            inst.state = MountState::Dead;
+            inst.from_mountinfo = false;
+            inst.n_retry_umount = 0;
+        }
+    }
 }
 
 pub async fn do_remount(
@@ -312,4 +356,37 @@ pub async fn do_remount(
 
     info!("Remount succeeded: {}", mount_point);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stopping_an_already_unmounted_mount_is_idempotent() {
+        let registry = crate::linux::state::new_mount_registry();
+        let unit_name = "test-stale-mount.mount";
+        let mount_point = std::env::temp_dir()
+            .join(format!("systema-not-mounted-{}", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let mut instance = MountInstance::new(
+            unit_name.to_string(),
+            mount_point,
+            "test-device".to_string(),
+        );
+        instance.state = MountState::Mounted;
+        instance.from_mountinfo = true;
+        registry.lock().insert(unit_name.to_string(), instance);
+
+        do_umount(registry.clone(), unit_name, None)
+            .await
+            .expect("stopping an absent mount should succeed");
+
+        let registry = registry.lock();
+        let instance = registry.get(unit_name).expect("mount remains registered");
+        assert_eq!(instance.state, MountState::Dead);
+        assert!(!instance.from_mountinfo);
+        assert_eq!(instance.n_retry_umount, 0);
+    }
 }

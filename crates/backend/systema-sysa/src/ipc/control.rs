@@ -40,11 +40,11 @@ use sysa::proto::{
 };
 
 use crate::scheduler::job_type::JobType;
+use crate::snapshot;
 use crate::state::{
     next_request_id, next_task_id, AllocatorHandle, AllocatorState, DesiredState, JobKind, JobMode,
 };
 use crate::unit::types::{ResourceControl, UnitFile, UnitKind};
-use crate::{events, snapshot};
 
 /// Bind the control socket and serve control sessions indefinitely.
 pub async fn run_control_listener(allocator: AllocatorHandle) -> Result<()> {
@@ -601,15 +601,7 @@ async fn manager_enqueue(allocator: &AllocatorHandle, env: Envelope) -> Result<E
     })?;
     let reload_if_possible = ty_reload || req.reload_if_possible;
 
-    let canonical = allocator.read().resolve_unit_name(&req.name);
-    if !allocator.read().units.contains_key(&canonical) {
-        let alloc = allocator.clone();
-        let name = canonical.clone();
-        tokio::task::spawn_blocking(move || events::load_unit_sync(&alloc, &name))
-            .await
-            .context(sysa::l10n::t_("load_unit task panicked"))?
-            .context(sysa::l10n::t_("failed to load unit"))?;
-    }
+    let canonical = crate::unit::template::ensure_defined(allocator, &req.name)?;
 
     let (job_id, collapsed) = crate::scheduler::enqueue_job_type(
         allocator.clone(),
@@ -641,18 +633,14 @@ async fn manager_enqueue(allocator: &AllocatorHandle, env: Envelope) -> Result<E
     )
 }
 
-/// `manager.load_unit` — load a unit file from disk into the registry.
+/// `manager.load_unit` — confirm a unit is registered, or materialize a
+/// registered IR template instance.
 async fn manager_load_unit(allocator: &AllocatorHandle, env: Envelope) -> Result<Envelope> {
     let req = LoadUnitRequest::decode(env.payload.as_slice())
         .context(sysa::l10n::t_("bad manager.load_unit"))?;
-    let canonical = allocator.read().resolve_unit_name(&req.name);
-    let alloc = allocator.clone();
-    let name = canonical.clone();
-    let result = tokio::task::spawn_blocking(move || events::load_unit_sync(&alloc, &name))
-        .await
-        .context(sysa::l10n::t_("load_unit task panicked"))?;
+    let result = crate::unit::template::ensure_defined(allocator, &req.name);
     match result {
-        Ok(()) => make_envelope(
+        Ok(canonical) => make_envelope(
             next_request_id(),
             "system-a",
             "",
@@ -671,7 +659,7 @@ async fn manager_load_unit(allocator: &AllocatorHandle, env: Envelope) -> Result
             LoadUnitResult {
                 success: false,
                 message: format!("{e:#}"),
-                name: canonical,
+                name: allocator.read().resolve_unit_name(&req.name),
             },
         ),
     }
