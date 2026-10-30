@@ -21,6 +21,7 @@
 
 mod mount_setup;
 mod power;
+mod power_worker;
 mod supervise;
 mod workers;
 

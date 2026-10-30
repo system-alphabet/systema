@@ -4,8 +4,7 @@
 //!
 //! * [`PowerAction`] encodes a `.power` unit name into a system transition.
 //! * [`synthesize_power_definitions`] builds the [`UnitIR`] definitions that
-//!   System Init registers with System A at boot (System A never needs a
-//!   `power` worker).
+//!   System Init registers with System A at boot.
 //! * [`execute_action`] performs the real `reboot(2)` transition in-process
 //!   - terminal transitions (poweroff/reboot/halt/kexec) never return.
 

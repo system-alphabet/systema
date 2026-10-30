@@ -325,6 +325,7 @@ type ShutdownCleanup = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// Hook run after every successful (re)connection registration, produced by
 /// [`WorkerIpc::on_reconnect`].  Boxed for the same reason.
 type ReconnectHook = Pin<Box<dyn Future<Output = ()> + Send>>;
+type MethodResultHook = Arc<dyn Fn(&MethodCall, &MethodResult, bool) + Send + Sync>;
 
 /// Encapsulated worker IPC loop.
 ///
@@ -338,6 +339,7 @@ pub struct WorkerIpc {
     supports_resource_prepare: bool,
     on_shutdown: Option<Arc<dyn Fn() -> ShutdownCleanup + Send + Sync>>,
     on_reconnect: Option<Arc<dyn Fn() -> ReconnectHook + Send + Sync>>,
+    on_method_result: Option<MethodResultHook>,
     /// Test-only override of System A's socket path, so the fake System A in
     /// the tests need not live at the compiled-in `/run/...` location.
     #[cfg(test)]
@@ -357,6 +359,7 @@ impl WorkerIpc {
             supports_resource_prepare: false,
             on_shutdown: None,
             on_reconnect: None,
+            on_method_result: None,
             #[cfg(test)]
             socket_path: None,
         }
@@ -402,6 +405,19 @@ impl WorkerIpc {
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.on_reconnect = Some(Arc::new(move || Box::pin(hook())));
+        self
+    }
+
+    /// Run a hook after attempting to queue a deferred method result.
+    ///
+    /// The last argument indicates whether the result was queued. The hook
+    /// must not block. A shutdown initiated after a successful queue cannot
+    /// overtake the result.
+    pub fn on_method_result<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&MethodCall, &MethodResult, bool) + Send + Sync + 'static,
+    {
+        self.on_method_result = Some(Arc::new(hook));
         self
     }
 
@@ -468,9 +484,8 @@ impl WorkerIpc {
 
     /// [`Self::run`] with the shutdown signal supplied by the caller.
     ///
-    /// `run()` wires in the real SIGTERM/SIGINT listener; tests drive this
-    /// one instead so they never raise a real signal in-process.
-    async fn run_until_shutdown<S, C, H>(
+    /// The caller controls when graceful cleanup and the goodbye handshake start.
+    pub async fn run_until_shutdown<S, C, H>(
         &self,
         shutdown: S,
         controller_factory: impl Fn(EventPublisher) -> C,
@@ -791,14 +806,15 @@ impl WorkerIpc {
                             let out_tx = out_tx.clone();
                             let worker_id = self.worker_id.clone();
                             let request_id = env.request_id;
+                            let hook = self.on_method_result.clone();
                             tokio::spawn(async move {
                                 let method_result = run_method(&*controller, &call).await;
-                                match make_envelope(
+                                let queued = match make_envelope(
                                     request_id,
                                     &worker_id,
                                     "system-a",
                                     "method.result",
-                                    method_result,
+                                    method_result.clone(),
                                 )
                                 .and_then(encode_envelope)
                                 {
@@ -808,14 +824,21 @@ impl WorkerIpc {
                                                 "Outgoing channel closed; cannot send method result for {}",
                                                 call.method
                                             );
+                                            false
+                                        } else {
+                                            true
                                         }
                                     }
                                     Err(e) => {
                                         warn!(
                                             "Failed to encode method.result for {}: {}",
                                             call.method, e
-                                        )
+                                        );
+                                        false
                                     }
+                                };
+                                if let Some(hook) = hook {
+                                    hook(&call, &method_result, queued);
                                 }
                             });
                             continue;

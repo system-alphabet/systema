@@ -28,8 +28,9 @@ use nix::unistd::Pid;
 use prost::Message;
 
 use sysa::proto::{
-    DaemonReloadResult, Envelope, ListUnitsResult, ManagerHelloResult, StartUnitsRequest,
-    StartUnitsResult, UnitInfo, UnitStartResult,
+    DaemonReloadResult, Envelope, ListUnitsResult, ManagerHelloResult, MethodCall, MethodResult,
+    RegisterAck, StartUnitsRequest, StartUnitsResult, UnitInfo, UnitStartResult,
+    WorkerRegistration,
 };
 
 /// Long-running shim: records its pid, then exits 0 on SIGTERM and otherwise
@@ -155,6 +156,8 @@ fn run_sysi(dir: &Path, notify_dir: &Path, extra: &[&str]) -> SysiChild {
         // The control phase talks to System A over the control socket;
         // point it at the fake listener below.
         .env("SYSTEMA_CONTROL_SOCKET", notify_dir.join("control.sock"))
+        .env("SYSTEMA_IPC_SOCKET", notify_dir.join("allocator.sock"))
+        .env("SYSTEMA_RUNSTATEDIR", notify_dir.join("runstate"))
         .args(extra)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -402,6 +405,93 @@ fn fake_control(notify_dir: &Path, canned: Vec<UnitInfo>, sent: Arc<Mutex<Vec<St
     });
 }
 
+fn fake_power_worker(
+    notify_dir: &Path,
+) -> (std::sync::mpsc::Sender<String>, Arc<Mutex<Vec<String>>>) {
+    fs::create_dir_all(notify_dir).unwrap();
+    let listener = UnixListener::bind(notify_dir.join("allocator.sock")).unwrap();
+    let target = notify_dir.join("init.sock");
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let recorded = events.clone();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let version = Envelope::decode(read_frame(&mut stream).unwrap().as_slice()).unwrap();
+        let request = sysa::ipc::version_request_from(&version).unwrap();
+        let reply = sysa::ipc::version_result_envelope(version.request_id, &request).unwrap();
+        write_frame(&mut stream, &reply.encode_to_vec());
+        let register = Envelope::decode(read_frame(&mut stream).unwrap().as_slice()).unwrap();
+        assert_eq!(register.method, "worker.register");
+        let reg = WorkerRegistration::decode(register.payload.as_slice()).unwrap();
+        assert_eq!(reg.worker_id, "system-i-1");
+        assert_eq!(reg.unit_types, vec!["power"]);
+        let ack = Envelope {
+            request_id: register.request_id,
+            source: "system-a".into(),
+            target: reg.worker_id,
+            method: "worker.ack".into(),
+            payload: RegisterAck {
+                accepted: true,
+                message: String::new(),
+            }
+            .encode_to_vec(),
+        };
+        write_frame(&mut stream, &ack.encode_to_vec());
+        let mut writer = stream.try_clone().unwrap();
+        thread::spawn(move || {
+            while let Ok(method) = rx.recv() {
+                let call = MethodCall {
+                    method,
+                    unit_name: "halt.power".into(),
+                    args: Vec::new(),
+                    invocation_id: "test".into(),
+                };
+                let env = Envelope {
+                    request_id: 42,
+                    source: "system-a".into(),
+                    target: "system-i-1".into(),
+                    method: "method.call".into(),
+                    payload: call.encode_to_vec(),
+                };
+                write_frame(&mut writer, &env.encode_to_vec());
+            }
+        });
+        while let Some(frame) = read_frame(&mut stream) {
+            let env = Envelope::decode(frame.as_slice()).unwrap();
+            match env.method.as_str() {
+                "worker.ready" => {
+                    UnixDatagram::unbound()
+                        .unwrap()
+                        .send_to(b"WORKER_READY=system-i-1\n", &target)
+                        .unwrap();
+                    recorded.lock().unwrap().push("ready".into());
+                }
+                "method.result" => {
+                    let result = MethodResult::decode(env.payload.as_slice()).unwrap();
+                    recorded
+                        .lock()
+                        .unwrap()
+                        .push(format!("{}:{}", result.method, result.success));
+                    if result.method == "status" {
+                        let status =
+                            sysa::controller::UnitStatus::decode_from(&result.result).unwrap();
+                        recorded
+                            .lock()
+                            .unwrap()
+                            .push(format!("{}:{}", status.active_state, status.sub_state));
+                    }
+                }
+                "worker.exit" => {
+                    recorded.lock().unwrap().push("exit".into());
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+    (tx, events)
+}
+
 /// Poll a shared buffer until it contains `needle` (or timeout).
 fn wait_for_lock(buf: &Arc<Mutex<Vec<String>>>, needle: &str, secs: u64) -> bool {
     let deadline = Instant::now() + Duration::from_secs(secs);
@@ -511,6 +601,7 @@ fn boot_all_canned(
 ) -> Arc<Mutex<Vec<String>>> {
     let sent = Arc::new(Mutex::new(Vec::new()));
     fake_control(notify_dir, canned, sent.clone());
+    let _power = fake_power_worker(notify_dir);
     let a = FakeA::new(notify_dir);
     a.manager_ready();
     for (name, worker_id) in SHORT_NAMES.iter().zip(WORKER_IDS) {
@@ -788,7 +879,8 @@ fn control_phase_connection_failure_is_fatal() {
 
     let mut child = run_sysi(&dir, &notify_dir, &[]);
     let buf = stderr_reader(&mut child);
-    // No fake allocator socket: the control phase cannot connect.
+    // No fake control socket: the control phase cannot connect.
+    let _power = fake_power_worker(&notify_dir);
 
     let a = FakeA::new(&notify_dir);
     a.manager_ready();
@@ -800,5 +892,75 @@ fn control_phase_connection_failure_is_fatal() {
     assert!(wait_for(&buf, "Control phase failed", 5));
     let status = wait_timeout(&mut child, 8).expect("should exit after control failure");
     assert_eq!(status.code(), Some(1), "got {status:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn power_worker_transition(method: &str, tag: &str) {
+    let dir = shim_dir(tag);
+    default_shims(&dir);
+    let notify_dir = dir.join("notify");
+    let (commands, events) = fake_power_worker(&notify_dir);
+    fake_control(
+        &notify_dir,
+        default_canned(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let mut child = run_sysi(&dir, &notify_dir, &["--powerctl=never"]);
+    let buf = stderr_reader(&mut child);
+    let a = FakeA::new(&notify_dir);
+    a.manager_ready();
+    for (name, worker_id) in SHORT_NAMES.iter().zip(WORKER_IDS) {
+        assert!(wait_for(&buf, &format!("Spawned {name}"), 5));
+        a.worker_ready(worker_id);
+    }
+    assert!(wait_for(&buf, "Control phase: enqueued start", 5));
+    commands.send("status".into()).unwrap();
+    assert!(wait_for_lock(&events, "inactive:dead", 5));
+    commands.send("stop".into()).unwrap();
+    assert!(wait_for_lock(&events, "stop:true", 5));
+    assert!(child.try_wait().unwrap().is_none());
+    commands.send(method.into()).unwrap();
+    let result = format!("{method}:true");
+    assert!(wait_for_lock(&events, &result, 5));
+    assert!(wait_for_lock(&events, "exit", 5));
+    let entries = events.lock().unwrap();
+    assert!(entries.iter().position(|s| s == &result) < entries.iter().position(|s| s == "exit"));
+    drop(entries);
+    assert_eq!(wait_timeout(&mut child, 15).unwrap().code(), Some(0));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn power_worker_start_is_acknowledged_before_shutdown() {
+    power_worker_transition("start", "power-start");
+}
+
+#[test]
+fn power_worker_restart_is_acknowledged_before_shutdown() {
+    power_worker_transition("restart", "power-restart");
+}
+
+#[test]
+fn missing_power_worker_readiness_aborts_before_control_phase() {
+    let dir = shim_dir("power-unavailable");
+    default_shims(&dir);
+    let notify_dir = dir.join("notify");
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    fake_control(&notify_dir, default_canned(), sent.clone());
+    let mut child = run_sysi(&dir, &notify_dir, &[]);
+    let buf = stderr_reader(&mut child);
+    let a = FakeA::new(&notify_dir);
+    a.manager_ready();
+    for (name, worker_id) in SHORT_NAMES.iter().zip(WORKER_IDS) {
+        assert!(wait_for(&buf, &format!("Spawned {name}"), 5));
+        a.worker_ready(worker_id);
+    }
+    let status = wait_timeout(&mut child, 8).expect("missing power worker must abort boot");
+    assert_eq!(status.code(), Some(1));
+    assert!(sent.lock().unwrap().is_empty());
+    assert!(buf
+        .lock()
+        .unwrap()
+        .contains("Timed out waiting for System Init power worker"));
     let _ = fs::remove_dir_all(&dir);
 }

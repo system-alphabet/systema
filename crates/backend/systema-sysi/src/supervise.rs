@@ -29,14 +29,16 @@ use nix::sys::signal::{kill, signal, SigHandler, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use sysa::proto::{
-    DaemonReloadRequest, DaemonReloadResult, ListUnitsRequest, ListUnitsResult, ManagerHelloRequest,
-    RegisterPowerUnitsRequest, RegisterPowerUnitsResult, StartUnitsRequest, StartUnitsResult,
+    DaemonReloadRequest, DaemonReloadResult, ListUnitsRequest, ListUnitsResult,
+    ManagerHelloRequest, RegisterPowerUnitsRequest, RegisterPowerUnitsResult, StartUnitsRequest,
+    StartUnitsResult,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::mount_setup;
 use crate::power;
+use crate::power_worker::{self, PowerWorker};
 use crate::workers::{ProcessKind, ResolvedProcess};
 
 /// Default notify directory: `<runstatedir>/systema/notify` (`/run` by
@@ -208,13 +210,7 @@ where
         ));
     }
 
-    let req = sysa::ipc::make_envelope(
-        request_id,
-        "system-sysi",
-        "system-a",
-        method,
-        req,
-    )?;
+    let req = sysa::ipc::make_envelope(request_id, "system-sysi", "system-a", method, req)?;
     sysa::ipc::send_envelope(&mut framed, &req).await?;
     loop {
         let reply = sysa::ipc::recv_envelope(&mut framed)
@@ -242,6 +238,20 @@ struct WaitCtx {
     reaper_rx: mpsc::UnboundedReceiver<ReaperEvent>,
     terminate: tokio::signal::unix::Signal,
     interrupt: tokio::signal::unix::Signal,
+    power_worker: Option<PowerWorker>,
+}
+
+impl WaitCtx {
+    async fn disconnect_power_worker(&mut self) {
+        if let Some(worker) = self.power_worker.take() {
+            worker.disconnect().await;
+        }
+    }
+
+    async fn shutdown(&mut self, procs: &[Spawned], code: i32, grace: Duration) -> i32 {
+        self.disconnect_power_worker().await;
+        shutdown(procs, code, grace).await
+    }
 }
 
 /// Reap children in a dedicated thread and report exits to `tx`.
@@ -351,13 +361,7 @@ fn status_code(status: &WaitStatus) -> i32 {
 /// the one async-signal-safe way to emit output from a signal handler.
 extern "C" fn handle_sighup(_sig: i32) {
     let msg = b"systema-sysi: SIGHUP received; ignoring\n";
-    let _ = unsafe {
-        nix::libc::write(
-            nix::libc::STDERR_FILENO,
-            msg.as_ptr().cast(),
-            msg.len(),
-        )
-    };
+    let _ = unsafe { nix::libc::write(nix::libc::STDERR_FILENO, msg.as_ptr().cast(), msg.len()) };
 }
 
 /// Make SIGHUP non-fatal: a getty taking over the boot console
@@ -415,10 +419,9 @@ async fn shutdown(procs: &[Spawned], code: i32, grace: Duration) -> i32 {
     code
 }
 
-/// Ordered graceful shutdown driven by a `POWER=` notify datagram.
+/// Ordered graceful shutdown driven by a power worker request.
 ///
-/// Consumes the datagram System A sends when a `.power` unit starts.  The
-/// sequence mirrors PID 1 semantics:
+/// The sequence mirrors PID 1 semantics:
 ///
 /// 1. SIGTERM every supervised worker and wait (up to `grace`) for each to
 ///    be reaped, SIGKILLing stragglers.  That SIGTERM is what makes each
@@ -530,9 +533,7 @@ async fn power_down(
 
     // Phase 5: execute the transition or exit cleanly.
     if power_ctl.enabled(std::process::id() == 1) {
-        info!(
-            "Power transition '{power_action}': executing in-process (System Init)"
-        );
+        info!("Power transition '{power_action}': executing in-process (System Init)");
         power::execute_action(power_action, power_ctl)?;
         // Terminal transitions never return.  Reaching this point means a
         // resumable transition (suspend/hibernate) completed and the machine
@@ -645,15 +646,15 @@ async fn wait_ready(
         tokio::select! {
             _ = ctx.terminate.recv() => {
                 info!("SIGTERM received; shutting down");
-                return Ok(Some(shutdown(procs, 0, grace).await));
+                return Ok(Some(ctx.shutdown(procs, 0, grace).await));
             }
             _ = ctx.interrupt.recv() => {
                 info!("SIGINT received; shutting down");
-                return Ok(Some(shutdown(procs, 0, grace).await));
+                return Ok(Some(ctx.shutdown(procs, 0, grace).await));
             }
             Some((pid, status)) = ctx.reaper_rx.recv() => {
                 if let Some(code) = handle_reaped(procs, pid, &status) {
-                    return Ok(Some(shutdown(procs, code, grace).await));
+                    return Ok(Some(ctx.shutdown(procs, code, grace).await));
                 }
             }
             Some(body) = ctx.notify_rx.recv() => {
@@ -671,7 +672,7 @@ async fn wait_ready(
                 error!(
                     "Timed out waiting for {what} to become ready after {ready_timeout:?}"
                 );
-                return Ok(Some(shutdown(procs, 1, grace).await));
+                return Ok(Some(ctx.shutdown(procs, 1, grace).await));
             }
         }
     }
@@ -721,19 +722,18 @@ async fn control_phase(
 
         // Register the built-in `.power` unit definitions with System A.
         // System Init owns the `power` unit type; System A merges the
-        // synthesized definitions idempotently and never needs a `power`
-        // worker.  Registration is unconditional — the policy only gates
+        // synthesized definitions idempotently. Registration is unconditional —
+        // the policy only gates
         // the actual transition in execute_action.
         {
             let units_json = serde_json::to_vec(&power::all_power_definitions())?;
-            let register =
-                manager_call::<RegisterPowerUnitsRequest, RegisterPowerUnitsResult>(
-                    &sock_path,
-                    1,
-                    "manager.register_power_units",
-                    RegisterPowerUnitsRequest { units_json },
-                )
-                .await?;
+            let register = manager_call::<RegisterPowerUnitsRequest, RegisterPowerUnitsResult>(
+                &sock_path,
+                1,
+                "manager.register_power_units",
+                RegisterPowerUnitsRequest { units_json },
+            )
+            .await?;
             if !register.success {
                 anyhow::bail!(sysa::l10n::fmt(
                     sysa::l10n::t_("manager.register_power_units failed: {message}"),
@@ -798,15 +798,15 @@ async fn control_phase(
         tokio::select! {
             _ = ctx.terminate.recv() => {
                 info!("SIGTERM received during control phase; shutting down");
-                return Ok(Some(shutdown(procs, 0, grace).await));
+                return Ok(Some(ctx.shutdown(procs, 0, grace).await));
             }
             _ = ctx.interrupt.recv() => {
                 info!("SIGINT received during control phase; shutting down");
-                return Ok(Some(shutdown(procs, 0, grace).await));
+                return Ok(Some(ctx.shutdown(procs, 0, grace).await));
             }
             Some((pid, status)) = ctx.reaper_rx.recv() => {
                 if let Some(code) = handle_reaped(procs, pid, &status) {
-                    return Ok(Some(shutdown(procs, code, grace).await));
+                    return Ok(Some(ctx.shutdown(procs, code, grace).await));
                 }
             }
             r = exchange.as_mut() => {
@@ -829,13 +829,13 @@ async fn control_phase(
                     }
                     Err(e) => {
                         error!("Control phase failed: {e:#}");
-                        Ok(Some(shutdown(procs, 1, grace).await))
+                        Ok(Some(ctx.shutdown(procs, 1, grace).await))
                     }
                 };
             }
             _ = tokio::time::sleep_until(deadline) => {
                 error!("Control phase timed out after {ready_timeout:?}");
-                return Ok(Some(shutdown(procs, 1, grace).await));
+                return Ok(Some(ctx.shutdown(procs, 1, grace).await));
             }
         }
     }
@@ -884,6 +884,7 @@ pub async fn run(
         reaper_rx,
         terminate,
         interrupt,
+        power_worker: None,
     };
 
     let mut procs: Vec<Spawned> = Vec::with_capacity(resolved.len());
@@ -949,8 +950,39 @@ pub async fn run(
         }
     }
 
+    let (power_tx, mut power_rx) = mpsc::unbounded_channel();
+    drop(power_tx);
+    if !allocator_specs.is_empty() {
+        let (worker, rx) = PowerWorker::spawn();
+        power_rx = rx;
+        ctx.power_worker = Some(worker);
+        if let Some(code) = wait_ready(
+            &mut ctx,
+            &procs,
+            &mut bootlog,
+            grace,
+            ready_timeout,
+            "System Init power worker",
+            |kv| kv.get("WORKER_READY").map(String::as_str) == Some(power_worker::WORKER_ID),
+        )
+        .await?
+        {
+            notify.shutdown();
+            drop(reaper);
+            return Ok(code);
+        }
+    }
+
     // --- Phase 3: control plane (daemon-reload + start enabled units). ---
-    if let Some(code) = control_phase(&mut ctx, &procs, grace, ready_timeout).await? {
+    let mut pending_power = None;
+    let control_result = tokio::select! {
+        result = control_phase(&mut ctx, &procs, grace, ready_timeout) => result?,
+        Some(action) = power_rx.recv() => {
+            pending_power = Some(action);
+            None
+        }
+    };
+    if let Some(code) = control_result {
         notify.shutdown();
         drop(reaper);
         return Ok(code);
@@ -958,40 +990,38 @@ pub async fn run(
 
     // --- Steady state. ---
     let code = loop {
-        let mut power_requested: Option<String> = None;
-        tokio::select! {
-            _ = ctx.terminate.recv() => {
-                info!("SIGTERM received; shutting down");
-                break shutdown(&procs, 0, grace).await;
-            }
-            _ = ctx.interrupt.recv() => {
-                info!("SIGINT received; shutting down");
-                break shutdown(&procs, 0, grace).await;
-            }
-            Some((pid, status)) = ctx.reaper_rx.recv() => {
-                if let Some(code) = handle_reaped(&procs, pid, &status) {
-                    break shutdown(&procs, code, grace).await;
+        let mut power_requested = pending_power.take();
+        if power_requested.is_none() {
+            tokio::select! {
+                _ = ctx.terminate.recv() => {
+                    info!("SIGTERM received; shutting down");
+                    break ctx.shutdown(&procs, 0, grace).await;
                 }
-            }
-            Some(body) = ctx.notify_rx.recv() => {
-                let kv = parse_notify(&body);
-                bootlog.push(body);
-                for (key, value) in &kv {
-                    info!("notify: {key}={value}");
+                _ = ctx.interrupt.recv() => {
+                    info!("SIGINT received; shutting down");
+                    break ctx.shutdown(&procs, 0, grace).await;
                 }
-                // System A dispatches `.power` unit starts as `POWER=<action>`
-                // datagrams.  The ordered shutdown (drain workers, then
-                // allocator, then the in-process power transition) runs
-                // outside the select, where `ctx.reaper_rx` is free to be
-                // borrowed again.
-                power_requested = kv.get("POWER").cloned();
+                Some((pid, status)) = ctx.reaper_rx.recv() => {
+                    if let Some(code) = handle_reaped(&procs, pid, &status) {
+                        break ctx.shutdown(&procs, code, grace).await;
+                    }
+                }
+                Some(body) = ctx.notify_rx.recv() => {
+                    let kv = parse_notify(&body);
+                    bootlog.push(body);
+                    for (key, value) in &kv {
+                        info!("notify: {key}={value}");
+                    }
+                }
+                Some(action) = power_rx.recv() => power_requested = Some(action),
             }
         }
         if let Some(action) = power_requested {
+            ctx.disconnect_power_worker().await;
             match power_down(
                 &procs,
                 grace,
-                &action,
+                &action.to_string(),
                 &mut ctx.reaper_rx,
                 power_ctl,
                 &mut notify,

@@ -15,7 +15,7 @@ use anyhow::{bail, Result};
 use prost::Message;
 use sysa::l10n;
 use tokio::task::AbortHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::state::{
     generate_invocation_id, next_job_id, next_request_id, next_task_id, AllocatorHandle,
@@ -369,8 +369,8 @@ pub async fn request_unit_definition(allocator: AllocatorHandle, missing: &[Stri
     // (poweroff.power, reboot.power, ...) with System A during its control
     // phase via `manager.register_power_units`, so they are already in the
     // graph.  A `.power` name that is *not* registered (e.g. `evil.power`)
-    // falls through to the general grouping below and fails with "No worker
-    // available for unit type 'power'".
+    // falls through to the general grouping below; System Init does not
+    // advertise on-demand definition support.
 
     // 4. Group the remaining (dynamic) units by the worker that owns their
     // unit type.  Only workers that declared `unit.define` support
@@ -796,167 +796,6 @@ async fn ship_unit_cgroup_result(
     }
 }
 
-/// Dispatch one `power`-type unit step by forwarding it to System Init.
-///
-/// The `power` unit type belongs to System Init, which registers every
-/// `.power` definition at boot via `manager.register_power_units`; no worker
-/// ever registers `power` with System A.  The whole execution contract is
-/// one datagram on the Init notify socket: `POWER=<short-action>`.  The step
-/// job is recorded as Running, completes as Done as soon as the datagram is
-/// handed to the kernel (for terminal transitions the machine goes down
-/// before any reply could matter), and the unit state flips to `active`.  On
-/// send failure the request's jobs are cancelled and the root completes
-/// Failed.  The short action is the unit name minus its `.power` suffix;
-/// System Init is the authority on the vocabulary.
-async fn dispatch_power_step(
-    allocator: AllocatorHandle,
-    name: &str,
-    step_kind: JobKind,
-    job_id: u64,
-    primary_job_id: u64,
-    root_name: &str,
-    created_job_ids: &[(u64, String)],
-) -> Result<()> {
-    // A `.power` unit's transition is only ever *started*.  Stopping or
-    // reloading one is a no-op: resolving the job as Done without touching
-    // the system mirrors how the synthetic unit simply disappears.
-    if !matches!(step_kind, JobKind::Start | JobKind::Restart) {
-        let mut state = allocator.write();
-        if let Some(job) = state.jobs.get_mut(&job_id) {
-            job.status = JobStatus::Done;
-        }
-        if let Some(ref tx) = state.job_completion_tx {
-            let _ = tx.send(JobCompletion {
-                job_id,
-                unit_name: name.to_string(),
-                result: JobResultKind::Done,
-            });
-        }
-        return Ok(());
-    }
-
-    let Some(action) = name.strip_suffix(".power") else {
-        let err = l10n::fmt(
-            l10n::t_("Unit '{name}' is not a valid .power transition; cannot execute it."),
-            &[("name", name)],
-        );
-        warn!("{}", err);
-        cancel_request_jobs(&allocator, created_job_ids, primary_job_id, root_name);
-        bail!("{}", err);
-    };
-
-    let invocation_id = match step_kind {
-        JobKind::Start | JobKind::Restart => Some(generate_invocation_id()),
-        _ => None,
-    };
-    {
-        let mut state = allocator.write();
-        if let Some(ref inv_id) = invocation_id {
-            state.invocation_ids.insert(name.to_string(), inv_id.clone());
-        }
-        state.jobs.insert(
-            job_id,
-            Job {
-                id: job_id,
-                unit_name: name.to_string(),
-                kind: step_kind,
-                status: JobStatus::Running,
-                timeout_abort: None,
-            },
-        );
-    }
-    emit_job_new_after_lock(allocator.clone(), job_id, name, step_kind);
-
-    // The notify listener System Init binds before spawning anything
-    // (<notify-dir>/init.sock); a datagram there is how workers and the
-    // allocator report readiness, and how power transitions are requested.
-    let sock_path =
-        std::path::PathBuf::from(sysa::paths::instance().notify_dir.as_str()).join("init.sock");
-    let payload = format!("POWER={action}\n");
-    let delivered = match std::os::unix::net::UnixDatagram::unbound() {
-        Ok(sock) => match sock.send_to(payload.as_bytes(), &sock_path) {
-            Ok(_) => true,
-            Err(e) => {
-                error!(
-                    "Cannot forward power transition '{action}' to System Init ({}): {e}",
-                    sock_path.display()
-                );
-                false
-            }
-        },
-        Err(e) => {
-            error!("Cannot create notify datagram socket: {e}");
-            false
-        }
-    };
-
-    if delivered {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_micros() as u64)
-            .unwrap_or(0);
-        let mut state = allocator.write();
-        if let Some(job) = state.jobs.get_mut(&job_id) {
-            job.status = JobStatus::Done;
-        }
-        let entry = state.unit_states.entry(name.to_string()).or_default();
-        if entry.active_state != "active" {
-            let inv = invocation_id.clone().unwrap_or_default();
-            entry.active_state = "active".to_string();
-            entry.sub_state.clear();
-            entry.invocation_id = inv;
-            entry.active_enter_timestamp = now;
-        }
-        if let Some(ref tx) = state.job_completion_tx {
-            let _ = tx.send(JobCompletion {
-                job_id,
-                unit_name: name.to_string(),
-                result: JobResultKind::Done,
-            });
-        }
-        info!(
-            "Forwarded power transition '{action}' (unit {}) to System Init",
-            name
-        );
-    } else {
-        let err = l10n::fmt(
-            l10n::t_(
-                "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
-            ),
-            &[("name", name)],
-        );
-        warn!("{}", err);
-        cancel_request_jobs(&allocator, created_job_ids, primary_job_id, root_name);
-        bail!("{}", err);
-    }
-
-    Ok(())
-}
-
-/// Cancel every job created for a request and complete the root as Failed.
-/// Mirrors the `No worker registered` error path in [`enqueue_job`].
-fn cancel_request_jobs(
-    allocator: &AllocatorHandle,
-    created_job_ids: &[(u64, String)],
-    primary_job_id: u64,
-    root_name: &str,
-) {
-    let mut state = allocator.write();
-    for (jid, _) in created_job_ids {
-        if let Some(job) = state.jobs.get_mut(jid) {
-            job.status = JobStatus::Cancelled;
-        }
-        state.serial_completion_txs.remove(jid);
-    }
-    if let Some(ref tx) = state.job_completion_tx {
-        let _ = tx.send(JobCompletion {
-            job_id: primary_job_id,
-            unit_name: root_name.to_string(),
-            result: JobResultKind::Failed,
-        });
-    }
-}
-
 /// Core job enqueueing logic.
 pub async fn enqueue_job(
     allocator: AllocatorHandle,
@@ -1058,15 +897,10 @@ pub async fn enqueue_job(
                     .worker_type()
                     .to_string()
             });
-        // The `power` unit type has no worker: it is owned by System Init,
-        // which registers every `.power` definition at boot and executes the
-        // transition in-process after System A forwards it over the notify
-        // datagram (`dispatch_power_step`).  Treat it as always served.
-        let has_worker = unit_type == "power"
-            || state
-                .workers
-                .values()
-                .any(|w| w.unit_types.contains(&unit_type));
+        let has_worker = state
+            .workers
+            .values()
+            .any(|w| w.unit_types.contains(&unit_type));
         if !has_worker {
             bail!("{}", l10n::fmt(l10n::t_("No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"), &[
                 ("unit_type", &unit_type),
@@ -1519,28 +1353,6 @@ pub async fn enqueue_job(
                 unit_type,
             )
         };
-
-        // --- Power transitions run in System Init, not in a remote worker:
-        // System Init owns the `power` unit type (it registers every
-        // `.power` definition at boot via `manager.register_power_units`)
-        // and executes the transition in-process.  Every `power`-type step
-        // is forwarded to the Init notify listener as `POWER=<action>`, and
-        // the job completes immediately (fire-and-forget: for terminal
-        // transitions the kernel takes the machine down before any reply
-        // could matter).  `task_id` above was reserved but never used.
-        if unit_type == "power" {
-            dispatch_power_step(
-                allocator.clone(),
-                name,
-                step_kind,
-                job_id,
-                primary_job_id,
-                unit_name,
-                &created_job_ids[..],
-            )
-            .await?;
-            continue;
-        }
 
         let (worker_envelope_tx, task_id) = match (worker_chan, task_id) {
             (Some(tx), tid) => (tx, tid),
@@ -4510,6 +4322,52 @@ mod tests {
             &call.unit_name,
             kind,
         );
+    }
+
+    #[tokio::test]
+    async fn power_jobs_are_dispatched_to_a_registered_worker() {
+        let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
+        alloc
+            .write()
+            .units
+            .insert("halt.power".into(), make_unit("halt.power"));
+        let err = enqueue_job(
+            alloc.clone(),
+            "halt.power",
+            JobKind::Start,
+            JobMode::Replace,
+        )
+        .await
+        .expect_err("power requires a registered worker");
+        assert!(err.to_string().contains("No worker"), "{err}");
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        alloc.write().workers.insert(
+            "system-i-1".into(),
+            WorkerEntry {
+                worker_id: "system-i-1".into(),
+                unit_types: vec!["power".into()],
+                supports_unit_define: false,
+                supports_resource_prepare: false,
+                ready: true,
+                envelope_tx: tx,
+            },
+        );
+        enqueue_job(alloc, "halt.power", JobKind::Start, JobMode::Replace)
+            .await
+            .expect("power worker receives the job");
+        let frame = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let env = Envelope::decode(frame.as_ref()).unwrap();
+        assert_eq!(env.method, "method.call");
+        let call = sysa::proto::MethodCall::decode(env.payload.as_slice()).unwrap();
+        assert_eq!(
+            (call.method.as_str(), call.unit_name.as_str()),
+            ("start", "halt.power")
+        );
+        assert!(!call.invocation_id.is_empty());
     }
 
     #[test]

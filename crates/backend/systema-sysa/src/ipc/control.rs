@@ -1258,8 +1258,7 @@ async fn manager_daemon_reload(allocator: &AllocatorHandle) -> Result<Envelope> 
 /// (`poweroff.power`, `reboot.power`, ...) and pushes them over the control
 /// plane at boot.  System A merges them idempotently (the same path as the
 /// finder commit path) and injects DefaultDependencies=; the units then
-/// dispatch to System Init through `POWER=<action>` datagrams, so no
-/// `power` worker is ever registered.
+/// dispatch through System Init's registered `power` worker.
 async fn manager_register_power_units(
     allocator: &AllocatorHandle,
     env: Envelope,
