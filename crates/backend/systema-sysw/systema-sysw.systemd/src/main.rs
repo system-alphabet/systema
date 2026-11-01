@@ -107,6 +107,15 @@ async fn main() -> Result<()> {
     // --log-file / SYSTEMA_LOG_FILE / the built-in default.
     sysa::logging::init_daemon("systema-sysw.systemd", args.log_file.clone(), log_level);
 
+    // Create /run/systemd/system if it doesn't exist.  Many systemd units
+    // expect this directory to be present; it belongs to the D-Bus surface
+    // (System Wrapper).
+    let runstatedir = sysa::paths::instance().runstatedir;
+    let systemd_system_dir = format!("{runstatedir}/systemd/system");
+    if let Err(e) = std::fs::create_dir_all(&systemd_system_dir) {
+        tracing::warn!("Failed to create {systemd_system_dir}: {e}");
+    }
+
     // Reconnect loop: keep serving D-Bus across control-session restarts.
     // A SIGTERM/SIGINT request (from System Init or a console) ends it.
     loop {
