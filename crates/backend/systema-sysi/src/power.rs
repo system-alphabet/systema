@@ -164,6 +164,7 @@ fn power_unit_ir(unit_name: &str) -> Option<UnitIR> {
         automount: None,
         timer: None,
         socket: None,
+        path: None,
         resource_control: None,
         conditions: None,
         asserts: None,

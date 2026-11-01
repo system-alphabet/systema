@@ -31,3 +31,6 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 configparser.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

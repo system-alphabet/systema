@@ -400,12 +400,33 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
             }
         }
         UnitKind::Socket => {
-            if config.get("socket", "listenstream").is_some()
-                || config.get("socket", "listendatagram").is_some()
-                || config.get("socket", "accept").is_some()
-            {
+            if config.get_map_ref().contains_key("socket") {
                 let mut sock = unit.socket.take().unwrap_or_default();
-                parse_socket_section(&config, &mut sock, &unit.name)?;
+                let mut parsed = SocketSection::default();
+                parse_socket_section(&config, &mut parsed, &unit.name)?;
+                macro_rules! copy_socket {
+                    ($key:literal, $field:ident) => {
+                        if config.get("socket", $key).is_some() {
+                            sock.$field = parsed.$field;
+                        }
+                    };
+                }
+                copy_socket!("accept", accept);
+                copy_socket!("service", service);
+                copy_socket!("socketuser", socket_user);
+                copy_socket!("socketgroup", socket_group);
+                copy_socket!("socketmode", socket_mode);
+                copy_socket!("directorymode", directory_mode);
+                copy_socket!("maxconnections", max_connections);
+                copy_socket!("backlog", backlog);
+                copy_socket!("bindipv6only", bind_ipv6_only);
+                copy_socket!("freebind", free_bind);
+                copy_socket!("transparent", transparent);
+                copy_socket!("broadcast", broadcast);
+                copy_socket!("passcredentials", pass_credentials);
+                copy_socket!("passsecurity", pass_security);
+                copy_socket!("timeoutsec", timeout_sec);
+                apply_socket_list_values(&preprocessed, &mut sock, &unit.name);
                 unit.socket = Some(sock);
             }
         }
@@ -417,9 +438,23 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
             }
         }
         UnitKind::Path => {
-            if config.get("path", "pathexists").is_some() || config.get("path", "unit").is_some() {
+            if config.get_map_ref().contains_key("path") {
                 let mut path_sec = unit.path.take().unwrap_or_default();
-                parse_path_section(&config, &mut path_sec, &unit.name)?;
+                let mut parsed = PathSection::default();
+                parse_path_section(&config, &mut parsed, &unit.name)?;
+                macro_rules! copy_path {
+                    ($key:literal, $field:ident) => {
+                        if config.get("path", $key).is_some() {
+                            path_sec.$field = parsed.$field;
+                        }
+                    };
+                }
+                copy_path!("unit", unit);
+                copy_path!("makedirectory", make_directory);
+                copy_path!("directorymode", directory_mode);
+                copy_path!("triggerlimitintervalsec", trigger_limit_interval_sec);
+                copy_path!("triggerlimitburst", trigger_limit_burst);
+                apply_path_list_values(&preprocessed, &mut path_sec, &unit.name);
                 unit.path = Some(path_sec);
             }
         }
@@ -568,7 +603,8 @@ fn is_append_key(section: &str, key: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn parse_unit_content(name: &str, content: &str) -> Result<UnitFile> {
-    let processed = merge_append_keys(&preprocess_content(content));
+    let preprocessed = preprocess_content(content);
+    let processed = merge_append_keys(&preprocessed);
     let mut config = unit_ini(); // case-insensitive (normalizes to lowercase)
     config.read(processed).map_err(|e| {
         anyhow::anyhow!(sysa::l10n::fmt(
@@ -655,6 +691,7 @@ fn parse_unit_content(name: &str, content: &str) -> Result<UnitFile> {
                     &[("name", name)],
                 )
             })?;
+            apply_socket_list_values(&preprocessed, &mut sock, name);
             unit.socket = Some(sock);
         }
         UnitKind::Swap => {
@@ -675,6 +712,7 @@ fn parse_unit_content(name: &str, content: &str) -> Result<UnitFile> {
                     &[("name", name)],
                 )
             })?;
+            apply_path_list_values(&preprocessed, &mut path_sec, name);
             unit.path = Some(path_sec);
         }
         UnitKind::Slice => {
@@ -1488,37 +1526,6 @@ fn parse_timer_section(config: &Ini, tmr: &mut TimerSection, name: &str) -> Resu
 }
 
 fn parse_socket_section(config: &Ini, sock: &mut SocketSection, name: &str) -> Result<()> {
-    let ls = get_str(config, "socket", "listenstream");
-    if !ls.is_empty() {
-        sock.listen_stream
-            .extend(split_vec(&expand_specifiers(&ls, name)));
-    }
-    let ld = get_str(config, "socket", "listendatagram");
-    if !ld.is_empty() {
-        sock.listen_datagram
-            .extend(split_vec(&expand_specifiers(&ld, name)));
-    }
-    let lsp = get_str(config, "socket", "listensequentialpacket");
-    if !lsp.is_empty() {
-        sock.listen_sequential_packet
-            .extend(split_vec(&expand_specifiers(&lsp, name)));
-    }
-    let lf = get_str(config, "socket", "listenfifo");
-    if !lf.is_empty() {
-        sock.listen_fifo
-            .extend(split_vec(&expand_specifiers(&lf, name)));
-    }
-    let ln = get_str(config, "socket", "listennetlink");
-    if !ln.is_empty() {
-        sock.listen_netlink
-            .extend(split_vec(&expand_specifiers(&ln, name)));
-    }
-    let lspec = get_str(config, "socket", "listenspecial");
-    if !lspec.is_empty() {
-        sock.listen_special
-            .extend(split_vec(&expand_specifiers(&lspec, name)));
-    }
-
     sock.accept = get_bool(config, "socket", "accept", false);
     sock.service = expand_specifiers(&get_str(config, "socket", "service"), name);
     sock.socket_user = get_str(config, "socket", "socketuser");
@@ -1547,35 +1554,47 @@ fn parse_swap_section(config: &Ini, swap: &mut SwapSection, name: &str) -> Resul
 
 fn parse_path_section(config: &Ini, path_sec: &mut PathSection, name: &str) -> Result<()> {
     let expand = |v: &str| expand_specifiers(v, name);
-
-    let pe = get_str(config, "path", "pathexists");
-    if !pe.is_empty() {
-        path_sec.path_exists.extend(split_vec(&expand(&pe)));
-    }
-    let peg = get_str(config, "path", "pathexistsglob");
-    if !peg.is_empty() {
-        path_sec.path_exists_glob.extend(split_vec(&expand(&peg)));
-    }
-    let pc = get_str(config, "path", "pathchanged");
-    if !pc.is_empty() {
-        path_sec.path_changed.extend(split_vec(&expand(&pc)));
-    }
-    let pm = get_str(config, "path", "pathmodified");
-    if !pm.is_empty() {
-        path_sec.path_modified.extend(split_vec(&expand(&pm)));
-    }
-    let dne = get_str(config, "path", "directorynotempty");
-    if !dne.is_empty() {
-        path_sec
-            .directory_not_empty
-            .extend(split_vec(&expand(&dne)));
-    }
     path_sec.unit = expand(&get_str(config, "path", "unit"));
     path_sec.make_directory = get_bool(config, "path", "makedirectory", false);
     path_sec.directory_mode = get_str(config, "path", "directorymode");
     path_sec.trigger_limit_interval_sec = get_u32(config, "path", "triggerlimitintervalsec", 2);
     path_sec.trigger_limit_burst = get_u32(config, "path", "triggerlimitburst", 200);
     Ok(())
+}
+
+fn apply_list_values(content: &str, section: &str, key: &str, dest: &mut Vec<String>, name: &str) {
+    for value in collect_key_lines(content, section, key) {
+        if value.is_empty() {
+            dest.clear();
+        } else {
+            dest.push(expand_specifiers(&value, name));
+        }
+    }
+}
+
+fn apply_socket_list_values(content: &str, sock: &mut SocketSection, name: &str) {
+    for (key, dest) in [
+        ("listenstream", &mut sock.listen_stream),
+        ("listendatagram", &mut sock.listen_datagram),
+        ("listensequentialpacket", &mut sock.listen_sequential_packet),
+        ("listenfifo", &mut sock.listen_fifo),
+        ("listennetlink", &mut sock.listen_netlink),
+        ("listenspecial", &mut sock.listen_special),
+    ] {
+        apply_list_values(content, "socket", key, dest, name);
+    }
+}
+
+fn apply_path_list_values(content: &str, path: &mut PathSection, name: &str) {
+    for (key, dest) in [
+        ("pathexists", &mut path.path_exists),
+        ("pathexistsglob", &mut path.path_exists_glob),
+        ("pathchanged", &mut path.path_changed),
+        ("pathmodified", &mut path.path_modified),
+        ("directorynotempty", &mut path.directory_not_empty),
+    ] {
+        apply_list_values(content, "path", key, dest, name);
+    }
 }
 
 /// Parse the resource-control directives (`systemd.resource-control(5)`)
@@ -1997,7 +2016,10 @@ SuccessAction=poweroff-force
         // StartLimitAction= transitions funnel through the same `.power`
         // dispatch path as SuccessAction= (System Init executes them via
         // libsystema-sysp).
-        assert_eq!(StartLimitAction::Reboot.power_unit_name(), Some("reboot.power"));
+        assert_eq!(
+            StartLimitAction::Reboot.power_unit_name(),
+            Some("reboot.power")
+        );
         assert_eq!(
             StartLimitAction::RebootForce.power_unit_name(),
             Some("reboot.power")
@@ -2205,6 +2227,42 @@ WantedBy=sockets.target
         // Absent directive → empty string (caller derives from unit name).
         let plain = parse_unit("plain.socket", "[Socket]\nListenStream=99\n").unwrap();
         assert_eq!(plain.socket.unwrap().service, "");
+    }
+
+    #[test]
+    fn socket_and_path_list_assignments_preserve_values_and_dropin_resets() {
+        let mut socket = parse_unit(
+            "udev.socket",
+            "[Socket]\nListenNetlink=kobject-uevent 1\nListenNetlink=route 2\nListenSequentialPacket=@/old\nSocketMode=0600\n",
+        ).unwrap();
+        assert_eq!(
+            socket.socket.as_ref().unwrap().listen_netlink,
+            ["kobject-uevent 1", "route 2"]
+        );
+        apply_dropin_content(
+            &mut socket,
+            "[Socket]\nListenSequentialPacket=\nListenSequentialPacket=@/new\n",
+        )
+        .unwrap();
+        let socket = socket.socket.unwrap();
+        assert_eq!(socket.listen_sequential_packet, ["@/new"]);
+        assert_eq!(socket.socket_mode, "0600");
+        assert_eq!(socket.listen_netlink, ["kobject-uevent 1", "route 2"]);
+
+        let mut path = parse_unit(
+            "acpid.path",
+            "[Path]\nPathExists=/old\nUnit=acpid.service\n",
+        )
+        .unwrap();
+        apply_dropin_content(
+            &mut path,
+            "[Path]\nPathExists=\nPathExists=/new\nPathChanged=/change\n",
+        )
+        .unwrap();
+        let path = path.path.unwrap();
+        assert_eq!(path.path_exists, ["/new"]);
+        assert_eq!(path.path_changed, ["/change"]);
+        assert_eq!(path.unit, "acpid.service");
     }
 
     // -----------------------------------------------------------------------

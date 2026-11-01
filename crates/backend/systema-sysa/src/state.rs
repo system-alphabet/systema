@@ -344,10 +344,14 @@ pub struct AllocatorState {
     /// Channel to push job-creation events to the in-process event bus so
     /// control-port sessions relay `JobNew` signals to System Wrapper.
     pub job_new_tx: Option<tokio::sync::mpsc::UnboundedSender<JobNewInfo>>,
-    /// Completion senders for serial task execution — keyed by task_id.
-    /// When a task completes, `handle_task_result` sends `()` through the
-    /// corresponding channel so the next task in the serial chain proceeds.
-    pub serial_completion_txs: HashMap<u64, tokio::sync::oneshot::Sender<()>>,
+    /// Completion marks for serial task execution — keyed by task_id.
+    ///
+    /// Each entry is a single-slot `watch` bool flipped to `true` when the
+    /// task's result arrives (success, failure or timeout alike): what the
+    /// wait relation needs is *completion*, not the outcome.  Several steps
+    /// of a transaction may wait on the same predecessor, which a per-task
+    /// `oneshot` cannot express — hence the broadcast-style channel.
+    pub serial_completion_txs: HashMap<u64, tokio::sync::watch::Sender<bool>>,
     /// Completion senders for pending `unit.define` requests — keyed by the
     /// request_id of the envelope sent to the worker.  The IPC receiver
     /// completes the channel when the worker's `unit.define_result` arrives.
@@ -999,6 +1003,9 @@ fn apply_ir_patch(ir: &UnitIR, uf: &mut UnitFile) {
     if let Some(sock) = &ir.socket {
         uf.socket = Some(socket_config_to_section(sock));
     }
+    if let Some(path) = &ir.path {
+        uf.path = Some(path_config_to_section(path));
+    }
 
     // Resource-control directives apply to whichever cgroup-owned section the
     // unit's kind owns (`[Service]`, `[Slice]`, or `[Scope]`).
@@ -1257,6 +1264,7 @@ fn socket_config_to_section(
     crate::unit::types::SocketSection {
         listen_stream: cfg.listen_stream.clone(),
         listen_datagram: cfg.listen_datagram.clone(),
+        listen_sequential_packet: cfg.listen_sequential_packet.clone(),
         listen_fifo: cfg.listen_fifo.clone(),
         listen_netlink: cfg.listen_netlink.clone(),
         accept: cfg.accept,
@@ -1267,6 +1275,21 @@ fn socket_config_to_section(
         backlog: cfg.backlog,
         directory_mode: cfg.directory_mode.clone(),
         ..Default::default()
+    }
+}
+
+fn path_config_to_section(cfg: &systema_sysf::ir::PathConfig) -> crate::unit::types::PathSection {
+    crate::unit::types::PathSection {
+        path_exists: cfg.path_exists.clone(),
+        path_exists_glob: cfg.path_exists_glob.clone(),
+        path_changed: cfg.path_changed.clone(),
+        path_modified: cfg.path_modified.clone(),
+        directory_not_empty: cfg.directory_not_empty.clone(),
+        unit: cfg.unit.clone(),
+        make_directory: cfg.make_directory,
+        directory_mode: cfg.directory_mode.clone(),
+        trigger_limit_interval_sec: cfg.trigger_limit_interval_sec,
+        trigger_limit_burst: cfg.trigger_limit_burst,
     }
 }
 
@@ -1395,6 +1418,7 @@ mod tests {
             automount: None,
             timer: None,
             socket: None,
+            path: None,
             conditions: None,
             asserts: None,
             wanted_by: None,
@@ -1728,6 +1752,7 @@ mod tests {
             automount: None,
             timer: None,
             socket: None,
+            path: None,
             conditions: None,
             asserts: None,
             wanted_by: None,
@@ -1764,6 +1789,7 @@ mod tests {
             automount: None,
             timer: None,
             socket: None,
+            path: None,
             conditions: None,
             asserts: None,
             wanted_by: None,
@@ -1828,6 +1854,7 @@ mod tests {
             automount: None,
             timer: None,
             socket: None,
+            path: None,
             conditions: None,
             asserts: None,
             wanted_by: None,
@@ -2124,7 +2151,10 @@ mod tests {
         // Committing a staging area that was never created is an idempotent
         // no-op (a consumed area must not be reported as a refused commit
         // when concurrent finder cycles share a fixed staging name).
-        assert_eq!(state.commit_staging(7, "systema-sysm/discovery").unwrap(), 0);
+        assert_eq!(
+            state.commit_staging(7, "systema-sysm/discovery").unwrap(),
+            0
+        );
         assert_eq!(
             state.commit_staging(7, "systema-sysd/discovery").unwrap(),
             0

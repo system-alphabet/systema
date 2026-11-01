@@ -27,6 +27,16 @@ enum BoundSocket {
     Netlink(RawFd),
 }
 
+impl Drop for BoundSocket {
+    fn drop(&mut self) {
+        if let BoundSocket::Udp(fd) | BoundSocket::Fifo(fd) | BoundSocket::Netlink(fd) = self {
+            unsafe {
+                libc::close(*fd);
+            }
+        }
+    }
+}
+
 /// Runtime state for one managed socket unit.
 pub struct ManagedSocket {
     listeners: Vec<BoundSocket>,
@@ -45,7 +55,10 @@ pub fn new_manager() -> SocketManager {
 pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketConfig) -> Result<()> {
     let mut guard = manager.lock();
     if guard.contains_key(unit_name) {
-        anyhow::bail!(sysa::l10n::t_("Socket '{unit_name}' is already running."));
+        anyhow::bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("Socket '{unit_name}' is already running."),
+            &[("unit_name", unit_name)]
+        ));
     }
 
     let mut listeners: Vec<BoundSocket> = Vec::new();
@@ -57,38 +70,46 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
 
     for addr in &config.listen {
         if !addr.stream.is_empty() {
-            if let Some(listener) = bind_stream(&addr.stream, config.backlog, socket_mode, directory_mode).with_context(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("Failed to bind ListenStream '{addr_stream}'."),
-                    &[("addr_stream", &addr.stream.to_string())],
-                )
-            })? {
+            if let Some(listener) =
+                bind_stream(&addr.stream, config.backlog, socket_mode, directory_mode)
+                    .with_context(|| {
+                        sysa::l10n::fmt(
+                            sysa::l10n::t_("Failed to bind ListenStream '{addr_stream}'."),
+                            &[("addr_stream", &addr.stream.to_string())],
+                        )
+                    })?
+            {
                 listeners.push(listener);
             }
         }
         if !addr.datagram.is_empty() {
-            let fd = bind_datagram(&addr.datagram, socket_mode, directory_mode).with_context(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("Failed to bind ListenDatagram '{addr_datagram}'."),
-                    &[("addr_datagram", &addr.datagram.to_string())],
-                )
-            })?;
+            let fd =
+                bind_datagram(&addr.datagram, socket_mode, directory_mode).with_context(|| {
+                    sysa::l10n::fmt(
+                        sysa::l10n::t_("Failed to bind ListenDatagram '{addr_datagram}'."),
+                        &[("addr_datagram", &addr.datagram.to_string())],
+                    )
+                })?;
             listeners.push(BoundSocket::Udp(fd));
         }
         if !addr.sequential_packet.is_empty() {
-            if let Some(listener) = bind_seqpacket(&addr.sequential_packet, config.backlog, socket_mode, directory_mode)
-                .with_context(|| {
-                    sysa::l10n::fmt(
-                        sysa::l10n::t_(
-                            "Failed to bind ListenSequentialPacket '{addr_sequential_packet}'.",
-                        ),
-                        &[(
-                            "addr_sequential_packet",
-                            &addr.sequential_packet.to_string(),
-                        )],
-                    )
-                })?
-            {
+            if let Some(listener) = bind_seqpacket(
+                &addr.sequential_packet,
+                config.backlog,
+                socket_mode,
+                directory_mode,
+            )
+            .with_context(|| {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_(
+                        "Failed to bind ListenSequentialPacket '{addr_sequential_packet}'.",
+                    ),
+                    &[(
+                        "addr_sequential_packet",
+                        &addr.sequential_packet.to_string(),
+                    )],
+                )
+            })? {
                 listeners.push(listener);
             }
         }
@@ -104,32 +125,25 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
         if !addr.netlink.is_empty() {
             let fd = bind_netlink(&addr.netlink).with_context(|| {
                 sysa::l10n::fmt(
-                    sysa::l10n::t_(
-                        "Failed to bind ListenNetlink '{addr_netlink}'.",
-                    ),
-                    &[(
-                        "addr_netlink",
-                        &addr.netlink.to_string(),
-                    )],
+                    sysa::l10n::t_("Failed to bind ListenNetlink '{addr_netlink}'."),
+                    &[("addr_netlink", &addr.netlink.to_string())],
                 )
             })?;
             listeners.push(BoundSocket::Netlink(fd));
         }
     }
 
-    let any_address = config
-        .listen
-        .iter()
-        .any(|addr| {
-            !addr.stream.is_empty()
-                || !addr.datagram.is_empty()
-                || !addr.sequential_packet.is_empty()
-                || !addr.fifo.is_empty()
-                || !addr.netlink.is_empty()
-        });
+    let any_address = config.listen.iter().any(|addr| {
+        !addr.stream.is_empty()
+            || !addr.datagram.is_empty()
+            || !addr.sequential_packet.is_empty()
+            || !addr.fifo.is_empty()
+            || !addr.netlink.is_empty()
+    });
     if !any_address {
-        anyhow::bail!(sysa::l10n::t_(
-            "Socket '{unit_name}' has no listen addresses configured."
+        anyhow::bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("Socket '{unit_name}' has no listen addresses configured."),
+            &[("unit_name", unit_name)]
         ));
     }
 
@@ -270,9 +284,14 @@ fn probe_live_listener(path: &std::path::Path) -> bool {
     std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
-fn bind_stream(address: &str, backlog: u32, socket_mode: u32, directory_mode: u32) -> Result<Option<BoundSocket>> {
+fn bind_stream(
+    address: &str,
+    backlog: u32,
+    socket_mode: u32,
+    directory_mode: u32,
+) -> Result<Option<BoundSocket>> {
     if address.starts_with(ABSTRACT_PREFIX) {
-        bind_abstract_unix(address, backlog).map(Some)
+        bind_abstract_unix(address, backlog, libc::SOCK_STREAM).map(Some)
     } else if address.starts_with('/') {
         let path = PathBuf::from(address);
         // Never clobber a live listener: if another process is already
@@ -297,15 +316,15 @@ fn bind_stream(address: &str, backlog: u32, socket_mode: u32, directory_mode: u3
                     )
                 })?;
                 // Set directory permissions (systemd uses DirectoryMode=, default 0755).
-                std::fs::set_permissions(
-                    parent,
-                    PermissionsExt::from_mode(directory_mode),
-                ).with_context(|| {
-                    sysa::l10n::fmt(
-                        sysa::l10n::t_("Cannot set directory permissions for socket '{address}'."),
-                        &[("address", address)],
-                    )
-                })?;
+                std::fs::set_permissions(parent, PermissionsExt::from_mode(directory_mode))
+                    .with_context(|| {
+                        sysa::l10n::fmt(
+                            sysa::l10n::t_(
+                                "Cannot set directory permissions for socket '{address}'.",
+                            ),
+                            &[("address", address)],
+                        )
+                    })?;
             }
         }
         let _ = std::fs::remove_file(&path);
@@ -316,15 +335,14 @@ fn bind_stream(address: &str, backlog: u32, socket_mode: u32, directory_mode: u3
             )
         })?;
         // Set socket file permissions (systemd uses SocketMode=, default 0666).
-        std::fs::set_permissions(
-            &path,
-            PermissionsExt::from_mode(socket_mode),
-        ).with_context(|| {
-            sysa::l10n::fmt(
-                sysa::l10n::t_("Cannot set socket permissions at '{address}'."),
-                &[("address", address)],
-            )
-        })?;
+        std::fs::set_permissions(&path, PermissionsExt::from_mode(socket_mode)).with_context(
+            || {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("Cannot set socket permissions at '{address}'."),
+                    &[("address", address)],
+                )
+            },
+        )?;
         // Set listen backlog (std UnixListener doesn't expose a method for this,
         // so it uses the kernel default (SOMAXCONN).  systemd's Backlog= maps to
         // listen(fd, backlog) which is already called by bind().
@@ -336,7 +354,10 @@ fn bind_stream(address: &str, backlog: u32, socket_mode: u32, directory_mode: u3
                 &[("address", address)],
             )
         })?;
-        info!("Bound Unix stream at '{}' (mode {:o})", address, socket_mode);
+        info!(
+            "Bound Unix stream at '{}' (mode {:o})",
+            address, socket_mode
+        );
         Ok(Some(BoundSocket::UnixStream(listener)))
     } else {
         let addr = resolve_tcp_addr(address)?;
@@ -365,9 +386,9 @@ fn bind_stream(address: &str, backlog: u32, socket_mode: u32, directory_mode: u3
 
 /// Bind a Unix stream socket with an abstract address (@ → \0 prefix).
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn new_socket_fd() -> Result<RawFd> {
+fn new_socket_fd(socket_type: libc::c_int) -> Result<RawFd> {
     unsafe {
-        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+        let fd = libc::socket(libc::AF_UNIX, socket_type, 0);
         if fd < 0 {
             let e = std::io::Error::last_os_error();
             anyhow::bail!(sysa::l10n::fmt(
@@ -385,7 +406,11 @@ fn new_socket_fd() -> Result<RawFd> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn bind_abstract_unix(address: &str, backlog: u32) -> Result<BoundSocket> {
+fn bind_abstract_unix(
+    address: &str,
+    backlog: u32,
+    socket_type: libc::c_int,
+) -> Result<BoundSocket> {
     use std::os::unix::prelude::*;
 
     let inner = address.trim_start_matches(ABSTRACT_PREFIX);
@@ -393,7 +418,7 @@ fn bind_abstract_unix(address: &str, backlog: u32) -> Result<BoundSocket> {
     let bytes = sun_path.as_bytes();
     let path_len = bytes.len().min(107);
 
-    let fd = new_socket_fd()?;
+    let fd = new_socket_fd(socket_type)?;
 
     unsafe {
         let mut addr: libc::sockaddr_un = std::mem::zeroed();
@@ -421,7 +446,11 @@ fn bind_abstract_unix(address: &str, backlog: u32) -> Result<BoundSocket> {
         }
 
         let backlog = if backlog > 0 { backlog as i32 } else { 128 };
-        libc::listen(fd, backlog);
+        if libc::listen(fd, backlog) < 0 {
+            let error = std::io::Error::last_os_error();
+            libc::close(fd);
+            return Err(error.into());
+        }
     }
 
     let std_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(fd) };
@@ -438,7 +467,11 @@ fn bind_abstract_unix(address: &str, backlog: u32) -> Result<BoundSocket> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn bind_abstract_unix(address: &str, _backlog: u32) -> Result<BoundSocket> {
+fn bind_abstract_unix(
+    address: &str,
+    _backlog: u32,
+    _socket_type: libc::c_int,
+) -> Result<BoundSocket> {
     let trimmed = address.trim_start_matches(ABSTRACT_PREFIX);
     anyhow::bail!(sysa::l10n::fmt(sysa::l10n::t_("Abstract Unix sockets (prefix '@') are not supported on this platform. Use a filesystem path like '/tmp/{trimmed}' instead."), &[("trimmed", &trimmed.to_string())]));
 }
@@ -556,15 +589,15 @@ fn bind_unix_datagram(address: &str, socket_mode: u32, directory_mode: u32) -> R
                     )
                 })?;
                 // Set directory permissions (systemd uses DirectoryMode=, default 0755).
-                std::fs::set_permissions(
-                    parent,
-                    PermissionsExt::from_mode(directory_mode),
-                ).with_context(|| {
-                    sysa::l10n::fmt(
-                        sysa::l10n::t_("Cannot set directory permissions for socket '{address}'."),
-                        &[("address", address)],
-                    )
-                })?;
+                std::fs::set_permissions(parent, PermissionsExt::from_mode(directory_mode))
+                    .with_context(|| {
+                        sysa::l10n::fmt(
+                            sysa::l10n::t_(
+                                "Cannot set directory permissions for socket '{address}'.",
+                            ),
+                            &[("address", address)],
+                        )
+                    })?;
             }
         }
         let _ = std::fs::remove_file(&path);
@@ -600,28 +633,117 @@ fn bind_unix_datagram(address: &str, socket_mode: u32, directory_mode: u32) -> R
             }
         }
         // Set socket file permissions (systemd uses SocketMode=, default 0666).
-        std::fs::set_permissions(
-            path,
-            PermissionsExt::from_mode(socket_mode),
-        ).with_context(|| {
-            sysa::l10n::fmt(
-                sysa::l10n::t_("Cannot set socket permissions at '{address}'."),
-                &[("address", address)],
-            )
-        })?;
-        info!("Bound Unix datagram at '{}' (mode {:o})", address, socket_mode);
+        std::fs::set_permissions(path, PermissionsExt::from_mode(socket_mode)).with_context(
+            || {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("Cannot set socket permissions at '{address}'."),
+                    &[("address", address)],
+                )
+            },
+        )?;
+        info!(
+            "Bound Unix datagram at '{}' (mode {:o})",
+            address, socket_mode
+        );
         Ok(fd)
     }
 }
 
-fn bind_seqpacket(address: &str, backlog: u32, socket_mode: u32, directory_mode: u32) -> Result<Option<BoundSocket>> {
+fn bind_seqpacket(
+    address: &str,
+    backlog: u32,
+    socket_mode: u32,
+    directory_mode: u32,
+) -> Result<Option<BoundSocket>> {
     if address.starts_with(ABSTRACT_PREFIX) {
-        bind_abstract_unix(address, backlog).map(Some)
-    } else {
-        // SOCK_SEQPACKET not available in std UnixListener; use SOCK_STREAM
-        // which behaves similarly enough for our purposes.
-        bind_stream(address, backlog, socket_mode, directory_mode)
+        return bind_abstract_unix(address, backlog, libc::SOCK_SEQPACKET).map(Some);
     }
+    let path = std::path::Path::new(address);
+    if !path.is_absolute() {
+        anyhow::bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("Cannot bind Unix stream at '{address}'."),
+            &[("address", address)]
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+            std::fs::set_permissions(parent, PermissionsExt::from_mode(directory_mode))?;
+        }
+    }
+    let path_bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str());
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if path_bytes.len() >= addr.sun_path.len() || path_bytes.contains(&0) {
+        anyhow::bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("Cannot bind Unix stream at '{address}'."),
+            &[("address", address)]
+        ));
+    }
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+        target_os = "macos"
+    ))]
+    {
+        addr.sun_len = std::mem::size_of::<libc::sockaddr_un>() as u8;
+    }
+    for (dst, src) in addr.sun_path.iter_mut().zip(path_bytes) {
+        *dst = *src as libc::c_char;
+    }
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(fd) };
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            use std::os::unix::fs::FileTypeExt;
+            if !metadata.file_type().is_socket() {
+                anyhow::bail!(sysa::l10n::fmt(
+                    sysa::l10n::t_("Cannot bind Unix stream at '{address}'."),
+                    &[("address", address)]
+                ));
+            }
+            let result = unsafe {
+                libc::connect(
+                    fd,
+                    &addr as *const _ as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+                )
+            };
+            if result == 0 {
+                return Err(std::io::Error::from(std::io::ErrorKind::AddrInUse).into());
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::ConnectionRefused {
+                return Err(error.into());
+            }
+            std::fs::remove_file(path)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let ret = unsafe {
+        libc::bind(
+            fd,
+            &addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+        )
+    };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    if unsafe { libc::listen(fd, if backlog > 0 { backlog as i32 } else { 128 }) } < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    std::fs::set_permissions(path, PermissionsExt::from_mode(socket_mode))?;
+    listener.set_nonblocking(true)?;
+    Ok(Some(BoundSocket::UnixStream(UnixListener::from_std(
+        listener,
+    )?)))
 }
 
 /// Bind a netlink socket for a `ListenNetlink=` address.
@@ -631,9 +753,7 @@ fn bind_seqpacket(address: &str, backlog: u32, socket_mode: u32, directory_mode:
 fn bind_netlink(address: &str) -> Result<RawFd> {
     let parts: Vec<&str> = address.split_whitespace().collect();
     if parts.is_empty() {
-        anyhow::bail!(sysa::l10n::t_(
-            "ListenNetlink address is empty."
-        ));
+        anyhow::bail!(sysa::l10n::t_("ListenNetlink address is empty."));
     }
 
     let proto_id: libc::c_int = match parts[0] {
@@ -644,22 +764,30 @@ fn bind_netlink(address: &str) -> Result<RawFd> {
         "netfilter" => libc::NETLINK_NETFILTER,
         "dnrtmsg" => libc::NETLINK_DNRTMSG,
         "kobject-uevent-1" => libc::NETLINK_KOBJECT_UEVENT,
-        _ => {
-            parts[0].parse::<libc::c_int>().unwrap_or_else(|_| {
-                warn!(
-                    "Unknown netlink protocol '{}', defaulting to kobject-uevent",
-                    parts[0]
-                );
-                libc::NETLINK_KOBJECT_UEVENT
-            })
-        }
+        _ => parts[0].parse::<libc::c_int>().with_context(|| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("Invalid netlink protocol in '{address}'."),
+                &[("address", address)],
+            )
+        })?,
     };
 
     let groups: libc::c_uint = if parts.len() > 1 {
-        parts[1].parse::<libc::c_uint>().unwrap_or(0)
+        parts[1].parse::<libc::c_uint>().with_context(|| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("Invalid netlink group in '{address}'."),
+                &[("address", address)],
+            )
+        })?
     } else {
         0
     };
+    if parts.len() > 2 {
+        anyhow::bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("Invalid netlink address '{address}'."),
+            &[("address", address)]
+        ));
+    }
 
     let fd = unsafe {
         let fd = libc::socket(
@@ -707,7 +835,9 @@ fn bind_netlink(address: &str) -> Result<RawFd> {
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn bind_netlink(_address: &str) -> Result<RawFd> {
-    anyhow::bail!(sysa::l10n::t_("Netlink sockets are only supported on Linux."));
+    anyhow::bail!(sysa::l10n::t_(
+        "Netlink sockets are only supported on Linux."
+    ));
 }
 
 fn create_fifo(path: &str, mode: &str) -> Result<RawFd> {
@@ -906,6 +1036,71 @@ fn try_clone_unix(l: &UnixListener) -> UnixListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn sequential_packet_socket_has_the_correct_socket_type() {
+        let dir = std::env::temp_dir().join(format!("systema-seqpacket-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("listener.sock");
+        let path_string = path.to_str().unwrap();
+        let listener = bind_seqpacket(path_string, 8, 0o600, 0o700)
+            .unwrap()
+            .unwrap();
+        let BoundSocket::UnixStream(ref inner) = listener else {
+            panic!("expected Unix listener")
+        };
+        let mut kind: libc::c_int = 0;
+        let mut len = std::mem::size_of_val(&kind) as libc::socklen_t;
+        let result = unsafe {
+            libc::getsockopt(
+                inner.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                &mut kind as *mut _ as *mut _,
+                &mut len,
+            )
+        };
+        assert_eq!(result, 0);
+        assert_eq!(kind, libc::SOCK_SEQPACKET);
+        drop(listener);
+        let listener = bind_seqpacket(path_string, 8, 0o600, 0o700)
+            .unwrap()
+            .unwrap();
+        drop(listener);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn invalid_netlink_inputs_are_rejected() {
+        assert!(bind_netlink("unknown 1").is_err());
+        assert!(bind_netlink("kobject-uevent invalid").is_err());
+        assert!(bind_netlink("kobject-uevent 1 extra").is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[tokio::test]
+    async fn abstract_seqpacket_has_correct_type() {
+        let address = format!("@systema-seqpacket-{}", std::process::id());
+        let listener = bind_seqpacket(&address, 8, 0o600, 0o700).unwrap().unwrap();
+        let BoundSocket::UnixStream(ref inner) = listener else {
+            panic!("expected Unix listener")
+        };
+        let mut kind: libc::c_int = 0;
+        let mut len = std::mem::size_of_val(&kind) as libc::socklen_t;
+        let result = unsafe {
+            libc::getsockopt(
+                inner.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                &mut kind as *mut _ as *mut _,
+                &mut len,
+            )
+        };
+        assert_eq!(result, 0);
+        assert_eq!(kind, libc::SOCK_SEQPACKET);
+    }
 
     #[test]
     fn bind_datagram_unix_path() {

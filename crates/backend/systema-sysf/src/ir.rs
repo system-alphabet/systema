@@ -264,6 +264,8 @@ pub struct ResourceControl {
 pub struct SocketConfig {
     pub listen_stream: Vec<String>,
     pub listen_datagram: Vec<String>,
+    #[serde(default)]
+    pub listen_sequential_packet: Vec<String>,
     pub listen_fifo: Vec<String>,
     pub listen_netlink: Vec<String>,
     pub accept: bool,
@@ -273,6 +275,21 @@ pub struct SocketConfig {
     pub backlog: u32,
     pub service: String,
     pub directory_mode: String,
+}
+
+/// Path-specific configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PathConfig {
+    pub path_exists: Vec<String>,
+    pub path_exists_glob: Vec<String>,
+    pub path_changed: Vec<String>,
+    pub path_modified: Vec<String>,
+    pub directory_not_empty: Vec<String>,
+    pub unit: String,
+    pub make_directory: bool,
+    pub directory_mode: String,
+    pub trigger_limit_interval_sec: u32,
+    pub trigger_limit_burst: u32,
 }
 
 /// Template metadata for a template definition or one of its instances.
@@ -371,6 +388,8 @@ pub struct UnitIR {
     pub automount: Option<AutomountConfig>,
     pub timer: Option<TimerConfig>,
     pub socket: Option<SocketConfig>,
+    #[serde(default)]
+    pub path: Option<PathConfig>,
 
     /// Resource-control (cgroup) limits parsed from the unit file.
     #[serde(default)]

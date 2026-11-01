@@ -183,6 +183,12 @@ pub struct PlanStep {
     pub matters_to_anchor: bool,
     /// Ordering constraints are ignored for this job.
     pub ignore_order: bool,
+    /// Units of sibling plan steps this step must await before its own
+    /// dispatch — the [`Transaction::finalize`] wait relation expressed by
+    /// unit name.  Only relations that actually order this step are listed,
+    /// so unrelated earlier steps do not stall it; the executor resolves
+    /// each name against the transaction's dispatch registry.
+    pub wait_for: Vec<String>,
 }
 
 /// The result of a transaction: the ordered set of unit operations.
@@ -534,12 +540,9 @@ impl Transaction {
         if !self.is_live(idx) {
             return;
         }
-        if delete_dependencies {
-            let targets: Vec<usize> = self.get(idx).outgoing.iter().map(|e| e.object).collect();
-            for t in targets {
-                self.delete_job(t, true);
-            }
-        }
+        // The job is unlinked before recursing into its dependencies (like
+        // systemd's `transaction_unlink_job()`), so a dependency cycle
+        // (a pulls in b, b pulls in a) terminates instead of recursing forever.
         let (unit, outgoing, incoming) = {
             let j = self.get_mut(idx);
             (
@@ -548,7 +551,7 @@ impl Transaction {
                 std::mem::take(&mut j.incoming),
             )
         };
-        for e in outgoing {
+        for e in &outgoing {
             self.remove_incoming(e.object, idx);
         }
         for e in incoming {
@@ -561,6 +564,11 @@ impl Transaction {
             }
         }
         self.arena[idx] = None;
+        if delete_dependencies {
+            for e in outgoing {
+                self.delete_job(e.object, true);
+            }
+        }
     }
 
     /// `transaction_delete_unit()`: delete every job of the unit.
@@ -1413,6 +1421,9 @@ impl Transaction {
                 anchor: t.anchor,
                 matters_to_anchor: t.matters_to_anchor,
                 ignore_order: t.ignore_order,
+                // Filled in below from the wait relation, after the
+                // topological sort has fixed the execution order.
+                wait_for: Vec::new(),
             });
         }
 
@@ -1449,7 +1460,18 @@ impl Transaction {
             return Err(PlanError::Cyclic);
         }
 
-        let ordered: Vec<PlanStep> = order.into_iter().map(|i| steps[i].clone()).collect();
+        let ordered: Vec<PlanStep> = order
+            .into_iter()
+            .map(|i| {
+                // The indices in `waits` refer to the pre-sorted step vector,
+                // so they are translated into unit names here — the
+                // reordered plan below keeps the wait relation valid through
+                // those names.
+                let mut s = steps[i].clone();
+                s.wait_for = waits[i].iter().map(|k| steps[*k].unit.clone()).collect();
+                s
+            })
+            .collect();
         Ok(TransactionPlan { steps: ordered })
     }
 }
@@ -1601,6 +1623,24 @@ mod tests {
 
     fn make_unit(name: &str) -> UnitFile {
         UnitFile::new(name)
+    }
+
+    #[test]
+    fn delete_job_with_dependencies_terminates_on_a_cycle() {
+        // Regression: garbage collection deleted a job whose dependencies
+        // formed a cycle (b <-> c) and recursed until the stack overflowed.
+        let mut t = Transaction::new();
+        let (a, _) = t.add_one_job("a.service", Start);
+        let (b, _) = t.add_one_job("b.service", Start);
+        let (c, _) = t.add_one_job("c.service", Start);
+        t.add_edge(a, b, true, false);
+        t.add_edge(b, c, true, false);
+        t.add_edge(c, b, true, false);
+
+        t.delete_job(a, true);
+
+        assert!(t.jobs.is_empty(), "every job in the closure is deleted");
+        assert!(!t.is_live(a) && !t.is_live(b) && !t.is_live(c));
     }
 
     fn with_requires(mut u: UnitFile, deps: &[&str]) -> UnitFile {
@@ -1975,14 +2015,7 @@ mod tests {
             m.insert("b.service".to_string(), Inactive);
             m
         };
-        let s = steps(
-            &units,
-            &states,
-            &HashMap::new(),
-            "x.target",
-            Stop,
-            Replace,
-        );
+        let s = steps(&units, &states, &HashMap::new(), "x.target", Stop, Replace);
         let a = s.iter().find(|x| x.unit == "a.service").unwrap();
         assert_eq!(a.job_type, Stop, "active requirer must be stopped");
         assert!(
@@ -2159,14 +2192,7 @@ mod tests {
             m.insert("b.service".to_string(), Active);
             m
         };
-        let s = steps(
-            &units,
-            &states,
-            &HashMap::new(),
-            "a.service",
-            Stop,
-            Replace,
-        );
+        let s = steps(&units, &states, &HashMap::new(), "a.service", Stop, Replace);
         let b = s.iter().find(|x| x.unit == "b.service").unwrap();
         assert_eq!(b.job_type, Stop);
         assert!(b.matters_to_anchor);
@@ -2183,14 +2209,7 @@ mod tests {
             m.insert("b.service".to_string(), Active);
             m
         };
-        let s = steps(
-            &units,
-            &states,
-            &HashMap::new(),
-            "a.service",
-            Stop,
-            Replace,
-        );
+        let s = steps(&units, &states, &HashMap::new(), "a.service", Stop, Replace);
         let b = s.iter().find(|x| x.unit == "b.service").unwrap();
         assert_eq!(b.job_type, Stop);
     }
@@ -2206,14 +2225,7 @@ mod tests {
             m.insert("b.service".to_string(), Active);
             m
         };
-        let s = steps(
-            &units,
-            &states,
-            &HashMap::new(),
-            "a.service",
-            Stop,
-            Replace,
-        );
+        let s = steps(&units, &states, &HashMap::new(), "a.service", Stop, Replace);
         let b = s.iter().find(|x| x.unit == "b.service").unwrap();
         assert_eq!(b.job_type, Stop);
     }

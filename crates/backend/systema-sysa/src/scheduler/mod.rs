@@ -47,6 +47,50 @@ fn job_kind_from_type(t: JobType) -> Option<JobKind> {
     }
 }
 
+async fn wait_for_predecessors(mut receivers: Vec<tokio::sync::watch::Receiver<bool>>) {
+    for rx in &mut receivers {
+        loop {
+            if *rx.borrow() {
+                break;
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+    }
+}
+
+/// Wait for a step's predecessors, then hand its `method.call` to the worker.
+/// A closed worker channel fails the job (and completes the root job as
+/// failed so the caller sees `JobRemoved`).
+async fn dispatch_after_predecessors(
+    allocator: AllocatorHandle,
+    wait_rxs: Vec<tokio::sync::watch::Receiver<bool>>,
+    worker_envelope_tx: tokio::sync::mpsc::Sender<bytes::Bytes>,
+    payload: bytes::Bytes,
+    job_id: u64,
+    name: String,
+    is_root: bool,
+) {
+    wait_for_predecessors(wait_rxs).await;
+    if worker_envelope_tx.send(payload).await.is_err() {
+        warn!("Worker channel closed for unit {}", name);
+        let mut state = allocator.write();
+        if let Some(job) = state.jobs.get_mut(&job_id) {
+            job.status = JobStatus::Failed(sysa::l10n::t_("Worker disconnected").to_string());
+        }
+        if is_root {
+            if let Some(ref tx) = state.job_completion_tx {
+                let _ = tx.send(JobCompletion {
+                    job_id,
+                    unit_name: name,
+                    result: JobResultKind::Failed,
+                });
+            }
+        }
+    }
+}
+
 /// Mode/type validation from systemd's `manager_add_job_full()`
 /// (`manager.c:2321-2347`):
 ///
@@ -87,6 +131,29 @@ fn check_mode_constraints(
         );
     }
     Ok(())
+}
+
+/// Enqueue a start job and wait until every step of its plan has been handed
+/// to its worker, i.e. until the step's ordering predecessors completed.
+///
+/// For batch callers that plan many transactions back to back (the boot
+/// control phase): the planner treats every running job as installed, so a
+/// batch that returns before earlier plans dispatch would plan later roots
+/// (default.target) against hundreds of in-flight jobs it cannot delete to
+/// break an ordering cycle.  Bus callers must use [`enqueue_start_with_mode`],
+/// which returns as soon as the job is queued.
+pub async fn enqueue_start_after_dispatch(
+    allocator: AllocatorHandle,
+    unit_name: &str,
+    mode: JobMode,
+) -> Result<u64> {
+    let mut dispatches = Vec::new();
+    let job_id =
+        enqueue_job_tracked(allocator, unit_name, JobKind::Start, mode, &mut dispatches).await?;
+    for dispatch in dispatches {
+        let _ = dispatch.await;
+    }
+    Ok(job_id)
 }
 
 /// Enqueue a start job with explicit mode.
@@ -547,13 +614,8 @@ pub async fn prepare_unit_cgroup(
         state.resource_prepare_txs.insert(request_id, tx);
     }
 
-    let env = sysa::ipc::make_envelope(
-        request_id,
-        "system-a",
-        worker_id,
-        "resource.prepare",
-        event,
-    )?;
+    let env =
+        sysa::ipc::make_envelope(request_id, "system-a", worker_id, "resource.prepare", event)?;
     let envelope_tx = {
         let state = allocator.read();
         state.workers.get(worker_id).map(|w| w.envelope_tx.clone())
@@ -802,6 +864,18 @@ pub async fn enqueue_job(
     unit_name: &str,
     kind: JobKind,
     mode: JobMode,
+) -> Result<u64> {
+    enqueue_job_tracked(allocator, unit_name, kind, mode, &mut Vec::new()).await
+}
+
+/// [`enqueue_job`], additionally collecting the spawned per-step dispatch
+/// tasks into `dispatches`.
+async fn enqueue_job_tracked(
+    allocator: AllocatorHandle,
+    unit_name: &str,
+    kind: JobKind,
+    mode: JobMode,
+    dispatches: &mut Vec<tokio::task::JoinHandle<()>>,
 ) -> Result<u64> {
     // Resolve alias names to their canonical unit before anything else, so an
     // alias (e.g. `display-manager.service`) never schedules a separate job.
@@ -1242,8 +1316,14 @@ pub async fn enqueue_job(
     let primary_job_id = next_job_id();
     let serial_mode = matches!(mode, JobMode::Replace | JobMode::ReplaceIrreversibly);
 
-    // For serial execution, chain tasks so each waits for the previous.
-    let mut serial_chain_rx: Option<tokio::sync::oneshot::Receiver<()>> = None;
+    // Per-step completion registry for this transaction: a step waits on
+    // the steps `finalize` ordered before it through the wait relation
+    // (`step_must_wait`: After=/Before= gated by stop/restart priority),
+    // carried as `PlanStep::wait_for`, not on the whole plan's progress.
+    // Steps skipped before dispatch (planner-resolved, already active or
+    // running, duplicate request) are pre-satisfied here so dependents
+    // still make progress.
+    let mut step_marks: HashMap<String, tokio::sync::watch::Receiver<bool>> = HashMap::new();
 
     // Create job records and dispatch tasks.
     let mut created_job_ids: Vec<(u64, String)> = Vec::new();
@@ -1252,6 +1332,11 @@ pub async fn enqueue_job(
         // Steps that need no worker interaction (Nop/VerifyActive) are
         // resolved by the planner; nothing is dispatched for them.
         let Some(step_kind) = job_kind_from_type(step.job_type) else {
+            // Planner-resolved steps (Nop/VerifyActive) complete before any
+            // dispatch happens; dependents treat them as satisfied.
+            let (mark_tx, mark_rx) = tokio::sync::watch::channel(true);
+            drop(mark_tx);
+            step_marks.insert(name.clone(), mark_rx);
             debug!(
                 "Skipping worker dispatch for {} ({})",
                 name,
@@ -1291,6 +1376,11 @@ pub async fn enqueue_job(
                 if is_root {
                     return Ok(existing_jid);
                 }
+                // The in-flight job is the one doing the work; dependents
+                // waiting on this step treat it as satisfied.
+                let (mark_tx, mark_rx) = tokio::sync::watch::channel(true);
+                drop(mark_tx);
+                step_marks.insert(name.clone(), mark_rx);
                 continue;
             }
         }
@@ -1312,6 +1402,10 @@ pub async fn enqueue_job(
             };
             if already_active {
                 debug!("Skipping Start for {} (unit already active)", name);
+                // Dependents waiting on this step treat it as satisfied.
+                let (mark_tx, mark_rx) = tokio::sync::watch::channel(true);
+                drop(mark_tx);
+                step_marks.insert(name.clone(), mark_rx);
                 if is_root {
                     {
                         let mut state = allocator.write();
@@ -1399,8 +1493,9 @@ pub async fn enqueue_job(
             _ => None,
         };
 
-        // Create a serial chain entry for this task.
-        let (next_serial_tx, next_serial_rx) = tokio::sync::oneshot::channel::<()>();
+        // Completion mark for this task; waiters reach it by unit name
+        // through `PlanStep::wait_for` (see the serial wait below).
+        let (step_mark_tx, step_mark_rx) = tokio::sync::watch::channel(false);
 
         // Record the job and the task_id → job_kind mapping.
         // Track invocation_id for GetUnitByInvocationID lookups.
@@ -1468,13 +1563,19 @@ pub async fn enqueue_job(
                     }
                 }
                 if serial_mode {
-                    state.serial_completion_txs.insert(task_id, next_serial_tx);
+                    state.serial_completion_txs.insert(task_id, step_mark_tx);
+                    step_marks.insert(name.clone(), step_mark_rx);
                 }
             }
         }
         if duplicate_job {
             // Nothing was dispatched; skip JobNew, the timeout monitor and
-            // the envelope send for this step.
+            // the envelope send for this step.  Dependents waiting on this
+            // step treat it as satisfied (the in-flight job is the one doing
+            // the work).
+            let (mark_tx, mark_rx) = tokio::sync::watch::channel(true);
+            drop(mark_tx);
+            step_marks.insert(name.clone(), mark_rx);
             continue;
         }
 
@@ -1592,52 +1693,47 @@ pub async fn enqueue_job(
         let mut buf = bytes::BytesMut::new();
         call_env.encode(&mut buf)?;
 
-        // In serial mode, wait for the previous task to complete before
-        // sending the next one.  The previous task's handle_task_result
-        // will signal through the serial chain channel.  Bounded so a
-        // never-completing predecessor cannot wedge the whole dispatch
-        // (the caller of this loop awaits it sequentially).
-        let serial_wait = async {
-            if serial_mode && is_root && serial_chain_rx.is_some() {
-                if let Some(rx) = serial_chain_rx.take() {
-                    let _ = rx.await;
-                }
-            }
-            if serial_mode && !is_root {
-                if let Some(rx) = serial_chain_rx.take() {
-                    let _ = rx.await;
-                }
-            }
+        // In serial mode, wait for this step's wait-relation predecessors —
+        // the `step_must_wait` edges (After=/Before= gated by stop/restart
+        // priority) the planner used to order the plan, carried in
+        // `PlanStep::wait_for`.  Dispatching after an arbitrary delay would
+        // violate unit ordering and can start services before prerequisites
+        // such as user-runtime-dir@UID.service have completed.
+        //
+        // The wait runs in a spawned task: like systemd's `StartUnit`, this
+        // function must return the job id as soon as the job is queued.
+        // logind issues `StartUnit` synchronously inside `CreateSession`, and
+        // the predecessor (user-runtime-dir@UID) in turn needs logind to
+        // answer a property read — waiting inline closes that loop and only
+        // the 25 s sd-bus timeout breaks it.
+        let wait_rxs: Vec<tokio::sync::watch::Receiver<bool>> = if serial_mode {
+            step.wait_for
+                .iter()
+                .filter_map(|u| step_marks.get(u).cloned())
+                .collect()
+        } else {
+            Vec::new()
         };
-        match tokio::time::timeout(Duration::from_secs(15), serial_wait).await {
-            Ok(()) => {}
-            Err(_) => {
-                warn!(
-                    "Serial chain wait timed out for {} (task {task_id}); dispatching anyway",
-                    name
-                );
-            }
+        if !wait_rxs.is_empty() {
+            debug!(
+                "Waiting to dispatch {} for predecessor jobs: {:?}",
+                name, step.wait_for
+            );
         }
-        if worker_envelope_tx.send(buf.freeze()).await.is_err() {
-            warn!("Worker channel closed for unit {}", name);
-            let mut state = allocator.write();
-            if let Some(job) = state.jobs.get_mut(&job_id) {
-                job.status = JobStatus::Failed(sysa::l10n::t_("Worker disconnected").to_string());
-            }
-            if is_root {
-                if let Some(ref tx) = state.job_completion_tx {
-                    let _ = tx.send(JobCompletion {
-                        job_id,
-                        unit_name: name.clone(),
-                        result: JobResultKind::Failed,
-                    });
-                }
-            }
-        }
+        dispatches.push(tokio::spawn(dispatch_after_predecessors(
+            allocator.clone(),
+            wait_rxs,
+            worker_envelope_tx,
+            buf.freeze(),
+            job_id,
+            name.clone(),
+            is_root,
+        )));
 
-        // Set up for the next iteration: the current task's serial_rx
-        // will be consumed after the next task completes.
-        serial_chain_rx = Some(next_serial_rx);
+        // The step's completion mark lives in the per-transaction registry
+        // (`step_marks` / `serial_completion_txs`); dependents reached it
+        // by unit name through `PlanStep::wait_for`, so no per-iteration
+        // chain handoff is needed here.
     }
 
     Ok(primary_job_id)
@@ -1833,7 +1929,7 @@ pub fn handle_task_result(
 
         // Signal serial chain continuation if this task was part of one.
         if let Some(tx) = state.serial_completion_txs.remove(&task_id) {
-            let _ = tx.send(());
+            let _ = tx.send(true);
         }
 
         // Clean up invocation_id tracking.
@@ -2430,7 +2526,7 @@ fn spawn_job_timeout(
                 // Advance the serial chain so a dependent step is not
                 // starved by a timed-out predecessor.
                 if let Some(tx) = state.serial_completion_txs.remove(&task_id) {
-                    let _ = tx.send(());
+                    let _ = tx.send(true);
                 }
             })
             .abort_handle();
@@ -2469,7 +2565,7 @@ fn spawn_job_timeout(
                 // Advance the serial chain so a dependent step is not
                 // starved by a timed-out predecessor.
                 if let Some(tx) = state.serial_completion_txs.remove(&task_id) {
-                    let _ = tx.send(());
+                    let _ = tx.send(true);
                 }
             })
             .abort_handle();
@@ -2500,7 +2596,7 @@ fn spawn_job_timeout(
                 // Advance the serial chain so a dependent step is not
                 // starved by a timed-out predecessor.
                 if let Some(tx) = state.serial_completion_txs.remove(&task_id) {
-                    let _ = tx.send(());
+                    let _ = tx.send(true);
                 }
             })
             .abort_handle();
@@ -2597,12 +2693,10 @@ async fn execute_start_limit_action(
             // async recursion cycle.
             let alloc = allocator.clone();
             tokio::spawn(async move {
-                if let Err(e) = enqueue_job(alloc, power_unit, JobKind::Start, JobMode::Replace)
-                    .await
+                if let Err(e) =
+                    enqueue_job(alloc, power_unit, JobKind::Start, JobMode::Replace).await
                 {
-                    warn!(
-                        "Failed to dispatch StartLimitAction transition {power_unit}: {e}"
-                    );
+                    warn!("Failed to dispatch StartLimitAction transition {power_unit}: {e}");
                 }
             });
         }
@@ -2819,6 +2913,19 @@ mod tests {
     };
     use systema_sysf::ir::{DependencySet, UnitIR, UnitType};
 
+    #[tokio::test(start_paused = true)]
+    async fn dependency_wait_does_not_dispatch_after_arbitrary_delay() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let waiter = tokio::spawn(wait_for_predecessors(vec![rx]));
+
+        tokio::time::advance(Duration::from_secs(16)).await;
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        tx.send(true).unwrap();
+        waiter.await.unwrap();
+    }
+
     #[test]
     fn build_unit_config_preserves_dbus_bus_name() {
         let mut unit = crate::unit::types::UnitFile::new("deepin-authenticate.service");
@@ -2833,6 +2940,65 @@ mod tests {
         let service = config.service.expect("service config");
         assert_eq!(service.service_type, "dbus");
         assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
+    }
+
+    #[test]
+    fn finder_path_and_socket_ir_reaches_worker_config() {
+        let path_ir = UnitIR {
+            id: "acpid.path".into(),
+            unit_type: Some(systema_sysf::ir::UnitType::Path),
+            path: Some(systema_sysf::ir::PathConfig {
+                path_exists: vec!["/run/acpid.socket".into()],
+                path_changed: vec!["/run/acpid".into()],
+                unit: "acpid.service".into(),
+                make_directory: true,
+                directory_mode: "0750".into(),
+                trigger_limit_interval_sec: 5,
+                trigger_limit_burst: 7,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let socket_ir = UnitIR {
+            id: "udev.socket".into(),
+            unit_type: Some(systema_sysf::ir::UnitType::Socket),
+            socket: Some(systema_sysf::ir::SocketConfig {
+                listen_sequential_packet: vec!["@/org/kernel/udev/udevd".into()],
+                listen_netlink: vec!["kobject-uevent 1".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut state = AllocatorState::new();
+        let units = [path_ir, socket_ir]
+            .into_iter()
+            .map(|ir| (ir.id.clone(), ir))
+            .collect();
+        state.init_staging_area(42, "finder", units).unwrap();
+        state.commit_staging(42, "finder").unwrap();
+        let path = build_unit_config(&state.units["acpid.path"], &state.units, "")
+            .path
+            .unwrap();
+        assert_eq!(path.path_exists, ["/run/acpid.socket"]);
+        assert_eq!(path.path_changed, ["/run/acpid"]);
+        assert_eq!(path.unit, "acpid.service");
+        assert!(path.make_directory);
+        assert_eq!(path.directory_mode, "0750");
+        assert_eq!(
+            (path.trigger_limit_interval_sec, path.trigger_limit_burst),
+            (5, 7)
+        );
+        let socket = build_unit_config(&state.units["udev.socket"], &state.units, "")
+            .socket
+            .unwrap();
+        assert!(socket
+            .listen
+            .iter()
+            .any(|a| a.sequential_packet == "@/org/kernel/udev/udevd"));
+        assert!(socket
+            .listen
+            .iter()
+            .any(|a| a.netlink == "kobject-uevent 1"));
     }
 
     // =========================================================================
@@ -3431,6 +3597,117 @@ mod tests {
                 envelope_tx: tx,
             },
         );
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_job_returns_before_predecessor_completes() {
+        // Regression: logind calls StartUnit(user@N) synchronously inside
+        // CreateSession while user-runtime-dir@N waits on logind, so the
+        // enqueue reply must not wait for the ordering predecessor.  The
+        // dependent's method.call is still held back until the predecessor
+        // completes.
+        let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(16);
+        {
+            let mut state = alloc.write();
+            state
+                .units
+                .insert("a.service".to_string(), make_unit("a.service"));
+            let (bn, mut b) = unit_requires("b.service", &["a.service"]);
+            b.unit.after.insert("a.service".to_string());
+            state.units.insert(bn, b);
+            state.workers.insert(
+                "test-worker".to_string(),
+                WorkerEntry {
+                    worker_id: "test-worker".to_string(),
+                    unit_types: vec!["service".to_string()],
+                    supports_unit_define: false,
+                    supports_resource_prepare: false,
+                    ready: false,
+                    envelope_tx: tx,
+                },
+            );
+        }
+
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            enqueue_job(alloc.clone(), "b.service", JobKind::Start, JobMode::Replace),
+        )
+        .await
+        .expect("enqueue must not wait for the predecessor job")
+        .expect("enqueue succeeds");
+
+        let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let first = Envelope::decode(first.as_ref()).unwrap();
+        let call = sysa::proto::MethodCall::decode(first.payload.as_slice()).unwrap();
+        assert_eq!(call.unit_name, "a.service");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), rx.recv())
+                .await
+                .is_err(),
+            "b.service must not dispatch before a.service completes"
+        );
+
+        fake_worker_complete_call(&alloc, &first);
+        let second = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("b.service dispatches once a.service is done")
+            .unwrap();
+        let second = Envelope::decode(second.as_ref()).unwrap();
+        let call = sysa::proto::MethodCall::decode(second.payload.as_slice()).unwrap();
+        assert_eq!(call.unit_name, "b.service");
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_start_after_dispatch_waits_for_predecessors() {
+        // The boot batch must keep its back-pressure: it returns only once
+        // every step of the plan was dispatched, so the next root is planned
+        // against settled state rather than a pile of in-flight jobs.
+        let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(16);
+        {
+            let mut state = alloc.write();
+            state
+                .units
+                .insert("a.service".to_string(), make_unit("a.service"));
+            let (bn, mut b) = unit_requires("b.service", &["a.service"]);
+            b.unit.after.insert("a.service".to_string());
+            state.units.insert(bn, b);
+            state.workers.insert(
+                "test-worker".to_string(),
+                WorkerEntry {
+                    worker_id: "test-worker".to_string(),
+                    unit_types: vec!["service".to_string()],
+                    supports_unit_define: false,
+                    supports_resource_prepare: false,
+                    ready: false,
+                    envelope_tx: tx,
+                },
+            );
+        }
+
+        let batch = tokio::spawn(enqueue_start_after_dispatch(
+            alloc.clone(),
+            "b.service",
+            JobMode::Replace,
+        ));
+        let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let first = Envelope::decode(first.as_ref()).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!batch.is_finished(), "must wait for b.service's dispatch");
+
+        fake_worker_complete_call(&alloc, &first);
+        tokio::time::timeout(Duration::from_secs(2), batch)
+            .await
+            .expect("returns once every step is dispatched")
+            .unwrap()
+            .expect("enqueue succeeds");
     }
 
     #[tokio::test]
@@ -4279,6 +4556,7 @@ mod tests {
             automount: None,
             timer: None,
             socket: None,
+            path: None,
             resource_control: None,
             conditions: None,
             asserts: None,
@@ -4301,10 +4579,10 @@ mod tests {
     }
 
     /// Complete a dispatched `method.call` task as successful, the way the
-    /// IPC server's `method.result` handling does.  Required to advance the
-    /// serial-mode chain: Replace mode chains every task on its predecessor
-    /// (`serial_completion_txs`), so a fake worker that never replies would
-    /// stall `enqueue_job` at the next task's chain await.
+    /// IPC server's `method.result` handling does. Required to advance
+    /// dependent steps: Replace mode waits on planner ordering predecessors
+    /// (`serial_completion_txs`), so a fake worker that never replies keeps
+    /// its dependent steps from dispatching.
     fn fake_worker_complete_call(alloc: &AllocatorHandle, env: &Envelope) {
         let call = sysa::proto::MethodCall::decode(env.payload.as_slice()).expect("valid call");
         let kind = match call.method.as_str() {

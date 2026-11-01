@@ -1137,7 +1137,11 @@ async fn manager_start_units(allocator: &AllocatorHandle, env: Envelope) -> Resu
         info!("manager.start_units: processing '{name}'");
         match tokio::time::timeout(
             std::time::Duration::from_secs(15),
-            crate::scheduler::enqueue_start_with_mode(allocator.clone(), name, JobMode::Replace),
+            crate::scheduler::enqueue_start_after_dispatch(
+                allocator.clone(),
+                name,
+                JobMode::Replace,
+            ),
         )
         .await
         {
@@ -1874,6 +1878,7 @@ mod tests {
                 automount: None,
                 timer: None,
                 socket: None,
+                path: None,
                 resource_control: None,
                 conditions: None,
                 asserts: None,
@@ -2314,6 +2319,7 @@ mod tests {
             automount: None,
             timer: None,
             socket: None,
+            path: None,
             resource_control: None,
             conditions: None,
             asserts: None,

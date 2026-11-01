@@ -211,6 +211,7 @@ pub async fn start_service(
         };
         let pam_name_task = pam_name.clone();
         let username_task = username.clone();
+        let pam_started = std::time::Instant::now();
         match tokio::task::spawn_blocking(move || {
             crate::pam::pam_session_open(&pam_name_task, &username_task, tty.as_deref())
         })
@@ -220,18 +221,29 @@ pub async fn start_service(
                 pam_env = env;
                 pam_session = Some(session);
                 info!(
-                    "Opened PAM session '{}' for user '{}' ({})",
-                    pam_name, username, unit_name
+                    "Opened PAM session '{}' for user '{}' ({}): elapsed={}ms",
+                    pam_name,
+                    username,
+                    unit_name,
+                    pam_started.elapsed().as_millis()
                 );
             }
             Ok(Err(e)) => {
                 warn!(
-                    "PAM setup for {} ({}) failed: {}; continuing without PAM environment",
-                    unit_name, pam_name, e
+                    "PAM setup for {} ({}) failed after {}ms: {}; continuing without PAM environment",
+                    unit_name,
+                    pam_name,
+                    pam_started.elapsed().as_millis(),
+                    e
                 );
             }
             Err(e) => {
-                warn!("PAM setup task for {} failed: {}", unit_name, e);
+                warn!(
+                    "PAM setup task for {} failed after {}ms: {}",
+                    unit_name,
+                    pam_started.elapsed().as_millis(),
+                    e
+                );
             }
         }
     }

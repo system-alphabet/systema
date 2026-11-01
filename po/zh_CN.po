@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-30 08:21+0800\n"
+        "POT-Creation-Date: 2026-10-30 13:49+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -896,6 +896,21 @@ msgstr  "绑定 Unix 数据报“{address}”失败：{e}。"
 msgid   "ListenNetlink address is empty."
 msgstr  "ListenNetlink 地址为空。"
 #
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 757
+#, rust-format
+msgid   "Invalid netlink protocol in '{address}'."
+msgstr  "Netlink 地址“{address}”中的协议无效。"
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 766
+#, rust-format
+msgid   "Invalid netlink group in '{address}'."
+msgstr  "Netlink 地址“{address}”中的组无效。"
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 775
+#, rust-format
+msgid   "Invalid netlink address '{address}'."
+msgstr  "Netlink 地址“{address}”无效。"
+#
 # File: ../crates/backend/systema-sysk/src/socket.rs, line: 672
 #, rust-format
 msgid   "socket(AF_NETLINK) failed: {e}."
@@ -1651,6 +1666,66 @@ msgstr  "{path} 处的 cgroup2 挂载不可写，正在撤销：{err}"
 msgid   "unknown worker name '{unknown}'"
 msgstr  "未知的工作进程名“{unknown}”"
 #
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 233
+msgid   "SysAInit — System Alphabet init"
+msgstr  "SysAInit — System Alphabet 初始化"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 247
+msgid   "Workers to skip (short names or full binary names)."
+msgstr  "要跳过的工作进程（短名称或完整二进制名称）。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
+msgid   "Search for the systema-* binaries only in this directory."
+msgstr  "仅在此目录中搜索 systema-* 二进制文件。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 257
+msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
+msgstr  "缺少可执行文件时不要中止；记录 ERROR 并跳过。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 262
+msgid   "Grace period in seconds before SIGKILL during shutdown."
+msgstr  "关闭期间发送 SIGKILL 前的宽限期（秒）。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 267
+msgid   "Time to wait for System A / a worker to report ready before aborting."
+msgstr  "中止前等待 System A / 工作进程报告就绪的时间。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 281
+# File: ../crates/backend/systema-sysu/src/main.rs, line: 146
+msgid   "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
+msgstr  "本进程日志文件的路径；子进程收到 <dir>/<binary>.log；\"-\" 表示仅写 stderr。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 278
+msgid   "Power control policy: auto (only when PID 1), always, never."
+msgstr  "电源控制策略：auto（仅当 PID 1 时）、always、never。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 283
+msgid   "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
+msgstr  "为每个工作进程附加的标志；--<name>-flags / SYSTEMA_SYS*_FLAGS 优先。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 289
+msgid   "Extra flags for this worker only (overrides --worker-flags)."
+msgstr  "仅为此工作进程附加的标志（覆盖 --worker-flags）。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 350
+#, rust-format
+msgid   "{count} required executable(s) missing; aborting (use --no-strict to continue)"
+msgstr  "缺少 {count} 个必需的可执行文件；正在中止（使用 --no-strict 继续）"
+#
+# File: ../crates/backend/systema-sysi/src/power.rs, line: 131
+#, rust-format
+msgid   "unknown power action: {s}"
+msgstr  "未知的电源操作：{s}"
+#
+# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 32
+msgid   "System Init is not accepting power transitions."
+msgstr  "System Init 当前不接受电源状态切换请求。"
+#
+# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 59
+#, rust-format
+msgid   "Power transition already pending for invocation {id}."
+msgstr  "调用 {id} 的电源状态切换请求已在处理中。"
+#
 # File: ../crates/backend/systema-sysi/src/supervise.rs, line: 177
 # File: ../crates/backend/systema-sysu/src/supervise.rs, line: 173
 #, rust-format
@@ -1705,11 +1780,6 @@ msgstr  "manager.list_units 失败：{message}"
 msgid   "unknown powerctl policy: {s} (expected auto, always, never)"
 msgstr  "未知的 powerctl 策略：{s}（期望 auto、always、never）"
 #
-# File: ../crates/backend/systema-sysi/src/power.rs, line: 131
-#, rust-format
-msgid   "unknown power action: {s}"
-msgstr  "未知的电源操作：{s}"
-#
 # File: ../crates/backend/systema-sysi/src/power.rs, line: 141
 msgid   "System Power Off"
 msgstr  "系统关机"
@@ -1748,61 +1818,6 @@ msgstr  "电源操作“{action}”的 reboot(2) 失败：{err}（我们是以 r
 #, rust-format
 msgid   "power action '{action}' not supported: no power backend available"
 msgstr  "不支持电源操作“{action}”：没有可用的电源后端"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 233
-msgid   "SysAInit — System Alphabet init"
-msgstr  "SysAInit — System Alphabet 初始化"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 247
-msgid   "Workers to skip (short names or full binary names)."
-msgstr  "要跳过的工作进程（短名称或完整二进制名称）。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
-msgid   "Search for the systema-* binaries only in this directory."
-msgstr  "仅在此目录中搜索 systema-* 二进制文件。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 257
-msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
-msgstr  "缺少可执行文件时不要中止；记录 ERROR 并跳过。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 262
-msgid   "Grace period in seconds before SIGKILL during shutdown."
-msgstr  "关闭期间发送 SIGKILL 前的宽限期（秒）。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 267
-msgid   "Time to wait for System A / a worker to report ready before aborting."
-msgstr  "中止前等待 System A / 工作进程报告就绪的时间。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 281
-# File: ../crates/backend/systema-sysu/src/main.rs, line: 146
-msgid   "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
-msgstr  "本进程日志文件的路径；子进程收到 <dir>/<binary>.log；\"-\" 表示仅写 stderr。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 278
-msgid   "Power control policy: auto (only when PID 1), always, never."
-msgstr  "电源控制策略：auto（仅当 PID 1 时）、always、never。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 283
-msgid   "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
-msgstr  "为每个工作进程附加的标志；--<name>-flags / SYSTEMA_SYS*_FLAGS 优先。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 289
-msgid   "Extra flags for this worker only (overrides --worker-flags)."
-msgstr  "仅为此工作进程附加的标志（覆盖 --worker-flags）。"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 350
-#, rust-format
-msgid   "{count} required executable(s) missing; aborting (use --no-strict to continue)"
-msgstr  "缺少 {count} 个必需的可执行文件；正在中止（使用 --no-strict 继续）"
-#
-# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 32
-msgid   "System Init is not accepting power transitions."
-msgstr  "System Init 当前不接受电源状态切换请求。"
-#
-# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 59
-#, rust-format
-msgid   "Power transition already pending for invocation {id}."
-msgstr  "调用 {id} 的电源状态切换请求已在处理中。"
 #
 # File: ../crates/backend/systema-sysn/src/backend/kqueue.rs, line: 65
 #, rust-format
@@ -2397,6 +2412,10 @@ msgstr  "l10n_debug：bind_textdomain_codeset 失败：{e}"
 msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
 msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
 #
+# File: ../crates/libsysa/src/controller.rs, line: 8
+msgid   "failed to decode UnitConfig"
+msgstr  "无法解码 UnitConfig"
+#
 # File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 150
 msgid   "request id wraparound"
 msgstr  ""
@@ -2442,13 +2461,10 @@ msgstr  ""
 msgid   "unknown method: {other}"
 msgstr  "未知的方法：{other}"
 #
-# File: ../crates/libsysa/src/controller.rs, line: 8
-msgid   "failed to decode UnitConfig"
-msgstr  "无法解码 UnitConfig"
-#
 # File: ../crates/splash/systema-sysh-console/src/main.rs, line: 90
 msgid   "System H — boot-log console frontend"
 msgstr  ""
+#
 #
 #
 #
@@ -2459,9 +2475,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "无法加载单元"
+#
 #
 #
 #
@@ -2472,6 +2490,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2479,10 +2498,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "单元 {name} 是模板，无法直接加载"
+#
 #
 #
 #
@@ -2495,10 +2516,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "移除 {count} 条边后仍无法解决依赖循环。"
+#
 #
 #
 #
@@ -2514,10 +2537,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') 失败：{r}"
+#
 #
 #
 #
@@ -2535,10 +2560,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "无效的日志级别“{level}”（{e}）；使用 info"
+#
 #
 #
 #
@@ -2558,9 +2585,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
 #
 #
 #
@@ -2584,10 +2613,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
 #
 #
 #
@@ -2614,10 +2645,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
 #
 #
 #

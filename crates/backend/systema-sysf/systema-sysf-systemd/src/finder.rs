@@ -5,8 +5,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use systema_sysf::ir::{
-    self, AutomountConfig, Condition, DependencySet, ExecCommand, MountConfig, ServiceConfig,
-    SocketConfig, TemplateInfo, TimerConfig, UnitIR, UnitType,
+    self, AutomountConfig, Condition, DependencySet, ExecCommand, MountConfig, PathConfig,
+    ServiceConfig, SocketConfig, TemplateInfo, TimerConfig, UnitIR, UnitType,
 };
 use systema_sysf::Finder;
 
@@ -75,6 +75,7 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         automount: uf.automount.as_ref().map(convert_automount),
         timer: uf.timer.as_ref().map(convert_timer),
         socket: uf.socket.as_ref().map(convert_socket),
+        path: uf.path.as_ref().map(convert_path),
         conditions: Some(convert_conditions(uf)),
         asserts: Some(convert_asserts(uf)),
         wanted_by: Some(uf.install.wanted_by.iter().cloned().collect()),
@@ -189,6 +190,7 @@ fn alias_record(alias: &str, canonical: &str) -> UnitIR {
         automount: None,
         timer: None,
         socket: None,
+        path: None,
         conditions: None,
         asserts: None,
         wanted_by: None,
@@ -375,6 +377,7 @@ fn convert_socket(sock: &crate::types::SocketSection) -> SocketConfig {
     SocketConfig {
         listen_stream: sock.listen_stream.clone(),
         listen_datagram: sock.listen_datagram.clone(),
+        listen_sequential_packet: sock.listen_sequential_packet.clone(),
         listen_fifo: sock.listen_fifo.clone(),
         listen_netlink: sock.listen_netlink.clone(),
         accept: sock.accept,
@@ -384,6 +387,21 @@ fn convert_socket(sock: &crate::types::SocketSection) -> SocketConfig {
         socket_group: sock.socket_group.clone(),
         backlog: sock.backlog,
         directory_mode: sock.directory_mode.clone(),
+    }
+}
+
+fn convert_path(path: &crate::types::PathSection) -> PathConfig {
+    PathConfig {
+        path_exists: path.path_exists.clone(),
+        path_exists_glob: path.path_exists_glob.clone(),
+        path_changed: path.path_changed.clone(),
+        path_modified: path.path_modified.clone(),
+        directory_not_empty: path.directory_not_empty.clone(),
+        unit: path.unit.clone(),
+        make_directory: path.make_directory,
+        directory_mode: path.directory_mode.clone(),
+        trigger_limit_interval_sec: path.trigger_limit_interval_sec,
+        trigger_limit_burst: path.trigger_limit_burst,
     }
 }
 
@@ -521,6 +539,34 @@ mod tests {
         let service = ir.service.expect("service config");
         assert_eq!(service.service_type, "dbus");
         assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
+    }
+
+    #[test]
+    fn path_and_socket_config_survive_finder_serialization() {
+        let path = crate::parser::parse_unit(
+            "acpid.path",
+            "[Path]\nPathExists=/run/acpid.socket\nPathChanged=/var/run/test\nUnit=acpid.service\nMakeDirectory=yes\n",
+        )
+        .unwrap();
+        let socket = crate::parser::parse_unit(
+            "systemd-udevd-control.socket",
+            "[Socket]\nListenSequentialPacket=@/org/kernel/udev/udevd\nListenNetlink=kobject-uevent 1\n",
+        )
+        .unwrap();
+        for unit in [path, socket] {
+            let json = serde_json::to_vec(&convert_unit_file(&unit)).unwrap();
+            let ir: UnitIR = serde_json::from_slice(&json).unwrap();
+            if let Some(path) = ir.path {
+                assert_eq!(path.path_exists, ["/run/acpid.socket"]);
+                assert_eq!(path.path_changed, ["/var/run/test"]);
+                assert_eq!(path.unit, "acpid.service");
+                assert!(path.make_directory);
+            } else {
+                let socket = ir.socket.unwrap();
+                assert_eq!(socket.listen_sequential_packet, ["@/org/kernel/udev/udevd"]);
+                assert_eq!(socket.listen_netlink, ["kobject-uevent 1"]);
+            }
+        }
     }
 
     #[test]

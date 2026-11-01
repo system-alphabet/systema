@@ -459,7 +459,14 @@ fn apply_message(tracker: &Mutex<Tracker>, pid: u32, payload: &[u8]) -> Result<(
     let mut map = tracker.lock().unwrap();
     let entry = match map.by_pid.get_mut(&pid) {
         Some(e) => e,
-        None => return Ok(()),
+        None => {
+            if is_ready || is_reloading {
+                debug!(
+                    "Ignoring sd_notify from untracked PID {pid} (READY={is_ready}, RELOADING={is_reloading})"
+                );
+            }
+            return Ok(());
+        }
     };
 
     if is_reloading {

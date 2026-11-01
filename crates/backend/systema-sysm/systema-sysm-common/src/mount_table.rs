@@ -115,6 +115,7 @@ pub fn build_mount_unit_ir(unit_name: &str, entry: &MountTableEntry) -> UnitIR {
         automount: None,
         timer: None,
         socket: None,
+        path: None,
         conditions: None,
         asserts: None,
         wanted_by: None,

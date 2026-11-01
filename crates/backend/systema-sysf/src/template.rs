@@ -181,6 +181,7 @@ mod tests {
             automount: None,
             timer: None,
             socket: None,
+            path: None,
             resource_control: None,
             conditions: None,
             asserts: None,

@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-30 08:21+0800\n"
+        "POT-Creation-Date: 2026-10-30 13:49+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -897,6 +897,21 @@ msgstr  "bind Unix datagram '{address}' failed: {e}."
 msgid   "ListenNetlink address is empty."
 msgstr  "ListenNetlink address is empty."
 #
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 757
+#, rust-format
+msgid   "Invalid netlink protocol in '{address}'."
+msgstr  "Invalid netlink protocol in '{address}'."
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 766
+#, rust-format
+msgid   "Invalid netlink group in '{address}'."
+msgstr  "Invalid netlink group in '{address}'."
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 775
+#, rust-format
+msgid   "Invalid netlink address '{address}'."
+msgstr  "Invalid netlink address '{address}'."
+#
 # File: ../crates/backend/systema-sysk/src/socket.rs, line: 672
 #, rust-format
 msgid   "socket(AF_NETLINK) failed: {e}."
@@ -1652,6 +1667,66 @@ msgstr  "cgroup2 mount at {path} is not writable, undoing: {err}"
 msgid   "unknown worker name '{unknown}'"
 msgstr  "unknown worker name '{unknown}'"
 #
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 233
+msgid   "SysAInit — System Alphabet init"
+msgstr  "SysAInit — System Alphabet init"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 247
+msgid   "Workers to skip (short names or full binary names)."
+msgstr  "Workers to skip (short names or full binary names)."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
+msgid   "Search for the systema-* binaries only in this directory."
+msgstr  "Search for the systema-* binaries only in this directory."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 257
+msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
+msgstr  "Do not abort when an executable is missing; log an ERROR and skip it."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 262
+msgid   "Grace period in seconds before SIGKILL during shutdown."
+msgstr  "Grace period in seconds before SIGKILL during shutdown."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 267
+msgid   "Time to wait for System A / a worker to report ready before aborting."
+msgstr  "Time to wait for System A / a worker to report ready before aborting."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 281
+# File: ../crates/backend/systema-sysu/src/main.rs, line: 146
+msgid   "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
+msgstr  "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 278
+msgid   "Power control policy: auto (only when PID 1), always, never."
+msgstr  "Power control policy: auto (only when PID 1), always, never."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 283
+msgid   "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
+msgstr  "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 289
+msgid   "Extra flags for this worker only (overrides --worker-flags)."
+msgstr  "Extra flags for this worker only (overrides --worker-flags)."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 350
+#, rust-format
+msgid   "{count} required executable(s) missing; aborting (use --no-strict to continue)"
+msgstr  "{count} required executable(s) missing; aborting (use --no-strict to continue)"
+#
+# File: ../crates/backend/systema-sysi/src/power.rs, line: 131
+#, rust-format
+msgid   "unknown power action: {s}"
+msgstr  "unknown power action: {s}"
+#
+# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 32
+msgid   "System Init is not accepting power transitions."
+msgstr  "System Init is not accepting power transitions."
+#
+# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 59
+#, rust-format
+msgid   "Power transition already pending for invocation {id}."
+msgstr  "Power transition already pending for invocation {id}."
+#
 # File: ../crates/backend/systema-sysi/src/supervise.rs, line: 177
 # File: ../crates/backend/systema-sysu/src/supervise.rs, line: 173
 #, rust-format
@@ -1706,11 +1781,6 @@ msgstr  "manager.list_units failed: {message}"
 msgid   "unknown powerctl policy: {s} (expected auto, always, never)"
 msgstr  "unknown powerctl policy: {s} (expected auto, always, never)"
 #
-# File: ../crates/backend/systema-sysi/src/power.rs, line: 131
-#, rust-format
-msgid   "unknown power action: {s}"
-msgstr  "unknown power action: {s}"
-#
 # File: ../crates/backend/systema-sysi/src/power.rs, line: 141
 msgid   "System Power Off"
 msgstr  "System Power Off"
@@ -1749,61 +1819,6 @@ msgstr  "reboot(2) for power action '{action}' failed: {err} (are we running as 
 #, rust-format
 msgid   "power action '{action}' not supported: no power backend available"
 msgstr  "power action '{action}' not supported: no power backend available"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 233
-msgid   "SysAInit — System Alphabet init"
-msgstr  "SysAInit — System Alphabet init"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 247
-msgid   "Workers to skip (short names or full binary names)."
-msgstr  "Workers to skip (short names or full binary names)."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
-msgid   "Search for the systema-* binaries only in this directory."
-msgstr  "Search for the systema-* binaries only in this directory."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 257
-msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
-msgstr  "Do not abort when an executable is missing; log an ERROR and skip it."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 262
-msgid   "Grace period in seconds before SIGKILL during shutdown."
-msgstr  "Grace period in seconds before SIGKILL during shutdown."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 267
-msgid   "Time to wait for System A / a worker to report ready before aborting."
-msgstr  "Time to wait for System A / a worker to report ready before aborting."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 281
-# File: ../crates/backend/systema-sysu/src/main.rs, line: 146
-msgid   "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
-msgstr  "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 278
-msgid   "Power control policy: auto (only when PID 1), always, never."
-msgstr  "Power control policy: auto (only when PID 1), always, never."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 283
-msgid   "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
-msgstr  "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 289
-msgid   "Extra flags for this worker only (overrides --worker-flags)."
-msgstr  "Extra flags for this worker only (overrides --worker-flags)."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 350
-#, rust-format
-msgid   "{count} required executable(s) missing; aborting (use --no-strict to continue)"
-msgstr  "{count} required executable(s) missing; aborting (use --no-strict to continue)"
-#
-# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 32
-msgid   "System Init is not accepting power transitions."
-msgstr  "System Init is not accepting power transitions."
-#
-# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 59
-#, rust-format
-msgid   "Power transition already pending for invocation {id}."
-msgstr  "Power transition already pending for invocation {id}."
 #
 # File: ../crates/backend/systema-sysn/src/backend/kqueue.rs, line: 65
 #, rust-format
@@ -2398,6 +2413,10 @@ msgstr  "l10n_debug: Failed to bind_textdomain_codeset: {e}"
 msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
 msgstr  "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
 #
+# File: ../crates/libsysa/src/controller.rs, line: 8
+msgid   "failed to decode UnitConfig"
+msgstr  "failed to decode UnitConfig"
+#
 # File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 150
 msgid   "request id wraparound"
 msgstr  ""
@@ -2443,13 +2462,10 @@ msgstr  ""
 msgid   "unknown method: {other}"
 msgstr  "unknown method: {other}"
 #
-# File: ../crates/libsysa/src/controller.rs, line: 8
-msgid   "failed to decode UnitConfig"
-msgstr  "failed to decode UnitConfig"
-#
 # File: ../crates/splash/systema-sysh-console/src/main.rs, line: 90
 msgid   "System H — boot-log console frontend"
 msgstr  ""
+#
 #
 #
 #
@@ -2460,9 +2476,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "failed to load unit"
+#
 #
 #
 #
@@ -2473,6 +2491,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2480,10 +2499,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "Unit {name} is a template and cannot be loaded directly"
+#
 #
 #
 #
@@ -2496,10 +2517,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "Unable to resolve dependency cycles after removing {count} edges."
+#
 #
 #
 #
@@ -2515,10 +2538,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') failed: {r}"
+#
 #
 #
 #
@@ -2536,10 +2561,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "Invalid log level '{level}' ({e}); using info"
+#
 #
 #
 #
@@ -2559,9 +2586,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 #
@@ -2585,10 +2614,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2615,10 +2646,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #
