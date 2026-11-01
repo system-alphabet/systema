@@ -796,6 +796,12 @@ pub struct UnitFile {
     /// the finder uses it to decide which of several competing declarations
     /// actually owns a name on disk.
     pub alias_links: Vec<String>,
+    /// Whether the loader found this unit enabled: an enablement link exists
+    /// in a `<unit>.wants/`/`<unit>.requires/` directory, or a primary
+    /// enablement link exists in a search path.  Filled by the loader, never
+    /// by the parser — `[Install] WantedBy=` only describes how to enable a
+    /// unit, it does not mean it is enabled.
+    pub enabled: bool,
     /// Present only for service units.
     pub service: Option<ServiceSection>,
     /// Present only for mount units.
@@ -829,6 +835,7 @@ impl UnitFile {
             unit: UnitSection::default(),
             install: InstallSection::default(),
             alias_links: Vec::new(),
+            enabled: false,
             service: None,
             mount: None,
             automount: None,

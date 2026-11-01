@@ -214,6 +214,7 @@ async fn inject_units(shared: &Arc<EngineShared>, names: &[String]) {
                     asserts: None,
                     wanted_by: None,
                     required_by: None,
+                    enabled: None,
                     aliases: Vec::new(),
                     alias_of: None,
                     resource_control: None,

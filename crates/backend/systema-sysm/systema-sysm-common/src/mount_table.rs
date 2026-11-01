@@ -120,6 +120,7 @@ pub fn build_mount_unit_ir(unit_name: &str, entry: &MountTableEntry) -> UnitIR {
         asserts: None,
         wanted_by: None,
         required_by: None,
+        enabled: None,
         aliases: Vec::new(),
         alias_of: None,
         resource_control: None,

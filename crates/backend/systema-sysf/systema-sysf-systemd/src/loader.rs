@@ -56,7 +56,50 @@ fn symlink_alias(path: &Path) -> Option<(String, String)> {
     Some((canonical_name, alias_name))
 }
 
+/// True when `path` is a *primary enablement link*: a symlink whose basename
+/// equals the resolved target's basename but that lives in a different
+/// directory, e.g. `/etc/systemd/system/foo.service` →
+/// `../usr/lib/systemd/system/foo.service`.
+///
+/// That is how `systemctl enable` makes a unit start at boot without pulling
+/// it into a `<target>.wants/` directory, so it is enablement evidence.  A
+/// link whose basename differs from its target's (an alias, see
+/// [`symlink_alias`]) is not enablement, and neither is a link that
+/// instantiates a template.  Masking (`-> /dev/null`) fails to resolve and is
+/// not enablement either.
+fn is_primary_enablement_link(path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !meta.file_type().is_symlink() {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if !is_known_extension(name) || sysa::unit_name::is_template(name) {
+        return false;
+    }
+    let Ok(target) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    if target.file_name().and_then(|n| n.to_str()) != Some(name) {
+        return false;
+    }
+    let Some(link_dir) = path.parent().and_then(|dir| dir.canonicalize().ok()) else {
+        return false;
+    };
+    // `canonicalize` resolved the link, so the target's parent is canonical.
+    target.parent() != Some(link_dir.as_path())
+}
+
 /// Discover and parse all systemd unit files from standard search paths.
+///
+/// Every returned unit carries the loader's enablement verdict: a unit pulled
+/// in by a `<target>.wants/`/`.requires/` link or reached through a primary
+/// enablement link is [`UnitFile::enabled`], everything else is not.  The
+/// same unit may be returned more than once (definition and enablement link);
+/// merging the copies is the caller's job.
 pub fn discover_all() -> Result<Vec<UnitFile>> {
     let mut units = Vec::new();
     let dirs = sysa::paths::instance().unit_search_paths.clone();
@@ -149,7 +192,15 @@ fn find_exact_in(dirs: &[String], name: &str) -> Result<Option<UnitFile>> {
                     Ok(unit)
                 }
                 None => parse_unit_from_path_as_in(dirs, &path, name),
-            };
+            }
+            // A single-unit lookup sees the file itself, so it can only
+            // recognise a primary enablement link here.  Enablement through a
+            // `.wants/`/`.requires/` directory is discovered by
+            // [`discover_all`], which walks those directories.
+            .map(|mut unit| {
+                unit.enabled |= is_primary_enablement_link(&path);
+                unit
+            });
             match parsed {
                 Ok(unit) => return Ok(Some(unit)),
                 Err(e) => {
@@ -211,12 +262,15 @@ fn discover_instance_specializations_in(dirs: &[String], units: &mut Vec<UnitFil
                 continue;
             }
             match parse_unit_from_path_as_in(dirs, &path, name) {
-                Ok(unit) => match units.iter().position(|u| u.name == name) {
+                Ok(mut unit) => match units.iter().position(|u| u.name == name) {
                     Some(index) => {
                         // Discovered through an enabling symlink in a
                         // `.wants/` directory: that path carried no drop-in
                         // scope, so fold the instance's own drop-ins in here.
+                        // The re-parse saw the template, not the enablement
+                        // link, so carry the enablement evidence over.
                         debug!("Folding instance drop-ins into {}", name);
+                        unit.enabled |= units[index].enabled;
                         units[index] = unit;
                     }
                     None => {
@@ -358,7 +412,17 @@ fn load_units_from_dir(
             None => parse_unit_from_path_as_in(dirs, &path, &name),
         };
         match unit {
-            Ok(unit) => {
+            Ok(mut unit) => {
+                // Enablement evidence, in the two shapes systemd uses: a link
+                // inside a `<unit>.wants/`/`<unit>.requires/` directory (the
+                // loader recurses with that context), or a primary enablement
+                // link in the search path itself.  Templates are definitions,
+                // never boot-set members, so a template link enables nothing.
+                if (ctx.is_some() || is_primary_enablement_link(&path))
+                    && !sysa::unit_name::is_template(&unit.name)
+                {
+                    unit.enabled = true;
+                }
                 if let Some((target, kind)) = ctx {
                     let slot = implicit.entry(target.clone()).or_default();
                     match kind {
@@ -842,6 +906,9 @@ mod tests {
             instance.service.as_ref().unwrap().environment,
             ["GETTY_MODE=special"]
         );
+        // The instance was re-parsed from the template to fold its drop-ins
+        // in; the enablement evidence from the `.wants/` link must survive.
+        assert!(instance.enabled);
     }
 
     #[test]
@@ -910,10 +977,135 @@ mod tests {
             .unwrap();
         assert_eq!(getty.unit.description, "Getty on tty1");
         assert_eq!(getty.service.as_ref().unwrap().tty_path, "/dev/tty1");
+        // The enablement link makes the instance a boot-set member; the bare
+        // template stays a definition.
+        assert!(getty.enabled);
+        assert!(!template.enabled);
         // The wants edge references the instance, not the template.
         let target = units.iter().find(|u| u.name == "getty.target").unwrap();
         assert!(target.unit.wants.contains("getty@tty1.service"));
         assert!(!target.unit.wants.contains("getty@.service"));
+    }
+
+    // Enablement is part of the discovery result: the Finder is the component
+    // that sees the unit search paths, so it decides enablement once instead
+    // of letting every consumer re-scan the filesystem.
+    #[test]
+    fn wants_directory_marks_the_unit_enabled() {
+        let dir = temp_dir("enabled-wants");
+        let unit_dir = dir.join("system");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::write(unit_dir.join("multi-user.target"), "[Unit]\n").unwrap();
+        fs::write(
+            unit_dir.join("foo.service"),
+            "[Unit]\nDescription=Foo\n[Service]\nExecStart=/bin/true\n",
+        )
+        .unwrap();
+        fs::create_dir_all(unit_dir.join("multi-user.target.wants")).unwrap();
+        std::os::unix::fs::symlink(
+            unit_dir.join("foo.service"),
+            unit_dir.join("multi-user.target.wants/foo.service"),
+        )
+        .unwrap();
+
+        let dirs = vec![unit_dir.to_string_lossy().into_owned()];
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
+
+        // The plain definition in the search directory is not enablement ...
+        assert!(units.iter().any(|u| u.name == "foo.service" && !u.enabled));
+        // ... the link inside the `.wants/` directory is; the finder merges
+        // the two copies into one enabled unit.
+        assert!(units.iter().any(|u| u.name == "foo.service" && u.enabled));
+        assert!(
+            !units
+                .iter()
+                .find(|u| u.name == "multi-user.target")
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[test]
+    fn primary_enablement_link_marks_the_unit_enabled() {
+        let root = temp_dir("enabled-primary");
+        let etc = root.join("etc");
+        let lib = root.join("lib");
+        fs::create_dir_all(&etc).unwrap();
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(
+            lib.join("foo.service"),
+            "[Unit]\nDescription=Foo\n[Service]\nExecStart=/bin/true\n",
+        )
+        .unwrap();
+        // `/etc/systemd/system/foo.service` -> `/usr/lib/systemd/system/foo.service`
+        std::os::unix::fs::symlink("../lib/foo.service", etc.join("foo.service")).unwrap();
+
+        let dirs = vec![
+            etc.to_string_lossy().into_owned(),
+            lib.to_string_lossy().into_owned(),
+        ];
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        for dir in &dirs {
+            load_units_from_dir_recursive(Path::new(dir), &dirs, &mut units, &mut implicit, None)
+                .unwrap();
+        }
+
+        assert_eq!(units.len(), 2);
+        assert!(units.iter().any(|u| u.name == "foo.service" && u.enabled));
+        assert!(units.iter().any(|u| u.name == "foo.service" && !u.enabled));
+    }
+
+    #[test]
+    fn alias_link_is_not_enablement() {
+        let dir = temp_dir("enabled-alias");
+        fs::write(
+            dir.join("lightdm.service"),
+            "[Unit]\nDescription=Display manager\n[Service]\nExecStart=/usr/sbin/lightdm\n",
+        )
+        .unwrap();
+        // A second name for the same unit, not a boot-set membership.
+        std::os::unix::fs::symlink("lightdm.service", dir.join("display-manager.service")).unwrap();
+
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        load_units_from_dir_recursive(&dir, &dirs, &mut units, &mut implicit, None).unwrap();
+
+        assert!(units.iter().all(|u| !u.enabled));
+        assert!(units.iter().any(|u| u.name == "lightdm.service"));
+    }
+
+    #[test]
+    fn template_enablement_link_enables_no_unit() {
+        let dir = temp_dir("enabled-template");
+        let unit_dir = dir.join("system");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::write(
+            unit_dir.join("getty@.service"),
+            "[Unit]\nDescription=Getty on %I\n[Service]\nExecStart=/sbin/agetty %I\n",
+        )
+        .unwrap();
+        fs::write(unit_dir.join("getty.target"), "[Unit]\n").unwrap();
+        fs::create_dir_all(unit_dir.join("getty.target.wants")).unwrap();
+        std::os::unix::fs::symlink(
+            unit_dir.join("getty@.service"),
+            unit_dir.join("getty.target.wants/getty@.service"),
+        )
+        .unwrap();
+
+        let dirs = vec![unit_dir.to_string_lossy().into_owned()];
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
+
+        // A template is a definition, never a boot-set member.
+        assert!(units
+            .iter()
+            .filter(|u| u.name == "getty@.service")
+            .all(|u| !u.enabled));
     }
 
     // Incident regression: an instance pulled in only by an enablement link is

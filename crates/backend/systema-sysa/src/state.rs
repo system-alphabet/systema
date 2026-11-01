@@ -982,6 +982,11 @@ fn apply_ir_patch(ir: &UnitIR, uf: &mut UnitFile) {
     if let Some(required) = &ir.required_by {
         uf.install.required_by = required.iter().cloned().collect();
     }
+    // Enablement is the Finder's verdict on the unit search paths; System A
+    // records it and never re-derives it from `[Install]`.
+    if let Some(enabled) = ir.enabled {
+        uf.enabled = enabled;
+    }
     if !ir.aliases.is_empty() {
         uf.install.alias.clear();
         uf.install.alias.extend(ir.aliases.iter().cloned());
@@ -1423,6 +1428,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            enabled: None,
             aliases: Vec::new(),
             alias_of: None,
             resource_control: None,
@@ -1757,6 +1763,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            enabled: None,
             aliases: Vec::new(),
             alias_of: None,
             resource_control: None,
@@ -1794,6 +1801,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            enabled: None,
             aliases: vec!["display-manager.service".to_string()],
             alias_of: None,
             resource_control: None,
@@ -1859,6 +1867,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            enabled: None,
             resource_control: None,
             template: None,
         }
@@ -2302,6 +2311,38 @@ mod tests {
         assert!(!state.units.contains_key("getty@.service"));
         assert!(state.templates.contains_key("getty@.service"));
         assert!(state.alias_records.is_empty());
+    }
+
+    #[test]
+    fn merge_units_stores_the_finder_enablement_verdict() {
+        let mut state = AllocatorState::new();
+        let mut ir = service_ir("sshd.service");
+        ir.enabled = Some(true);
+        state
+            .merge_units(&HashMap::from([("sshd.service".to_string(), ir)]))
+            .unwrap();
+        assert!(state.units["sshd.service"].enabled);
+
+        // A partial update that says nothing about enablement keeps it: the
+        // Finder owns the field, other producers must not clear it.
+        let patch = UnitIR {
+            id: "sshd.service".to_string(),
+            description: Some("patched".to_string()),
+            ..Default::default()
+        };
+        state
+            .merge_units(&HashMap::from([("sshd.service".to_string(), patch)]))
+            .unwrap();
+        assert!(state.units["sshd.service"].enabled);
+        assert_eq!(state.units["sshd.service"].unit.description, "patched");
+
+        // The Finder reports the negative answer too (e.g. after disable).
+        let mut off = service_ir("sshd.service");
+        off.enabled = Some(false);
+        state
+            .merge_units(&HashMap::from([("sshd.service".to_string(), off)]))
+            .unwrap();
+        assert!(!state.units["sshd.service"].enabled);
     }
 
     #[test]

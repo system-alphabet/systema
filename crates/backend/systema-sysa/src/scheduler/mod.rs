@@ -4562,6 +4562,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            enabled: None,
             template: None,
         }
     }

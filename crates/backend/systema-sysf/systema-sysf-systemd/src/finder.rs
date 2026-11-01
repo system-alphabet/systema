@@ -56,9 +56,19 @@ impl Finder for SystemdFinder {
 /// the lower-priority copies are shadowed.  Aliases are not merged here:
 /// [`emit_alias_records`] resolves them globally, because one name can be
 /// claimed by several different units.
+///
+/// Enablement is the one property that is *not* shadowed: it describes the
+/// file set as a whole.  A definition in a higher-priority directory does not
+/// undo an enablement link found in a lower-priority one, so the merged record
+/// is enabled as soon as any copy is.
 fn merge_unit_ir(map: &mut HashMap<String, UnitIR>, file: &UnitFile) {
-    map.entry(file.name.clone())
-        .or_insert_with(|| convert_unit_file(file));
+    if let Some(existing) = map.get_mut(&file.name) {
+        if file.enabled {
+            existing.enabled = Some(true);
+        }
+        return;
+    }
+    map.insert(file.name.clone(), convert_unit_file(file));
 }
 
 fn convert_unit_file(uf: &UnitFile) -> UnitIR {
@@ -80,6 +90,9 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         asserts: Some(convert_asserts(uf)),
         wanted_by: Some(uf.install.wanted_by.iter().cloned().collect()),
         required_by: Some(uf.install.required_by.iter().cloned().collect()),
+        // The loader saw the search paths; this is its verdict on the file
+        // set, not a re-derivation from `[Install]`.
+        enabled: Some(uf.enabled),
         // Aliases travel as `alias_of` records (see `emit_alias_records`): the
         // finder is the component that knows whether a name is backing a real
         // file and which search-path directory wins.
@@ -195,6 +208,7 @@ fn alias_record(alias: &str, canonical: &str) -> UnitIR {
         asserts: None,
         wanted_by: None,
         required_by: None,
+        enabled: None,
         aliases: Vec::new(),
         alias_of: Some(canonical.to_string()),
         resource_control: None,
@@ -508,6 +522,37 @@ mod tests {
         assert_eq!(ir.id, "lightdm.service");
         assert!(ir.aliases.is_empty());
         assert!(ir.alias_of.is_none());
+    }
+
+    #[test]
+    fn convert_unit_file_carries_the_enablement_verdict() {
+        // `[Install] WantedBy=` is only the enable recipe: it must not be
+        // mistaken for an enablement link.
+        let mut uf = unit_file("sshd.service", &[]);
+        uf.install.wanted_by = ["multi-user.target".to_string()].into_iter().collect();
+        assert_eq!(convert_unit_file(&uf).enabled, Some(false));
+
+        uf.enabled = true;
+        assert_eq!(convert_unit_file(&uf).enabled, Some(true));
+    }
+
+    #[test]
+    fn enablement_is_not_shadowed_by_a_higher_priority_copy() {
+        // The `/etc` copy wins the definition, but the enablement link sits
+        // next to the `/usr/lib` copy: enablement describes the file set as a
+        // whole, so the merged record stays enabled.
+        let etc = unit_file("foo.service", &[]);
+        let mut lib = unit_file("foo.service", &[]);
+        lib.enabled = true;
+        lib.unit.description = "lower-priority copy".to_string();
+        let map = build(&[etc, lib]);
+
+        assert_eq!(map["foo.service"].enabled, Some(true));
+        // Shadowing still picks the higher-priority definition.
+        assert_eq!(
+            map["foo.service"].description.as_deref(),
+            Some("desc of foo.service")
+        );
     }
 
     #[test]

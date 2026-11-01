@@ -404,6 +404,22 @@ pub struct UnitIR {
     pub wanted_by: Option<Vec<String>>,
     pub required_by: Option<Vec<String>>,
 
+    /// Set by the Finder: whether the unit is enabled, i.e. whether the unit
+    /// file set makes it part of the boot set.
+    ///
+    /// Enablement is a fact about the filesystem, not about the unit file
+    /// body: `[Install] WantedBy=` in [`Self::wanted_by`] is only the recipe
+    /// `systemctl enable` follows, never proof that it ran.  Only the Finder
+    /// sees the search paths, so it owns the answer (the same way it owns
+    /// [`Self::alias_of`]); System A stores and reports it verbatim.
+    ///
+    /// `None` when the producer does not report enablement (dynamic units,
+    /// partial updates).  A producer that reports a unit as enabled must also
+    /// be able to report it as disabled: the value describes the file set,
+    /// not this single IR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
     /// Template metadata: set on a template definition (`getty@.service`) or
     /// on an instance of one.  `None` for ordinary units.
     #[serde(default, skip_serializing_if = "Option::is_none")]

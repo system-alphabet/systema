@@ -14,7 +14,6 @@
 //! envelopes (`unit.new`, `unit.removed`, `unit.changed`, `unit.metrics`,
 //! `job.new`, `job.completed`).
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -1056,14 +1055,17 @@ async fn manager_get_unit_by_invocation(
 
 /// `manager.list_units` — list the units System A has loaded, optionally
 /// filtered to enabled ones (the boot set).
+///
+/// Enablement is not computed here.  The Finder decided it while scanning the
+/// unit search paths and reported it on the `UnitIR`, so System A only filters
+/// the desired state it already holds — a unit whose definition never reached
+/// the allocator is not in the boot set.
 async fn manager_list_units(allocator: &AllocatorHandle, env: Envelope) -> Result<Envelope> {
     let req = ListUnitsRequest::decode(env.payload.as_slice())
         .context(sysa::l10n::t_("bad manager.list_units"))?;
-    let enabled =
-        crate::unit::enable::scan_enabled_units(&sysa::paths::instance().unit_search_paths);
     let result = {
         let state = allocator.read();
-        build_list_result(&state, &enabled, req.enabled_only)
+        build_list_result(&state, req.enabled_only)
     };
     info!(
         "manager.list_units returning {} unit(s) (enabled_only={})",
@@ -1081,42 +1083,17 @@ async fn manager_list_units(allocator: &AllocatorHandle, env: Envelope) -> Resul
 
 /// Build the `manager.list_units` reply (pure, testable without the global
 /// path config).
-fn build_list_result(
-    state: &crate::state::AllocatorState,
-    enabled: &HashSet<String>,
-    enabled_only: bool,
-) -> ListUnitsResult {
-    let mut units: Vec<UnitInfo> = if enabled_only {
-        enabled
-            .iter()
-            .map(|name| {
-                let unit_type = state
-                    .units
-                    .get(name)
-                    .map(|u| u.kind.worker_type().to_string())
-                    .unwrap_or_else(|| {
-                        crate::unit::types::UnitKind::from_extension(name)
-                            .worker_type()
-                            .to_string()
-                    });
-                UnitInfo {
-                    name: name.clone(),
-                    unit_type,
-                    enabled: true,
-                }
-            })
-            .collect()
-    } else {
-        state
-            .units
-            .iter()
-            .map(|(name, unit)| UnitInfo {
-                name: name.clone(),
-                unit_type: unit.kind.worker_type().to_string(),
-                enabled: enabled.contains(name),
-            })
-            .collect()
-    };
+fn build_list_result(state: &crate::state::AllocatorState, enabled_only: bool) -> ListUnitsResult {
+    let mut units: Vec<UnitInfo> = state
+        .units
+        .iter()
+        .filter(|(_, unit)| !enabled_only || unit.enabled)
+        .map(|(name, unit)| UnitInfo {
+            name: name.clone(),
+            unit_type: unit.kind.worker_type().to_string(),
+            enabled: unit.enabled,
+        })
+        .collect();
     units.sort_by(|a, b| a.name.cmp(&b.name));
     ListUnitsResult {
         success: true,
@@ -1685,7 +1662,7 @@ fn prop_u32s(props: &[TransientProperty], key: &str) -> Option<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     use sysa::proto::{
         ListUnitsRequest, ListUnitsResult, StartUnitsRequest, StartUnitsResult, StopUnitsRequest,
@@ -1837,20 +1814,27 @@ mod tests {
         let state = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
         {
             let mut state_guard = state.write();
+            // Enablement is the Finder's report, stored on the unit; System A
+            // never re-derives it from the filesystem.
+            let mut enabled_unit = UnitFile::new("foo.service");
+            enabled_unit.enabled = true;
             state_guard
                 .units
-                .insert("foo.service".to_string(), UnitFile::new("foo.service"));
+                .insert("foo.service".to_string(), enabled_unit);
             state_guard
                 .units
                 .insert("bar.timer".to_string(), UnitFile::new("bar.timer"));
         }
 
-        let enabled: HashSet<String> = ["foo.service".to_string()].into_iter().collect();
-        let all = build_list_result(&state.read(), &enabled, false);
+        let all = build_list_result(&state.read(), false);
         // "-.slice" (root slice, auto-created) + foo.service + bar.timer.
         assert_eq!(all.units.len(), 3);
+        assert!(all
+            .units
+            .iter()
+            .any(|u| u.name == "bar.timer" && !u.enabled));
 
-        let only = build_list_result(&state.read(), &enabled, true);
+        let only = build_list_result(&state.read(), true);
         assert_eq!(only.units.len(), 1);
         let unit = &only.units[0];
         assert_eq!(unit.name, "foo.service");
@@ -1884,6 +1868,7 @@ mod tests {
                 asserts: None,
                 wanted_by: None,
                 required_by: None,
+                enabled: None,
                 template: None,
             },
         )]
@@ -2325,6 +2310,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            enabled: None,
             template: None,
         }
     }

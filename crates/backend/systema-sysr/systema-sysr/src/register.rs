@@ -78,6 +78,7 @@ pub fn user_slice_ir(unit_name: &str, description: &str) -> UnitIR {
         asserts: None,
         wanted_by: None,
         required_by: None,
+        enabled: None,
         template: None,
     }
 }
@@ -213,6 +214,7 @@ fn slice_ir_for(unit_name: &str, parent: &str) -> UnitIR {
         asserts: None,
         wanted_by: None,
         required_by: None,
+        enabled: None,
         template: None,
     }
 }

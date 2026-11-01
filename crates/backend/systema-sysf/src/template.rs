@@ -187,6 +187,7 @@ mod tests {
             asserts: None,
             wanted_by: None,
             required_by: None,
+            enabled: None,
             template: Some(TemplateInfo {
                 definition: true,
                 of: None,

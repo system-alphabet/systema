@@ -86,16 +86,24 @@ fn exec_reload_line(unit: &crate::unit::types::UnitFile) -> String {
         .unwrap_or_default()
 }
 
-/// systemd's `UnitFileState`: transient overrides everything, then an
-/// `[Install]`-level WantedBy link set marks the unit as enabled.
+/// systemd's `UnitFileState`: transient overrides everything, then the
+/// enablement the Finder reported, then whether the unit carries install
+/// information at all (`static` = nothing `systemctl enable` could act on,
+/// `disabled` = installable but not enabled).
 fn unit_file_state(unit: &crate::unit::types::UnitFile) -> String {
     if unit.transient {
         return "transient".to_string();
     }
-    if unit.install.wanted_by.is_empty() {
+    if unit.enabled {
+        return "enabled".to_string();
+    }
+    if unit.install.wanted_by.is_empty()
+        && unit.install.required_by.is_empty()
+        && unit.install.alias.is_empty()
+    {
         "static".to_string()
     } else {
-        "enabled".to_string()
+        "disabled".to_string()
     }
 }
 
@@ -459,34 +467,47 @@ mod tests {
     }
 
     #[test]
-    fn unit_file_state_reflects_transient_and_enabled() {
+    fn unit_file_state_reflects_transient_enablement_and_install_info() {
         let mut state = AllocatorState::new();
 
         // Transient overrides everything.
         let mut transient = service_unit();
         transient.transient = true;
-        transient.install.wanted_by = HashSet::from(["multi-user.target".to_string()]);
+        transient.enabled = true;
         state.units.insert(transient.name.clone(), transient);
         assert_eq!(
             unit_snapshot(&state, "sshd.service").unit_file_state,
             "transient"
         );
 
-        // Enabled = has install-level WantedBy links.
+        // Enabled = the Finder reported an enablement link.
         state.units.clear();
         let mut enabled = service_unit();
-        enabled.install.wanted_by = HashSet::from(["multi-user.target".to_string()]);
+        enabled.enabled = true;
         state.units.insert(enabled.name.clone(), enabled);
         assert_eq!(
             unit_snapshot(&state, "sshd.service").unit_file_state,
             "enabled"
         );
 
-        // Static = no WantedBy links.
+        // Disabled = installable (`[Install]` info present) but not enabled.
+        // `[Install] WantedBy=` alone is only the enable recipe, never proof
+        // that `systemctl enable` ran.
         state.units.clear();
-        let mut sibling = service_unit();
-        sibling.install.wanted_by = HashSet::new();
-        state.units.insert(sibling.name.clone(), sibling);
+        let installable = service_unit();
+        state.units.insert(installable.name.clone(), installable);
+        assert_eq!(
+            unit_snapshot(&state, "sshd.service").unit_file_state,
+            "disabled"
+        );
+
+        // Static = nothing `systemctl enable` could act on.
+        state.units.clear();
+        let mut statik = service_unit();
+        statik.install.wanted_by.clear();
+        statik.install.required_by.clear();
+        statik.install.alias.clear();
+        state.units.insert(statik.name.clone(), statik);
         assert_eq!(
             unit_snapshot(&state, "sshd.service").unit_file_state,
             "static"
