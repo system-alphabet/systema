@@ -12,13 +12,15 @@
 //! - IPC framing utilities (length-delimited codec over Unix sockets)
 //! - Worker-IPC loop and the unit controller trait
 //! - Finder / admin client sessions
-//! - Shared error types
+//! - Stable error codes (`ErrorCode` / `SysError`); the kernel reports
+//!   failures by code and never translates — `sysa::errors` turns a code
+//!   back into a localized message
 
 pub mod controller;
+pub mod error_code;
 pub mod finder;
 pub mod ipc;
 pub mod ir;
-pub mod l10n;
 pub mod proto {
     //! Generated protobuf types for the IPC protocol.
     //!

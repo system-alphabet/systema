@@ -13,6 +13,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, error, info, warn};
 
 use crate::controller::{UnitController, UnitStatus};
+use crate::error_code::{ErrorCode, SysError};
 use crate::ipc::{frame_stream, make_envelope, recv_envelope, send_envelope};
 use crate::proto::*;
 
@@ -144,10 +145,10 @@ impl EventPublisher {
         &self,
         unit_name: &str,
         timeout: Duration,
-    ) -> Result<UnitCgroupResult, String> {
+    ) -> Result<UnitCgroupResult, SysError> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         if request_id == 0 {
-            return Err(crate::l10n::t_("request id wraparound").to_string());
+            return Err(SysError::new(ErrorCode::RequestIdWraparound));
         }
         let env = make_envelope(
             request_id,
@@ -160,7 +161,10 @@ impl EventPublisher {
             },
         )
         .and_then(encode_envelope)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| match e.downcast::<SysError>() {
+            Ok(sys) => sys,
+            Err(_) => SysError::new(ErrorCode::EnvelopeEncodeFailed),
+        })?;
 
         let (reply_tx, reply_rx) = oneshot::channel();
         self.pending_cgroups
@@ -169,21 +173,19 @@ impl EventPublisher {
             .insert(request_id, reply_tx);
         if self.tx.send(env).is_err() {
             self.pending_cgroups.lock().unwrap().remove(&request_id);
-            return Err(crate::l10n::t_("connection to System A is closed").to_string());
+            return Err(SysError::new(ErrorCode::ConnectionClosed));
         }
 
         match tokio::time::timeout(timeout, reply_rx).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(_)) => {
                 self.pending_cgroups.lock().unwrap().remove(&request_id);
-                Err(crate::l10n::t_("connection to System A is closed").to_string())
+                Err(SysError::new(ErrorCode::ConnectionClosed))
             }
             Err(_) => {
                 self.pending_cgroups.lock().unwrap().remove(&request_id);
-                Err(crate::l10n::fmt(
-                    crate::l10n::t_("unit.cgroup timed out after {timeout}"),
-                    &[("timeout", &format!("{timeout:?}"))],
-                ))
+                Err(SysError::new(ErrorCode::CgroupQueryTimeout)
+                    .with("timeout", format!("{timeout:?}")))
             }
         }
     }
@@ -313,7 +315,7 @@ impl EventPublisher {
 fn encode_envelope(env: Envelope) -> Result<bytes::Bytes> {
     let mut buf = BytesMut::new();
     env.encode(&mut buf)
-        .context(crate::l10n::t_("Failed to encode Envelope."))?;
+        .context(SysError::new(ErrorCode::EnvelopeEncodeFailed))?;
     Ok(buf.freeze())
 }
 
@@ -638,10 +640,7 @@ impl WorkerIpc {
         let stream = tokio::net::UnixStream::connect(&socket_path)
             .await
             .with_context(|| {
-                crate::l10n::fmt(
-                    crate::l10n::t_("Cannot connect to {path}."),
-                    &[("path", socket_path.as_str())],
-                )
+                SysError::new(ErrorCode::WorkerConnectFailed).with("path", socket_path.as_str())
             })?;
 
         info!("Connected to System A");
@@ -661,14 +660,14 @@ impl WorkerIpc {
         let env = make_envelope(0, &self.worker_id, "system-a", "worker.register", reg)?;
         send_envelope(&mut framed, &env).await?;
 
-        let ack_env = recv_envelope(&mut framed).await?.ok_or_else(|| {
-            anyhow::anyhow!(crate::l10n::t_("System A closed connection before ack."))
-        })?;
-        let ack = RegisterAck::decode(ack_env.payload.as_slice())?;
+        let ack_env = recv_envelope(&mut framed)
+            .await?
+            .ok_or_else(|| anyhow::Error::new(SysError::new(ErrorCode::ClosedBeforeAck)))?;
+        let ack = RegisterAck::decode(ack_env.payload.as_slice())
+            .context(SysError::new(ErrorCode::InboundAckDecodeFailed))?;
         if !ack.accepted {
-            anyhow::bail!(crate::l10n::fmt(
-                crate::l10n::t_("Registration rejected: {message}."),
-                &[("message", &ack.message)],
+            return Err(anyhow::Error::new(
+                SysError::new(ErrorCode::RegistrationRejected).with("message", ack.message),
             ));
         }
         info!("Registration accepted: {}", ack.message);
@@ -703,7 +702,7 @@ impl WorkerIpc {
                 writer
                     .send(msg)
                     .await
-                    .context(crate::l10n::t_("Write to System A socket."))?;
+                    .context(SysError::new(ErrorCode::SocketWriteFailed))?;
             }
             Ok::<_, anyhow::Error>(())
         };
@@ -869,7 +868,8 @@ impl WorkerIpc {
                                 .unwrap_or_else(|_| UnitStateUpdateAck {
                                     accepted: false,
                                     ignored_units: vec![],
-                                    message: crate::l10n::t_("failed to decode ack").to_string(),
+                                    message: SysError::new(ErrorCode::InboundAckDecodeFailed)
+                                        .to_string(),
                                 });
                             let _ = ack_tx.send(ack);
                         } else {
@@ -889,7 +889,7 @@ impl WorkerIpc {
                                     available: false,
                                     found: false,
                                     cgroup_path: String::new(),
-                                    error: crate::l10n::t_("failed to decode the cgroup reply")
+                                    error: SysError::new(ErrorCode::CgroupReplyDecodeFailed)
                                         .to_string(),
                                 });
                             let _ = reply_tx.send(result);
@@ -974,10 +974,9 @@ async fn run_method<C: UnitController>(controller: &C, call: &MethodCall) -> Met
             .reload(&call.unit_name, &call.args)
             .await
             .map(|()| vec![]),
-        other => Err(anyhow::anyhow!(crate::l10n::fmt(
-            crate::l10n::t_("unknown method: {other}"),
-            &[("other", &other.to_string())]
-        ))),
+        other => Err(anyhow::Error::new(
+            SysError::new(ErrorCode::UnknownMethod).with("other", other.to_string()),
+        )),
     };
     match result {
         Ok(payload) => {

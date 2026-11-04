@@ -8,6 +8,7 @@ use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{debug, warn};
 
+use crate::error_code::{ErrorCode, SysError};
 use crate::proto::{Envelope, IpcVersionRequest, IpcVersionResult};
 
 /// A framed Unix stream that sends/receives length-delimited protobuf envelopes.
@@ -25,17 +26,14 @@ pub async fn connect_control(path: &str) -> Result<UnixStream> {
     match UnixStream::connect(path).await {
         Ok(stream) => Ok(stream),
         Err(e) => {
-            let template = if e.kind() == std::io::ErrorKind::PermissionDenied {
-                crate::l10n::t_(
-                    "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance.",
-                )
+            let code = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                ErrorCode::ConnectPermissionDenied
             } else {
-                crate::l10n::t_("Failed to connect to System A: {e}")
+                ErrorCode::ConnectFailed
             };
-            Err(anyhow::anyhow!(crate::l10n::fmt(
-                template,
-                &[("e", &e.to_string())]
-            )))
+            Err(anyhow::Error::new(
+                SysError::new(code).with("e", e.to_string()),
+            ))
         }
     }
 }
@@ -53,11 +51,11 @@ pub async fn send_envelope(framed: &mut EnvelopeFramed, envelope: &Envelope) -> 
     let mut buf = BytesMut::new();
     envelope
         .encode(&mut buf)
-        .context(crate::l10n::t_("Failed to encode Envelope."))?;
+        .context(SysError::new(ErrorCode::EnvelopeEncodeFailed))?;
     framed
         .send(buf.freeze())
         .await
-        .context(crate::l10n::t_("Failed to send Envelope frame."))?;
+        .context(SysError::new(ErrorCode::EnvelopeSendFailed))?;
     Ok(())
 }
 
@@ -68,10 +66,10 @@ pub async fn recv_envelope(framed: &mut EnvelopeFramed) -> Result<Option<Envelop
         None => Ok(None),
         Some(result) => {
             let bytes: Bytes = result
-                .context(crate::l10n::t_("Frame receive error."))?
+                .context(SysError::new(ErrorCode::FrameReceiveFailed))?
                 .freeze();
             let envelope =
-                Envelope::decode(bytes).context(crate::l10n::t_("Failed to decode Envelope."))?;
+                Envelope::decode(bytes).context(SysError::new(ErrorCode::EnvelopeDecodeFailed))?;
             Ok(Some(envelope))
         }
     }
@@ -88,7 +86,7 @@ pub fn make_envelope(
     let mut buf = BytesMut::new();
     payload
         .encode(&mut buf)
-        .context(crate::l10n::t_("Failed to encode payload."))?;
+        .context(SysError::new(ErrorCode::PayloadEncodeFailed))?;
     Ok(Envelope {
         request_id,
         source: source.into(),
@@ -138,29 +136,22 @@ pub async fn exchange_version(framed: &mut EnvelopeFramed, client: &str) -> Resu
     )?;
     send_envelope(framed, &request).await?;
 
-    let reply = recv_envelope(framed).await?.ok_or_else(|| {
-        anyhow::anyhow!(crate::l10n::t_(
-            "peer closed the connection during the IPC version exchange"
-        ))
-    })?;
+    let reply = recv_envelope(framed)
+        .await?
+        .ok_or_else(|| anyhow::Error::new(SysError::new(ErrorCode::VersionPeerClosed)))?;
     if reply.method != METHOD_VERSION_RESULT {
-        anyhow::bail!(crate::l10n::fmt(
-            crate::l10n::t_("unexpected reply '{method}' during the IPC version exchange"),
-            &[("method", &reply.method)]
+        return Err(anyhow::Error::new(
+            SysError::new(ErrorCode::VersionUnexpectedReply).with("method", reply.method.clone()),
         ));
     }
     let result = IpcVersionResult::decode(reply.payload.as_slice())
-        .context(crate::l10n::t_("unreadable ipc.version.result payload"))?;
+        .context(SysError::new(ErrorCode::VersionResultUnreadable))?;
     if !result.compatible || result.version != IPC_VERSION {
-        anyhow::bail!(crate::l10n::fmt(
-            crate::l10n::t_(
-                "incompatible IPC version: we speak {mine}, the peer announced {theirs}: {message}"
-            ),
-            &[
-                ("mine", &IPC_VERSION.to_string()),
-                ("theirs", &result.version.to_string()),
-                ("message", &result.message)
-            ]
+        return Err(anyhow::Error::new(
+            SysError::new(ErrorCode::IncompatibleVersion)
+                .with("mine", IPC_VERSION.to_string())
+                .with("theirs", result.version.to_string())
+                .with("message", result.message),
         ));
     }
     Ok(result.version)
@@ -184,20 +175,20 @@ pub fn version_verdict(request: &IpcVersionRequest) -> bool {
 }
 
 /// Build the server's `ipc.version.result`.  The server always reports its
-/// own version in the reply; `compatible == false` adds the l10n rejection
-/// text and the caller closes the connection after sending.
+/// own version in the reply; `compatible == false` adds the technical
+/// rejection detail (`VersionMismatch(have=…, want=…)`) and the caller
+/// closes the connection after sending.
 pub fn version_result_envelope(request_id: u64, request: &IpcVersionRequest) -> Result<Envelope> {
     let compatible = version_verdict(request);
     let message = if compatible {
         String::new()
     } else {
-        crate::l10n::fmt(
-            crate::l10n::t_("this build pins IPC version {have}; the peer announced {want}"),
-            &[
-                ("have", &IPC_VERSION.to_string()),
-                ("want", &request.version.to_string()),
-            ],
-        )
+        // Wire data: the peer renders its own user-facing text from the
+        // code, so this field carries only the technical parameters.
+        SysError::new(ErrorCode::VersionMismatch)
+            .with("have", IPC_VERSION.to_string())
+            .with("want", request.version.to_string())
+            .to_string()
     };
     make_envelope(
         request_id,
@@ -257,7 +248,7 @@ pub async fn send_fd(stream: &UnixStream, fd: std::os::unix::io::RawFd) -> Resul
     let raw = stream.as_raw_fd();
     tokio::task::spawn_blocking(move || send_fd_sync(raw, fd))
         .await
-        .context(crate::l10n::t_("SCM_RIGHTS send task panicked."))?
+        .context(SysError::new(ErrorCode::FdSendTaskPanicked))?
 }
 
 /// Receive a single file descriptor from a Unix stream via SCM_RIGHTS.
@@ -266,7 +257,7 @@ pub async fn recv_fd(stream: &UnixStream) -> Result<std::os::unix::io::RawFd> {
     let raw = stream.as_raw_fd();
     tokio::task::spawn_blocking(move || recv_fd_sync(raw))
         .await
-        .context(crate::l10n::t_("SCM_RIGHTS recv task panicked."))?
+        .context(SysError::new(ErrorCode::FdRecvTaskPanicked))?
 }
 
 /// Synchronous SCM_RIGHTS send using libc::sendmsg.
@@ -291,7 +282,9 @@ fn send_fd_sync(sock_fd: std::os::unix::io::RawFd, fd: std::os::unix::io::RawFd)
 
         let cmsg = libc::CMSG_FIRSTHDR(&msghdr);
         if cmsg.is_null() {
-            anyhow::bail!(crate::l10n::t_("CMSG_FIRSTHDR returned null."));
+            return Err(anyhow::Error::new(SysError::new(
+                ErrorCode::CmsgHeaderMissing,
+            )));
         }
         (*cmsg).cmsg_level = libc::SOL_SOCKET;
         (*cmsg).cmsg_type = libc::SCM_RIGHTS;
@@ -308,9 +301,8 @@ fn send_fd_sync(sock_fd: std::os::unix::io::RawFd, fd: std::os::unix::io::RawFd)
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
-                anyhow::bail!(crate::l10n::fmt(
-                    crate::l10n::t_("sendmsg (SCM_RIGHTS) failed: {e}."),
-                    &[("e", &e.to_string())]
+                return Err(anyhow::Error::new(
+                    SysError::new(ErrorCode::SendmsgFailed).with("e", e.to_string()),
                 ));
             }
             break r;
@@ -347,17 +339,14 @@ fn recv_fd_sync(sock_fd: std::os::unix::io::RawFd) -> Result<std::os::unix::io::
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
-                anyhow::bail!(crate::l10n::fmt(
-                    crate::l10n::t_("recvmsg (SCM_RIGHTS) failed: {e}."),
-                    &[("e", &e.to_string())]
+                return Err(anyhow::Error::new(
+                    SysError::new(ErrorCode::RecvmsgFailed).with("e", e.to_string()),
                 ));
             }
             break r;
         };
         if ret == 0 {
-            anyhow::bail!(crate::l10n::t_(
-                "fdpass connection closed while waiting for a listener fd."
-            ));
+            return Err(anyhow::Error::new(SysError::new(ErrorCode::FdpassClosed)));
         }
 
         let mut received_fd: Option<std::os::unix::io::RawFd> = None;
@@ -373,7 +362,7 @@ fn recv_fd_sync(sock_fd: std::os::unix::io::RawFd) -> Result<std::os::unix::io::
 
         match received_fd {
             Some(fd) => Ok(fd),
-            None => anyhow::bail!(crate::l10n::t_("recvmsg did not contain SCM_RIGHTS fd.")),
+            None => Err(anyhow::Error::new(SysError::new(ErrorCode::NoScmRightsFd))),
         }
     }
 }
@@ -520,7 +509,8 @@ mod version_exchange_tests {
         });
 
         let err = exchange_version(&mut client, "tester").await.unwrap_err();
-        assert!(err.to_string().contains("exchange"));
+        let code = err.downcast_ref::<SysError>().map(|e| e.code());
+        assert_eq!(code, Some(ErrorCode::VersionUnexpectedReply));
         drop(client);
         let _ = server.await;
     }

@@ -13,4 +13,10 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 colored.workspace = true
+anyhow.workspace = true
+gettext-rs.workspace = true
 libc = "0.2"
+
+[features]
+default = []
+l10n_debug = []

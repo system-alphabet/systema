@@ -15,12 +15,7 @@ futures.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
-gettext-rs.workspace = true
 libc = "0.2"
-
-[features]
-default = []
-l10n_debug = []
 
 [dev-dependencies]
 serde_json.workspace = true

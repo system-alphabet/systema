@@ -1352,9 +1352,11 @@ dependencies = [
 name = "sysa"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
  "colored",
+ "gettext-rs",
  "libc",
  "sysa-ipc",
  "tokio",
@@ -1370,7 +1372,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
- "gettext-rs",
  "libc",
  "prost",
  "prost-build",

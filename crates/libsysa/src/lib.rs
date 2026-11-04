@@ -13,13 +13,18 @@
 //! - `--version` / `--full-version` output
 //! - The bake-in path default registry (once in libsysa so nothing
 //!   lower in the dependency stack needs to carry it)
+//! - The gettext/gettext wiring and the English msgid helpers (`l10n`)
+//! - Localized rendering of the IPC kernel's error codes (`errors`)
 
 pub use sysa_ipc::{
-    controller, finder, ipc, ir, l10n, proto, signals, staging_admin, unitstate_admin, worker_ipc,
+    controller, error_code, finder, ipc, ir, proto, signals, staging_admin, unitstate_admin,
+    worker_ipc,
 };
 
+pub mod errors;
 pub mod event_bus;
 pub mod firstboot;
+pub mod l10n;
 pub mod logging;
 pub mod mounts;
 pub mod notify;

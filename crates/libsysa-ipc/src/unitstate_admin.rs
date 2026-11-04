@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use prost::Message;
 
+use crate::error_code::{ErrorCode, SysError};
 use crate::ipc::{connect_control, frame_stream, make_envelope, recv_envelope, send_envelope};
 use crate::proto::{UnitStateEntry, UnitStateEof, UnitStateListRequest};
 
@@ -57,33 +58,29 @@ impl UnitStateAdmin {
 
         loop {
             let env = recv_envelope(&mut framed).await?.ok_or_else(|| {
-                anyhow::anyhow!(crate::l10n::t_(
-                    "System A disconnected before unit-state EOF."
-                ))
+                anyhow::Error::new(SysError::new(ErrorCode::UnitStateConnectionClosed))
             })?;
 
             match env.method.as_str() {
                 "admin.unitstate.entry" => {
                     let entry = UnitStateEntry::decode(env.payload.as_slice())
-                        .context(crate::l10n::t_("Failed to decode UnitStateEntry"))?;
+                        .context(SysError::new(ErrorCode::UnitStateEntryDecodeFailed))?;
                     if !entry.json.is_empty() {
                         on_unit(&entry.name, &entry.json)?;
                     }
                 }
                 "admin.unitstate.eof" => {
                     let eof = UnitStateEof::decode(env.payload.as_slice())
-                        .context(crate::l10n::t_("Failed to decode UnitStateEof"))?;
+                        .context(SysError::new(ErrorCode::UnitStateEofDecodeFailed))?;
                     return Ok(UnitStateResult {
                         total: eof.total,
                         message: eof.message,
                     });
                 }
                 other => {
-                    anyhow::bail!(crate::l10n::fmt(
-                        crate::l10n::t_(
-                            "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
-                        ),
-                        &[("other", &other.to_string())]
+                    return Err(anyhow::Error::new(
+                        SysError::new(ErrorCode::ExpectedUnitStateFrame)
+                            .with("other", other.to_string()),
                     ));
                 }
             }

@@ -357,7 +357,19 @@ fn build_localized_cli() -> clap::Command {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
+    match main_impl().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            // Localized on the way out: returning the error would let
+            // Rust's Termination print the kernel's English Debug form.
+            sysa::errors::report(&e);
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn main_impl() -> Result<()> {
     // `--user` must take effect before paths::init() freezes the resolved
     // socket paths: scan argv first, then point the control socket at the
     // per-user instance.  clap still registers the flag (so `--help`

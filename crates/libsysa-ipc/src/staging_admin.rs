@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use prost::Message;
 
+use crate::error_code::{ErrorCode, SysError};
 use crate::ipc::{connect_control, frame_stream, make_envelope, recv_envelope, send_envelope};
 use crate::proto::{AdminStagingOp, AdminStagingResult};
 
@@ -79,21 +80,19 @@ impl StagingAdmin {
         let query_env = make_envelope(1, "", "system-a", "admin.staging", query)?;
         send_envelope(&mut framed, &query_env).await?;
 
-        let result_env = recv_envelope(&mut framed).await?.ok_or_else(|| {
-            anyhow::anyhow!(crate::l10n::t_(
-                "System A disconnected before admin result."
-            ))
-        })?;
+        let result_env = recv_envelope(&mut framed)
+            .await?
+            .ok_or_else(|| anyhow::Error::new(SysError::new(ErrorCode::AdminConnectionClosed)))?;
 
         if result_env.method != "admin.staging.result" {
-            anyhow::bail!(crate::l10n::fmt(
-                crate::l10n::t_("Expected 'admin.staging.result', got '{method}'"),
-                &[("method", &(result_env.method).to_string())]
+            return Err(anyhow::Error::new(
+                SysError::new(ErrorCode::ExpectedAdminStagingResult)
+                    .with("method", result_env.method),
             ));
         }
 
         let result = AdminStagingResult::decode(result_env.payload.as_slice())
-            .context(crate::l10n::t_("Failed to decode AdminStagingResult"))?;
+            .context(SysError::new(ErrorCode::AdminStagingDecodeFailed))?;
         Ok(result)
     }
 }

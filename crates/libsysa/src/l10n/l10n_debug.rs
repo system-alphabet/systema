@@ -1,5 +1,4 @@
 use gettextrs::{bind_textdomain_codeset, bindtextdomain};
-use tracing::{debug, warn};
 
 pub fn try_init() {
     let mo_dir = concat!(env!("OUT_DIR"), "/mo/");

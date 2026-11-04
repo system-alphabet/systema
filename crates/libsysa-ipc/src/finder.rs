@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use prost::Message;
 
+use crate::error_code::{ErrorCode, SysError};
 use crate::ipc::{frame_stream, make_envelope, recv_envelope, send_envelope};
 use crate::proto::{
     CommitUnits, RegisterUnits, StagingQuery, StagingQueryResult, UnitRegistrationAck,
@@ -27,10 +28,7 @@ impl UnitFinder {
         let stream = tokio::net::UnixStream::connect(&self.socket_path)
             .await
             .map_err(|e| {
-                anyhow::anyhow!(crate::l10n::fmt(
-                    crate::l10n::t_("Failed to connect to System A: {e}"),
-                    &[("e", &e.to_string())]
-                ))
+                anyhow::Error::new(SysError::new(ErrorCode::ConnectFailed).with("e", e.to_string()))
             })?;
         let mut framed = frame_stream(stream);
 
@@ -45,19 +43,18 @@ impl UnitFinder {
         let reg_env = make_envelope(1, "system-f", "system-a", "finder.register_units", reg_msg)?;
         send_envelope(&mut framed, &reg_env).await?;
 
-        let ack_env = recv_envelope(&mut framed).await?.ok_or_else(|| {
-            anyhow::anyhow!(crate::l10n::t_("System A disconnected before sending ack."))
-        })?;
+        let ack_env = recv_envelope(&mut framed)
+            .await?
+            .ok_or_else(|| anyhow::Error::new(SysError::new(ErrorCode::AckConnectionClosed)))?;
 
         if ack_env.method != "finder.ack" {
-            anyhow::bail!(crate::l10n::fmt(
-                crate::l10n::t_("Expected 'finder.ack', got '{method}'"),
-                &[("method", &(ack_env.method).to_string())]
+            return Err(anyhow::Error::new(
+                SysError::new(ErrorCode::ExpectedFinderAck).with("method", ack_env.method),
             ));
         }
 
         let ack = UnitRegistrationAck::decode(ack_env.payload.as_slice())
-            .context(crate::l10n::t_("Failed to decode UnitRegistrationAck"))?;
+            .context(SysError::new(ErrorCode::AckDecodeFailed))?;
         Ok(ack)
     }
 
@@ -66,10 +63,7 @@ impl UnitFinder {
         let stream = tokio::net::UnixStream::connect(&self.socket_path)
             .await
             .map_err(|e| {
-                anyhow::anyhow!(crate::l10n::fmt(
-                    crate::l10n::t_("Failed to connect to System A: {e}"),
-                    &[("e", &e.to_string())]
-                ))
+                anyhow::Error::new(SysError::new(ErrorCode::ConnectFailed).with("e", e.to_string()))
             })?;
         let mut framed = frame_stream(stream);
 
@@ -85,19 +79,18 @@ impl UnitFinder {
             make_envelope(1, "system-f", "system-a", "finder.commit_units", commit_msg)?;
         send_envelope(&mut framed, &commit_env).await?;
 
-        let ack_env = recv_envelope(&mut framed).await?.ok_or_else(|| {
-            anyhow::anyhow!(crate::l10n::t_("System A disconnected before sending ack."))
-        })?;
+        let ack_env = recv_envelope(&mut framed)
+            .await?
+            .ok_or_else(|| anyhow::Error::new(SysError::new(ErrorCode::AckConnectionClosed)))?;
 
         if ack_env.method != "finder.ack" {
-            anyhow::bail!(crate::l10n::fmt(
-                crate::l10n::t_("Expected 'finder.ack', got '{method}'"),
-                &[("method", &(ack_env.method).to_string())]
+            return Err(anyhow::Error::new(
+                SysError::new(ErrorCode::ExpectedFinderAck).with("method", ack_env.method),
             ));
         }
 
         let ack = UnitRegistrationAck::decode(ack_env.payload.as_slice())
-            .context(crate::l10n::t_("Failed to decode UnitRegistrationAck"))?;
+            .context(SysError::new(ErrorCode::AckDecodeFailed))?;
         Ok(ack)
     }
 
@@ -106,10 +99,7 @@ impl UnitFinder {
         let stream = tokio::net::UnixStream::connect(&self.socket_path)
             .await
             .map_err(|e| {
-                anyhow::anyhow!(crate::l10n::fmt(
-                    crate::l10n::t_("Failed to connect to System A: {e}"),
-                    &[("e", &e.to_string())]
-                ))
+                anyhow::Error::new(SysError::new(ErrorCode::ConnectFailed).with("e", e.to_string()))
             })?;
         let mut framed = frame_stream(stream);
 
@@ -124,21 +114,19 @@ impl UnitFinder {
         let query_env = make_envelope(1, "system-f", "system-a", "staging.query", query)?;
         send_envelope(&mut framed, &query_env).await?;
 
-        let result_env = recv_envelope(&mut framed).await?.ok_or_else(|| {
-            anyhow::anyhow!(crate::l10n::t_(
-                "System A disconnected before sending query result."
-            ))
-        })?;
+        let result_env = recv_envelope(&mut framed)
+            .await?
+            .ok_or_else(|| anyhow::Error::new(SysError::new(ErrorCode::QueryConnectionClosed)))?;
 
         if result_env.method != "staging.query_result" {
-            anyhow::bail!(crate::l10n::fmt(
-                crate::l10n::t_("Expected 'staging.query_result', got '{method}'"),
-                &[("method", &(result_env.method).to_string())]
+            return Err(anyhow::Error::new(
+                SysError::new(ErrorCode::ExpectedStagingQueryResult)
+                    .with("method", result_env.method),
             ));
         }
 
         let result = StagingQueryResult::decode(result_env.payload.as_slice())
-            .context(crate::l10n::t_("Failed to decode StagingQueryResult"))?;
+            .context(SysError::new(ErrorCode::StagingQueryDecodeFailed))?;
         Ok(result)
     }
 }
