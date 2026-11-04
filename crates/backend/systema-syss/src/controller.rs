@@ -181,13 +181,23 @@ impl ServiceController {
                 }
                 self.publish_state(unit_name);
                 if !status.success() {
-                    return Err(anyhow!(sysa::l10n::fmt(
+                    let message = sysa::l10n::fmt(
                         sysa::l10n::t_("oneshot service {unit_name} exited with code {code}"),
                         &[
                             ("unit_name", &unit_name.to_string()),
-                            ("code", &format!("{:?}", status.code()))
-                        ]
-                    )));
+                            ("code", &format!("{:?}", status.code())),
+                        ],
+                    );
+                    // A normal exit with a non-zero status is a unit outcome,
+                    // not a task malfunction: System A must still fail the
+                    // start job, but it should not log a task-level warning
+                    // (the pushed unit state already tells the story).  A
+                    // signal death (`code() == None`) stays a task failure.
+                    return Err(if status.code().is_some() {
+                        anyhow::Error::new(sysa::worker_ipc::UnitFailure).context(message)
+                    } else {
+                        anyhow::anyhow!(message)
+                    });
                 }
                 Ok(())
             }
@@ -758,6 +768,14 @@ mod tests {
             .await_oneshot_exit("oneshot-test.service", child.id().unwrap_or(0), child, &cfg)
             .await;
         assert!(result.is_err(), "oneshot exit 1 should fail");
+        let err = result.unwrap_err();
+        // A normal exit with a non-zero status must carry the unit-failure
+        // marker: System A keeps the failed job but logs no task warning.
+        assert!(
+            err.downcast_ref::<sysa::worker_ipc::UnitFailure>()
+                .is_some(),
+            "a non-zero normal exit must be marked as a unit failure: {err:#}"
+        );
         let reg = ctrl.registry.lock();
         let inst = reg.get("oneshot-test.service").expect("unit should exist");
         assert_eq!(inst.state, ServiceState::Failed);

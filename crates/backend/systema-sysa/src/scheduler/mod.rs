@@ -1645,6 +1645,7 @@ async fn enqueue_job_tracked(
                                 &e.to_string(),
                                 &name,
                                 step_kind,
+                                false,
                             );
                             continue;
                         }
@@ -1906,13 +1907,19 @@ pub fn handle_task_result(
     message: &str,
     unit_name: &str,
     kind: JobKind,
+    unit_failure: bool,
 ) {
     // A failed task is otherwise invisible in the logs (job status changes
     // are not printed): surface the unit, kind and worker message so
     // failures like a specifier-expanded User= that resolves to nothing are
-    // diagnosable without strace.
+    // diagnosable without strace.  A `unit_failure` is the unit's own outcome
+    // (e.g. a oneshot exited non-zero) and is already carried by the pushed
+    // unit state, so it only gets a debug line — the failed job is still
+    // recorded below.
     if !success {
-        if message.is_empty() {
+        if unit_failure {
+            debug!("Task failed for {unit_name} ({kind:?}): {message}");
+        } else if message.is_empty() {
             warn!("Task failed for {unit_name} ({kind:?})");
         } else {
             warn!("Task failed for {unit_name} ({kind:?}): {message}");
@@ -3899,6 +3906,7 @@ mod tests {
                 "ok",
                 "demo.service",
                 JobKind::Start,
+                false,
             );
         }
 
@@ -4331,6 +4339,7 @@ mod tests {
             "ExecStart is empty for demo.service",
             "demo.service",
             JobKind::Start,
+            false,
         );
 
         let state = alloc.read();
@@ -4597,6 +4606,7 @@ mod tests {
             "ok",
             &call.unit_name,
             kind,
+            false,
         );
     }
 

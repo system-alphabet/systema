@@ -70,6 +70,11 @@ message MethodResult {
     // reconcile its cache with the worker's actual state.
     // For other methods this is empty.
     bytes result = 5;
+    // True when the failure is a normal unit outcome already reflected in the
+    // pushed unit state (e.g. a `Type=oneshot` process exited with a non-zero
+    // status) rather than a task-level malfunction.  System A still records
+    // the failed job but does not log a task-level warning for it.
+    bool unit_failure = 6;
 }
 
 // Sent by System A to acknowledge a worker registration.

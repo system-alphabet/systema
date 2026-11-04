@@ -441,6 +441,7 @@ async fn handle_worker_session(
                                 &result.error,
                                 &result.unit_name,
                                 kind,
+                                result.unit_failure,
                             );
                             // After the job is updated, check whether this
                             // unit's Start/Restart job ended in Failed (e.g.

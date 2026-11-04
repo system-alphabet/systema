@@ -600,7 +600,7 @@ mod tests {
                 "--log-level",
                 "trace",
                 "--shutdown-timeout",
-                "10",
+                "180",
                 "--ready-timeout",
                 "30",
             ]

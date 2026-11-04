@@ -23,6 +23,29 @@ use crate::proto::*;
 /// worker overrun its deadline.
 const DISCONNECT_GRACE: Duration = Duration::from_secs(2);
 
+/// Marker error for a unit outcome that is *not* a task-level malfunction.
+///
+/// A worker wraps it around the localized message it returns when the unit's
+/// own process exited normally with a non-zero status (e.g. a `Type=oneshot`
+/// `ExecStart` returned 1).  The failed job must still be reported — systemd
+/// fails the start job in that case — but System A should not log a
+/// task-level warning for it: the unit state update already carries the
+/// outcome.
+///
+/// Attach it with `anyhow::Error::new(UnitFailure).context(message)`; the
+/// top-level `Display` stays the localized message, and [`run_method`] turns
+/// the marker into `MethodResult::unit_failure`.
+#[derive(Debug)]
+pub struct UnitFailure;
+
+impl std::fmt::Display for UnitFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("unit exited with a failure status")
+    }
+}
+
+impl std::error::Error for UnitFailure {}
+
 /// Handle for publishing unit state updates from within a unit controller.
 ///
 /// Obtained via [`WorkerIpc::run`]'s factory closure and stored inside the
@@ -1066,6 +1089,7 @@ async fn run_method<C: UnitController>(controller: &C, call: &MethodCall) -> Met
                 success: true,
                 error: String::new(),
                 result,
+                unit_failure: false,
             }
         }
         Err(e) => {
@@ -1080,6 +1104,7 @@ async fn run_method<C: UnitController>(controller: &C, call: &MethodCall) -> Met
                 success: false,
                 error: format!("{e}{}", status_error.unwrap_or_default()),
                 result,
+                unit_failure: e.downcast_ref::<UnitFailure>().is_some(),
             }
         }
     }
