@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 prost.workspace = true
+serde.workspace = true
 bytes.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -20,6 +21,9 @@ libc = "0.2"
 [features]
 default = []
 l10n_debug = []
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [build-dependencies]
 prost-build = "0.13"

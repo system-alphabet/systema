@@ -1373,6 +1373,8 @@ dependencies = [
  "libc",
  "prost",
  "prost-build",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-util",
  "tracing",

@@ -17,6 +17,7 @@
 pub mod controller;
 pub mod finder;
 pub mod ipc;
+pub mod ir;
 pub mod l10n;
 pub mod paths;
 pub mod proto {

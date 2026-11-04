@@ -13,7 +13,7 @@
 //! - `--version` / `--full-version` output
 
 pub use sysa_ipc::{
-    controller, finder, ipc, l10n, paths, proto, signals, staging_admin, unitstate_admin,
+    controller, finder, ipc, ir, l10n, paths, proto, signals, staging_admin, unitstate_admin,
     worker_ipc,
 };
 

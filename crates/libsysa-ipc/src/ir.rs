@@ -1,3 +1,15 @@
+//! Unified unit intermediate representation, abstracted across all init
+//! systems (systemd, SysV, OpenRC, Runit, ...).
+//!
+//! Lives in the IPC kernel because it is the payload the unit-declare and
+//! staging flows exchange: the model is serialized to JSON bytes and
+//! carried inside the protobuf `units_json` fields of the wire messages
+//! (`proto/common.proto`, `proto/workload.proto`, `proto/control.proto`).
+//! The transport itself stays model-agnostic — the two-plane boundary
+//! (`common.proto` as the only shared import) still applies, and the type
+//! contract is versioned as source text shared by the producer (System F)
+//! and its consumers (System A and the workers).
+
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
