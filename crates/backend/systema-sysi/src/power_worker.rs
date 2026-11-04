@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use sysa::controller::{UnitController, UnitStatus};
-use sysa::worker_ipc::WorkerIpc;
-use tokio::sync::{mpsc, oneshot};
+use sysa::worker_ipc::{ShutdownHandle, WorkerIpc};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
@@ -81,14 +81,13 @@ impl UnitController for PowerController {
 }
 
 pub struct PowerWorker {
-    shutdown: oneshot::Sender<()>,
+    shutdown: ShutdownHandle,
     task: JoinHandle<Result<()>>,
 }
 
 impl PowerWorker {
     pub fn spawn() -> (Self, mpsc::UnboundedReceiver<PowerAction>) {
         let (requests, receiver) = mpsc::unbounded_channel();
-        let (shutdown, shutdown_rx) = oneshot::channel();
         let callback_requests = requests.clone();
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let callback_pending = pending.clone();
@@ -119,12 +118,9 @@ impl PowerWorker {
                     }
                 }
             });
+        let shutdown = ipc.shutdown_handle();
         let task = tokio::spawn(async move {
-            ipc.run_until_shutdown(
-                async move {
-                    let _ = shutdown_rx.await;
-                    "System Init shutdown"
-                },
+            ipc.run(
                 move |_| PowerController {
                     requests: requests.clone(),
                     pending: pending.clone(),
@@ -137,7 +133,7 @@ impl PowerWorker {
     }
 
     pub async fn disconnect(self) {
-        let _ = self.shutdown.send(());
+        self.shutdown.shutdown("System Init shutdown");
         match self.task.await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => warn!("Power worker failed during shutdown: {e:#}"),

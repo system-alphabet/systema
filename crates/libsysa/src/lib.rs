@@ -17,8 +17,7 @@
 //! - Localized rendering of the IPC kernel's error codes (`errors`)
 
 pub use sysa_ipc::{
-    controller, error_code, finder, ipc, ir, proto, signals, staging_admin, unitstate_admin,
-    worker_ipc,
+    controller, error_code, finder, ipc, ir, proto, staging_admin, unitstate_admin, worker_ipc,
 };
 
 pub mod errors;
@@ -29,5 +28,6 @@ pub mod logging;
 pub mod mounts;
 pub mod notify;
 pub mod paths;
+pub mod signals;
 pub mod unit_name;
 pub mod version;

@@ -63,10 +63,13 @@ pub async fn run() -> Result<()> {
     let controller = systema_sysr_linux::linux_controller();
     let baseline = controller.snapshot();
 
-    let result = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+    let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
         .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .supports_unit_define()
-        .supports_resource_prepare()
+        .supports_resource_prepare();
+    sysa::signals::forward_shutdown(ipc.shutdown_handle());
+
+    let result = ipc
         .run(
             move |event_pub| {
                 let worker = ResourceWorker::with_defaults(

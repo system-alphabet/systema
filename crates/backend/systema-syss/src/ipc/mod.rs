@@ -58,11 +58,12 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
     // (System R may have come up in the meantime, or the cgroup backend
     // recovered).
     let no_cgroup_backend = Arc::new(AtomicBool::new(false));
-    // On SIGTERM/SIGINT the IPC loop stops our services *first* — while the
-    // connection is still open, so their final states still reach System A —
-    // and only then exchanges the `worker.exit` goodbye.
+    // A shutdown request (SIGTERM/SIGINT forwarded by `sysa::signals`) makes
+    // the IPC loop stop our services *first* — while the connection is still
+    // open, so their final states still reach System A — and only then
+    // exchanges the `worker.exit` goodbye.
     let shared_for_cleanup = shared.clone();
-    WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+    let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
         .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .on_reconnect({
             let no_cgroup_backend = no_cgroup_backend.clone();
@@ -74,31 +75,32 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
         .on_shutdown(move || {
             let shared = shared_for_cleanup.clone();
             async move { crate::shutdown(shared).await }
-        })
-        .run(
-            {
-                let no_cgroup_backend = no_cgroup_backend.clone();
-                move |event_pub| {
-                    let cgroup = Querier::new(
-                        event_pub.clone(),
-                        // The querier rides the same fresh-per-connection
-                        // publisher the controller uses for state updates;
-                        // only the no-backend verdict outlives a reconnect.
-                        no_cgroup_backend.clone(),
-                    );
-                    ServiceController::new(
-                        registry.clone(),
-                        event_pub,
-                        cgroup,
-                        fdpass_controller.clone(),
-                        notify.clone(),
-                        dbus.clone(),
-                    )
-                }
-            },
-            |_, _| Ok(false),
-        )
-        .await
+        });
+    sysa::signals::forward_shutdown(ipc.shutdown_handle());
+    ipc.run(
+        {
+            let no_cgroup_backend = no_cgroup_backend.clone();
+            move |event_pub| {
+                let cgroup = Querier::new(
+                    event_pub.clone(),
+                    // The querier rides the same fresh-per-connection
+                    // publisher the controller uses for state updates;
+                    // only the no-backend verdict outlives a reconnect.
+                    no_cgroup_backend.clone(),
+                );
+                ServiceController::new(
+                    registry.clone(),
+                    event_pub,
+                    cgroup,
+                    fdpass_controller.clone(),
+                    notify.clone(),
+                    dbus.clone(),
+                )
+            }
+        },
+        |_, _| Ok(false),
+    )
+    .await
 }
 
 pub(crate) async fn monitor_service(

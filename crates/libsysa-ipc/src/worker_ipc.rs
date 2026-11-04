@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use prost::Message as ProstMessage;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, error, info, warn};
 
@@ -346,6 +346,35 @@ pub struct WorkerIpc {
     /// [`Self::with_socket_path`] before running; sysa-ipc no longer owns
     /// the baked-in path registry (that moved to [`sysa::paths`]).
     socket_path: Option<String>,
+    /// Exit flag: `None` while running, `Some(reason)` once [`Self::shutdown`]
+    /// asked the loop to leave.  A polled atomic would only be noticed
+    /// between attempts, so the loop waits on this watch channel instead.
+    shutdown_tx: watch::Sender<Option<String>>,
+    shutdown_rx: watch::Receiver<Option<String>>,
+}
+
+/// An owned, cloneable way to ask a running [`WorkerIpc`] to exit.
+///
+/// The loop cannot be handed a borrowed `WorkerIpc` while a signal watcher
+/// also needs to reach it, so the watcher (or any task) holds this instead.
+/// Dropping every handle does not stop the worker: only an explicit
+/// [`Self::shutdown`] does.
+#[derive(Clone)]
+pub struct ShutdownHandle {
+    shutdown_tx: watch::Sender<Option<String>>,
+}
+
+impl ShutdownHandle {
+    /// Mark the exit flag and wake the loop, which then leaves gracefully:
+    /// cleanup on the still-open connection, `worker.exit`, and the wait for
+    /// System A to close.
+    ///
+    /// `reason` is used in the log lines and in the final `worker.exit`
+    /// envelope ("SIGTERM", "System Init shutdown", …). Repeated calls are
+    /// harmless.
+    pub fn shutdown(&self, reason: impl Into<String>) {
+        let _ = self.shutdown_tx.send(Some(reason.into()));
+    }
 }
 
 impl WorkerIpc {
@@ -354,6 +383,7 @@ impl WorkerIpc {
     /// `worker_id` is a unique identifier (e.g. `"system-s-1"`).
     /// `unit_types` lists the unit types this worker manages (e.g. `["service"]`).
     pub fn new(worker_id: &str, unit_types: &[&str]) -> Self {
+        let (shutdown_tx, shutdown_rx) = watch::channel(None);
         WorkerIpc {
             worker_id: worker_id.to_string(),
             unit_types: unit_types.iter().map(|s| s.to_string()).collect(),
@@ -363,7 +393,25 @@ impl WorkerIpc {
             on_reconnect: None,
             on_method_result: None,
             socket_path: None,
+            shutdown_tx,
+            shutdown_rx,
         }
+    }
+
+    /// A cloneable handle for asking this worker to exit from another task
+    /// (e.g. a signal watcher).  See [`ShutdownHandle::shutdown`].
+    pub fn shutdown_handle(&self) -> ShutdownHandle {
+        ShutdownHandle {
+            shutdown_tx: self.shutdown_tx.clone(),
+        }
+    }
+
+    /// Ask the loop to leave gracefully — the same path a signal takes.
+    ///
+    /// Equivalent to `self.shutdown_handle().shutdown(reason)`; the handle
+    /// exists for tasks that cannot borrow `&self` while [`Self::run`] runs.
+    pub fn shutdown(&self, reason: impl Into<String>) {
+        self.shutdown_handle().shutdown(reason);
     }
 
     /// Connect to `path` instead of the compiled-in socket.
@@ -375,9 +423,9 @@ impl WorkerIpc {
         self
     }
 
-    /// Arrange for `cleanup` to run on SIGTERM/SIGINT, **before** the
-    /// `worker.exit` handshake and while the System A connection is still
-    /// open.
+    /// Arrange for `cleanup` to run when [`Self::shutdown`] asks the loop to
+    /// leave, **before** the `worker.exit` handshake and while the System A
+    /// connection is still open.
     ///
     /// For a worker that has to finish local work on its way out (System S
     /// stopping its services) the ordering matters: state emitted while the
@@ -460,14 +508,15 @@ impl WorkerIpc {
     ///
     /// # Graceful shutdown
     ///
-    /// SIGTERM/SIGINT are handled *in here*: the loop first runs any
-    /// [`Self::on_shutdown`] cleanup on the still-open connection, then
+    /// Nothing in here watches process signals: a caller that cares (the
+    /// binaries use `sysa::signals`) calls [`Self::shutdown`] / a
+    /// [`ShutdownHandle`] when it wants the worker to leave.  The loop then
+    /// runs any [`Self::on_shutdown`] cleanup on the still-open connection,
     /// queues a final `worker.exit` envelope, keeps the connection running so
     /// System A receives everything queued before it, and returns only once
     /// System A has closed the connection (or [`DISCONNECT_GRACE`] elapses).
-    /// Callers must therefore not race this function against their own
-    /// [`crate::signals::shutdown_signal()`] — that would drop the socket
-    /// before the goodbye is exchanged.
+    /// Callers must therefore not drop the socket on their own — ask through
+    /// the handle and let this function finish the goodbye.
     pub async fn run<C, H>(
         &self,
         controller_factory: impl Fn(EventPublisher) -> C,
@@ -477,31 +526,38 @@ impl WorkerIpc {
         C: UnitController + Send + Sync + 'static,
         H: Fn(&Envelope, &EventPublisher) -> Result<bool>,
     {
-        self.run_until_shutdown(
-            crate::signals::shutdown_signal(),
-            controller_factory,
-            custom_handler,
-        )
-        .await
+        self.run_loop(controller_factory, custom_handler).await
     }
 
-    /// [`Self::run`] with the shutdown signal supplied by the caller.
-    ///
-    /// The caller controls when graceful cleanup and the goodbye handshake start.
-    pub async fn run_until_shutdown<S, C, H>(
+    async fn run_loop<C, H>(
         &self,
-        shutdown: S,
         controller_factory: impl Fn(EventPublisher) -> C,
         custom_handler: H,
     ) -> Result<()>
     where
-        S: Future<Output = &'static str>,
         C: UnitController + Send + Sync + 'static,
         H: Fn(&Envelope, &EventPublisher) -> Result<bool>,
     {
-        // One listener for the whole loop.  Rebuilding it per attempt would
-        // open a window in which a signal delivered between attempts is
-        // never observed again — tokio does not replay signals.
+        // One waiter for the whole loop.  Rebuilding it per attempt would
+        // open a window in which a shutdown requested between attempts is
+        // never observed again.
+        let mut shutdown_rx = self.shutdown_rx.clone();
+        let shutdown = async move {
+            loop {
+                // `borrow` does not advance the receiver's seen version, so a
+                // value set before this loop started is still caught here and
+                // a concurrent `send` still wakes the `changed` below.
+                if let Some(reason) = (*shutdown_rx.borrow()).clone() {
+                    return reason;
+                }
+                if shutdown_rx.changed().await.is_err() {
+                    // The sender lives in `WorkerIpc`, which outlives this loop,
+                    // so this cannot happen.  Park rather than invent a shutdown
+                    // that was never requested.
+                    std::future::pending::<String>().await;
+                }
+            }
+        };
         tokio::pin!(shutdown);
 
         let mut backoff = Duration::from_millis(500);
@@ -516,14 +572,14 @@ impl WorkerIpc {
             tokio::pin!(inner);
 
             // What ended this attempt: the connection itself, or us being
-            // asked to leave (SIGTERM/SIGINT).
+            // asked to leave through the exit flag.
             enum Stopped {
                 Finished(Result<()>),
-                Signal(&'static str),
+                Shutdown(String),
             }
             let stopped = tokio::select! {
                 res = &mut inner => Stopped::Finished(res),
-                sig = &mut shutdown => Stopped::Signal(sig),
+                reason = &mut shutdown => Stopped::Shutdown(reason),
             };
 
             match stopped {
@@ -533,19 +589,20 @@ impl WorkerIpc {
                 }
                 Stopped::Finished(Err(e)) => {
                     warn!("Worker error: {}; reconnecting in {:?}", e, backoff);
-                    // A signal must not be lost while we back off: there is
-                    // no live connection, so there is nothing to disconnect.
+                    // A shutdown request must not be lost while we back off:
+                    // there is no live connection, so there is nothing to
+                    // disconnect.
                     tokio::select! {
                         _ = tokio::time::sleep(backoff) => {}
-                        sig = &mut shutdown => {
-                            info!("{sig}: no live System A connection; exiting");
+                        reason = &mut shutdown => {
+                            info!("{reason}: no live System A connection; exiting");
                             return Ok(());
                         }
                     }
                     backoff = (backoff * 2).min(Duration::from_secs(30));
                 }
-                Stopped::Signal(sig) => {
-                    info!("{sig} received; shutting down locally before saying goodbye");
+                Stopped::Shutdown(reason) => {
+                    info!("{reason} received; shutting down locally before saying goodbye");
 
                     // Local cleanup runs first, *while the connection is
                     // still up*, so whatever state it reports still reaches
@@ -584,7 +641,7 @@ impl WorkerIpc {
                         "system-a",
                         "worker.exit",
                         WorkerExit {
-                            reason: sig.to_string(),
+                            reason: reason.clone(),
                         },
                     )
                     .and_then(encode_envelope)
@@ -1400,17 +1457,17 @@ mod tests {
                 }
             });
 
-        let signal = async move {
+        let handle = ipc.shutdown_handle();
+        tokio::spawn(async move {
             ready_rx
                 .await
                 .expect("fake System A disappeared before the handshake finished");
-            "SIGTERM"
-        };
+            handle.shutdown("SIGTERM");
+        });
 
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            ipc.run_until_shutdown(
-                signal,
+            ipc.run(
                 move |event_pub| {
                     *pub_for_factory.lock().unwrap() = Some(event_pub);
                     NoopController
@@ -1478,17 +1535,17 @@ mod tests {
                 }
             });
 
-        let signal = async move {
+        let handle = ipc.shutdown_handle();
+        tokio::spawn(async move {
             ready_rx
                 .await
                 .expect("fake System A disappeared before the handshake finished");
-            "SIGTERM"
-        };
+            handle.shutdown("SIGTERM");
+        });
 
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            ipc.run_until_shutdown(
-                signal,
+            ipc.run(
                 move |event_pub| {
                     *pub_for_factory.lock().unwrap() = Some(event_pub);
                     NoopController
@@ -1518,9 +1575,15 @@ mod tests {
         let ipc = WorkerIpc::new("system-t-1", &["timer"])
             .with_socket_path("/nonexistent/systema/allocator.sock");
 
+        let handle = ipc.shutdown_handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            handle.shutdown("SIGTERM");
+        });
+
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            ipc.run_until_shutdown(async { "SIGTERM" }, |_| NoopController, |_, _| Ok(false)),
+            ipc.run(|_| NoopController, |_, _| Ok(false)),
         )
         .await
         .expect("must not wait for a System A that will never come");
@@ -1555,16 +1618,17 @@ mod tests {
                 }
             });
 
-        let signal = async move {
+        let handle = ipc.shutdown_handle();
+        tokio::spawn(async move {
             ready_rx
                 .await
                 .expect("fake System A disappeared before the handshake finished");
-            "SIGTERM"
-        };
+            handle.shutdown("SIGTERM");
+        });
 
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            ipc.run_until_shutdown(signal, |_| NoopController, |_, _| Ok(false)),
+            ipc.run(|_| NoopController, |_, _| Ok(false)),
         )
         .await
         .expect("shutdown must not wedge when System A leaves first");

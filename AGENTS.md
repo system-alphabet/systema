@@ -63,11 +63,19 @@ changes do **not** need to be written back into these docs.
   only), and capability must fall back to a `Noop*Controller`-style
   implementation on other targets. A bare unconditional `libc`/`nix`
   dependency breaks the FreeBSD/OpenBSD/Android matrix.
-- Worker lifecycle (signals, reconnect+backoff, graceful
-  `worker.exit` handshake) lives **inside** `WorkerIpc::run()` in
-  `sysa-ipc`. Never race it with your own `shutdown_signal()` in `main` —
-  that drops the socket before the goodbye; use
-  `WorkerIpc::on_shutdown(cleanup)` instead (see its doc comment).
+- Worker lifecycle (reconnect+backoff, graceful `worker.exit`
+  handshake) lives **inside** `WorkerIpc::run()` in `sysa-ipc`, but the
+  loop watches **no** process signals: a caller asks it to leave through
+  `WorkerIpc::shutdown(reason)` / a `ShutdownHandle`, and the loop exits
+  at a loop boundary (cleanup on the still-open connection, then the
+  goodbye). Signal handling lives in `libsysa::signals`; a worker that
+  wants SIGTERM/SIGINT semantics calls
+  `sysa::signals::forward_shutdown(ipc.shutdown_handle())` before
+  `run()` (System Init's power worker instead calls `shutdown(...)` from
+  its own disconnect path). Never tear the socket down yourself — e.g.
+  racing the loop with your own `shutdown_signal()` in `main` drops the
+  connection before the goodbye; use `WorkerIpc::on_shutdown(cleanup)`
+  for local cleanup (see its doc comment).
 - Power units (reboot/halt/…) are handled in-process by `systema-sysi`;
   there is deliberately no worker for them.
 

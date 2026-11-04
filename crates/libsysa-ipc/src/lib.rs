@@ -30,7 +30,6 @@ pub mod proto {
     //! only imports `common.proto` and cannot name the other's types.
     include!(concat!(env!("OUT_DIR"), "/ipc.rs"));
 }
-pub mod signals;
 pub mod staging_admin;
 pub mod unitstate_admin;
 pub mod worker_ipc;

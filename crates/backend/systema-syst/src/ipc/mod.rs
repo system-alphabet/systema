@@ -9,11 +9,12 @@ const WORKER_UNIT_TYPES: &[&str] = &["target"];
 
 pub async fn run() -> Result<()> {
     let registry = new_registry();
-    WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
-        .with_socket_path(sysa::paths::instance().ipc_socket_path)
-        .run(
-            |_event_pub| TargetController::new(registry.clone()),
-            |_, _| Ok(false),
-        )
-        .await
+    let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path);
+    sysa::signals::forward_shutdown(ipc.shutdown_handle());
+    ipc.run(
+        |_event_pub| TargetController::new(registry.clone()),
+        |_, _| Ok(false),
+    )
+    .await
 }

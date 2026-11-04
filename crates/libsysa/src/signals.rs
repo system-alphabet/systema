@@ -16,6 +16,8 @@
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{debug, info};
 
+use crate::worker_ipc::ShutdownHandle;
+
 /// Wait for a graceful-shutdown request and return the signal that arrived.
 ///
 /// Installs both handlers at registration time, so the process behaves the
@@ -35,6 +37,20 @@ pub async fn shutdown_signal() -> &'static str {
             "SIGINT"
         }
     }
+}
+
+/// Forward SIGTERM/SIGINT to a [`ShutdownHandle`] in a background task.
+///
+/// A worker's IPC loop deliberately watches no process signals
+/// ([`sysa_ipc::worker_ipc::WorkerIpc::run`] only leaves when asked to), so
+/// binaries call this right before `run` to turn the signal into
+/// [`ShutdownHandle::shutdown`].  The loop then leaves between iterations
+/// instead of the signal killing the process mid-frame.
+pub fn forward_shutdown(handle: ShutdownHandle) {
+    tokio::spawn(async move {
+        let name = shutdown_signal().await;
+        handle.shutdown(name);
+    });
 }
 
 /// Signals System A has no protocol for, in reception order stable enough

@@ -98,14 +98,15 @@ pub async fn run() -> Result<()> {
         }
     };
 
-    WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
-        .with_socket_path(sysa::paths::instance().ipc_socket_path)
-        .run(
-            |event_pub| {
-                *publisher_slot.write() = Some(event_pub.clone());
-                SocketController::new(socket_manager.clone(), activation.clone(), event_pub)
-            },
-            custom,
-        )
-        .await
+    let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path);
+    sysa::signals::forward_shutdown(ipc.shutdown_handle());
+    ipc.run(
+        |event_pub| {
+            *publisher_slot.write() = Some(event_pub.clone());
+            SocketController::new(socket_manager.clone(), activation.clone(), event_pub)
+        },
+        custom,
+    )
+    .await
 }

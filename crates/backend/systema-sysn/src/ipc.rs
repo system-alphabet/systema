@@ -66,29 +66,30 @@ pub async fn run() -> Result<()> {
     let reconcile_factory = reconcile.clone();
     let reconcile_handler = reconcile.clone();
 
-    WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
-        .with_socket_path(sysa::paths::instance().ipc_socket_path)
-        .run(
-            move |event_pub| {
-                // Refresh the publisher used by the background engine on
-                // every (re)connection.
-                *shared_factory.event_pub.lock() = Some(event_pub.clone());
-                // Subscribe to events for every unit so target terminations
-                // are observed; System A replays active units on subscribe.
-                event_pub.subscribe_units(&[]);
-                debug!("System N subscribed to unit events (all)");
-                *reconcile_factory.lock().unwrap() = Some(Reconcile::begin());
-                PathController::new(shared_factory.clone())
-            },
-            move |env, _event_pub| {
-                if env.method == "event.publish" {
-                    handle_unit_event(env, &shared_handler, &reconcile_handler);
-                    return Ok(true);
-                }
-                Ok(false)
-            },
-        )
-        .await
+    let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path);
+    sysa::signals::forward_shutdown(ipc.shutdown_handle());
+    ipc.run(
+        move |event_pub| {
+            // Refresh the publisher used by the background engine on
+            // every (re)connection.
+            *shared_factory.event_pub.lock() = Some(event_pub.clone());
+            // Subscribe to events for every unit so target terminations
+            // are observed; System A replays active units on subscribe.
+            event_pub.subscribe_units(&[]);
+            debug!("System N subscribed to unit events (all)");
+            *reconcile_factory.lock().unwrap() = Some(Reconcile::begin());
+            PathController::new(shared_factory.clone())
+        },
+        move |env, _event_pub| {
+            if env.method == "event.publish" {
+                handle_unit_event(env, &shared_handler, &reconcile_handler);
+                return Ok(true);
+            }
+            Ok(false)
+        },
+    )
+    .await
 }
 
 /// Decode an `event.publish` envelope and react to target unit terminations.

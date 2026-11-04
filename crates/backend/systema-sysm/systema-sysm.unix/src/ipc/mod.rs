@@ -11,26 +11,27 @@ const WORKER_UNIT_TYPES: &[&str] = &["mount", "automount"];
 pub async fn run() -> Result<()> {
     let registry = new_registry();
     let automount_registry = new_automount_registry();
-    WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
-        .with_socket_path(sysa::paths::instance().ipc_socket_path)
-        .run(
-            move |event_pub| {
-                // Spawn the MountTableMonitor with a clone of the fresh
-                // EventPublisher; it periodically reconciles the registry
-                // against the real mount table and commits dynamically
-                // discovered mount units to System A.
-                {
-                    let ep = event_pub.clone();
-                    let reg = registry.clone();
-                    tokio::spawn(async move {
-                        let mut monitor = MountTableMonitor::new(reg, ep);
-                        monitor.run().await;
-                    });
-                }
+    let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path);
+    sysa::signals::forward_shutdown(ipc.shutdown_handle());
+    ipc.run(
+        move |event_pub| {
+            // Spawn the MountTableMonitor with a clone of the fresh
+            // EventPublisher; it periodically reconciles the registry
+            // against the real mount table and commits dynamically
+            // discovered mount units to System A.
+            {
+                let ep = event_pub.clone();
+                let reg = registry.clone();
+                tokio::spawn(async move {
+                    let mut monitor = MountTableMonitor::new(reg, ep);
+                    monitor.run().await;
+                });
+            }
 
-                MountController::new(registry.clone(), automount_registry.clone(), event_pub)
-            },
-            |_, _| Ok(false),
-        )
-        .await
+            MountController::new(registry.clone(), automount_registry.clone(), event_pub)
+        },
+        |_, _| Ok(false),
+    )
+    .await
 }
