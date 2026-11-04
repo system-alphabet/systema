@@ -2757,7 +2757,7 @@ fn check_conditions(unit: &UnitSection) -> bool {
     // ConditionFirstBoot=yes passes only on the first boot.
     for spec in &unit.condition_first_boot {
         let (negate, value) = strip_negate(spec);
-        let first = is_first_boot();
+        let first = sysa::firstboot::is_first_boot();
         let want = matches!(value.to_lowercase().as_str(), "yes" | "true" | "1");
         if (first != want) != negate {
             return false;
@@ -2806,7 +2806,7 @@ fn check_asserts(unit: &UnitSection) -> bool {
     }
     for spec in &unit.assert_first_boot {
         let (negate, value) = strip_negate(spec);
-        let first = is_first_boot();
+        let first = sysa::firstboot::is_first_boot();
         let want = matches!(value.to_lowercase().as_str(), "yes" | "true" | "1");
         if (first != want) != negate {
             return false;
@@ -2895,12 +2895,9 @@ fn is_on_ac_power() -> bool {
         .unwrap_or(true)
 }
 
-/// Returns `true` if this appears to be the first boot of the system.
-/// Heuristic: `/run/systemd/first-boot` or `/run/machine-id` does not exist.
-fn is_first_boot() -> bool {
-    std::path::Path::new(sysa::paths::instance().systemd_first_boot_file).exists()
-}
-
+/// First-boot classification lives in `sysa::firstboot` (shared with the
+/// `%m` specifier expanders); the local copy was removed — the condition
+/// and assert loops above call `sysa::firstboot::is_first_boot()` directly.
 #[cfg(test)]
 mod tests {
     use super::*;

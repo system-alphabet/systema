@@ -18,6 +18,7 @@ pub use sysa_ipc::{
 };
 
 pub mod event_bus;
+pub mod firstboot;
 pub mod logging;
 pub mod mounts;
 pub mod notify;

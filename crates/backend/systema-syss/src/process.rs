@@ -1507,11 +1507,7 @@ fn expand_specifiers(s: &str, name: &str) -> String {
             .map(|s| s.trim().to_string())
             .unwrap_or_default()
     };
-    let machine_id = || {
-        std::fs::read_to_string(sysa::paths::instance().systemd_machine_id_file)
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default()
-    };
+    let machine_id = || sysa::firstboot::read_machine_id().unwrap_or_default();
     let kernel_release = || {
         std::process::Command::new("uname")
             .arg("-r")

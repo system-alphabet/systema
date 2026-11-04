@@ -17,13 +17,21 @@ pub struct Paths {
     pub control_socket_path: &'static str,
     pub systema_shell_path: &'static str,
     pub systema_socket_handler_path: &'static str,
-    pub systemd_machine_id_file: &'static str,
+    /// Primary machine-id file.  First-boot classification sees this
+    /// candidate first, then the static fallback list in
+    /// [`sysa::firstboot::MACHINE_ID_FALLBACK_FILES`] (usrmerge `/usr/etc`,
+    /// `/var/lib/dbus`, BSD-style `/var/db` — see the `firstboot` module).
+    pub machine_id_file: &'static str,
     pub systemd_lib_unit_dir: &'static str,
-    pub systemd_first_boot_file: &'static str,
+    /// Force-first-boot flag file: when it exists, first-boot-only units
+    /// (`ConditionFirstBoot=yes`, `AssertFirstBoot=yes`) run on *every*
+    /// boot regardless of the machine-id state.  Operated by hand (create
+    /// to force, delete to restore normal boot classification).
+    pub firstboot_flag_file: &'static str,
     pub locale_dir: &'static str,
-    /// Base directory for runtime state (e.g. `/run`).  System A creates
-    /// `systemd/system` under this path on startup so that units can
-    /// reference `/run/systemd/system`.
+    /// Base directory for runtime state (e.g. `/run`).  The System Wrapper
+    /// (sysw.systemd flavor) creates `systemd/system` under this path at
+    /// startup so that units can reference `/run/systemd/system`.
     pub runstatedir: &'static str,
     pub unit_search_paths: Vec<String>,
     pub generator_search_paths: Vec<String>,
@@ -65,15 +73,9 @@ fn compute_paths() -> Paths {
             "SYSTEMA_SOCKET_HANDLER_PATH",
             builtin::SYSTEMA_SOCKET_HANDLER_PATH,
         ),
-        systemd_machine_id_file: resolve(
-            "SYSTEMD_MACHINE_ID_FILE",
-            builtin::SYSTEMD_MACHINE_ID_FILE,
-        ),
+        machine_id_file: resolve("SYSTEMA_MACHINE_ID_FILE", builtin::MACHINE_ID_FILE),
         systemd_lib_unit_dir: resolve("SYSTEMD_LIB_UNIT_DIR", builtin::SYSTEMD_LIB_UNIT_DIR),
-        systemd_first_boot_file: resolve(
-            "SYSTEMD_FIRST_BOOT_FILE",
-            builtin::SYSTEMD_FIRST_BOOT_FILE,
-        ),
+        firstboot_flag_file: resolve("SYSTEMA_FIRSTBOOT_FLAG_FILE", builtin::FIRSTBOOT_FLAG_FILE),
         locale_dir: resolve("SYSTEMA_LOCALE_DIR", builtin::LOCALE_DIR),
         runstatedir: resolve("SYSTEMA_RUNSTATEDIR", builtin::RUNSTATEDIR),
         unit_search_paths: resolve_list("SYSTEMA_UNIT_PATH", builtin::UNIT_SEARCH_PATHS),
@@ -122,12 +124,12 @@ pub fn builtin_defaults() -> Vec<(&'static str, String)> {
             builtin::SYSTEMD_LIB_UNIT_DIR.to_string(),
         ),
         (
-            "SYSTEMD_FIRST_BOOT_FILE",
-            builtin::SYSTEMD_FIRST_BOOT_FILE.to_string(),
+            "SYSTEMA_MACHINE_ID_FILE",
+            builtin::MACHINE_ID_FILE.to_string(),
         ),
         (
-            "SYSTEMD_MACHINE_ID_FILE",
-            builtin::SYSTEMD_MACHINE_ID_FILE.to_string(),
+            "SYSTEMA_FIRSTBOOT_FLAG_FILE",
+            builtin::FIRSTBOOT_FLAG_FILE.to_string(),
         ),
         ("SYSTEMA_IPC_SOCKET", builtin::IPC_SOCKET_PATH.to_string()),
         (
@@ -205,13 +207,10 @@ pub fn debug_dump(log_file: &str) {
     // the runtime knob names a file, not the build-time directory).
     let values = [
         ("SYSTEMD_LIB_UNIT_DIR", p.systemd_lib_unit_dir.to_string()),
+        ("SYSTEMA_MACHINE_ID_FILE", p.machine_id_file.to_string()),
         (
-            "SYSTEMD_FIRST_BOOT_FILE",
-            p.systemd_first_boot_file.to_string(),
-        ),
-        (
-            "SYSTEMD_MACHINE_ID_FILE",
-            p.systemd_machine_id_file.to_string(),
+            "SYSTEMA_FIRSTBOOT_FLAG_FILE",
+            p.firstboot_flag_file.to_string(),
         ),
         ("SYSTEMA_IPC_SOCKET", p.ipc_socket_path.to_string()),
         ("SYSTEMA_FDPASS_SOCK", p.systema_fdpass_sock.to_string()),

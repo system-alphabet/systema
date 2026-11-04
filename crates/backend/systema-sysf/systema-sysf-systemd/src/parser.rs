@@ -865,16 +865,12 @@ pub fn expand_specifiers(s: &str, name: &str) -> String {
                 String::new()
             })
     };
-    let machine_id = || {
-        std::fs::read_to_string(sysa::paths::instance().systemd_machine_id_file)
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|e| {
-                tracing::debug!(
-                    "expand_specifiers: failed to read {} for %m: {e}",
-                    sysa::paths::instance().systemd_machine_id_file
-                );
-                String::new()
-            })
+    let machine_id = || match sysa::firstboot::read_machine_id() {
+        Some(id) => id,
+        None => {
+            tracing::debug!("expand_specifiers: no machine id file found for %m");
+            String::new()
+        }
     };
     let kernel_release = || {
         std::process::Command::new("uname")

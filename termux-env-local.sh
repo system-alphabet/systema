@@ -55,12 +55,12 @@ export SYSTEMA_FDPASS_SOCK="${PREFIX}/var/run/systema/fdpass.sock"
 export SYSTEMA_CONTROL_SOCKET="${PREFIX}/var/run/systema/control.socket"
 export SYSTEMA_NOTIFY_DIR="${PREFIX}/var/run/systema/notify"
 export SYSTEMA_RELOAD_SOCKET="${PREFIX}/var/run/systema/sysf.sock"
-export SYSTEMD_FIRST_BOOT_FILE="${PREFIX}/var/run/systemd/first-boot"
+export SYSTEMA_FIRSTBOOT_FLAG_FILE="${PREFIX}/etc/systema-firstboot-flag"
 
 # ---------------------------------------------------------------------------
 # State / logs
 # ---------------------------------------------------------------------------
-export SYSTEMD_MACHINE_ID_FILE="${PREFIX}/etc/machine-id"
+export SYSTEMA_MACHINE_ID_FILE="${PREFIX}/etc/machine-id"
 # Build-time base directory of the default per-process log files
 # (libsysa build.rs bakes it; the runtime knob names a file instead):
 export SYSTEMA_LOG_DIR="${PREFIX}/var/log/systema"
