@@ -789,10 +789,13 @@ fn bind_netlink(address: &str) -> Result<RawFd> {
         ));
     }
 
+    // systemd's socket-activation consumers (e.g. udevd via
+    // systemd-udevd-kernel.socket) only accept AF_NETLINK fds that are
+    // SOCK_RAW; listen_fds() rejects anything else with -EINVAL.
     let fd = unsafe {
         let fd = libc::socket(
             libc::AF_NETLINK,
-            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+            libc::SOCK_RAW | libc::SOCK_CLOEXEC,
             proto_id,
         );
         if fd < 0 {
@@ -1145,6 +1148,24 @@ mod tests {
     fn bind_netlink_kobject_uevent() {
         let fd = bind_netlink("kobject-uevent 1").unwrap();
         assert!(fd >= 0);
+        // Consumers of passed netlink fds (systemd udevd's listen_fds())
+        // require SOCK_RAW; assert the type so it cannot regress.
+        let ty: libc::c_int = unsafe {
+            let mut v: libc::c_int = 0;
+            let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            assert_eq!(
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_TYPE,
+                    &mut v as *mut _ as *mut libc::c_void,
+                    &mut len,
+                ),
+                0
+            );
+            v
+        };
+        assert_eq!(ty, libc::SOCK_RAW);
         unsafe {
             libc::close(fd);
         }
