@@ -66,7 +66,7 @@ struct Args {
 
     #[arg(
         long,
-        default_value_t = 10,
+        default_value_t = 180,
         help = "Grace period in seconds before SIGKILL during shutdown"
     )]
     shutdown_timeout: u64,
