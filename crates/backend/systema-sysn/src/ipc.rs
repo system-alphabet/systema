@@ -67,6 +67,7 @@ pub async fn run() -> Result<()> {
     let reconcile_handler = reconcile.clone();
 
     WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .run(
             move |event_pub| {
                 // Refresh the publisher used by the background engine on

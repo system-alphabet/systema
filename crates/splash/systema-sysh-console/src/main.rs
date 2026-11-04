@@ -101,7 +101,7 @@ fn build_args() -> Args {
 
 fn main() {
     sysa::paths::init();
-    sysa::l10n::init();
+    sysa::l10n::init(sysa::paths::instance().locale_dir);
 
     let args = build_args();
     if args.version {

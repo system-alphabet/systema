@@ -11,12 +11,6 @@ pub struct UnitFinder {
 }
 
 impl UnitFinder {
-    pub fn new() -> Self {
-        UnitFinder {
-            socket_path: crate::paths::instance().ipc_socket_path.to_string(),
-        }
-    }
-
     /// Build a finder client speaking to System A's IPC socket at an
     /// explicit path (the tests use this to point at an in-process stub).
     pub fn with_socket(socket_path: impl Into<String>) -> Self {
@@ -146,11 +140,5 @@ impl UnitFinder {
         let result = StagingQueryResult::decode(result_env.payload.as_slice())
             .context(crate::l10n::t_("Failed to decode StagingQueryResult"))?;
         Ok(result)
-    }
-}
-
-impl Default for UnitFinder {
-    fn default() -> Self {
-        Self::new()
     }
 }

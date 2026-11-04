@@ -99,6 +99,7 @@ pub async fn run() -> Result<()> {
     };
 
     WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .run(
             |event_pub| {
                 *publisher_slot.write() = Some(event_pub.clone());

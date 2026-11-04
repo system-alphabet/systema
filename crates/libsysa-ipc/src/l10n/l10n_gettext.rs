@@ -18,9 +18,9 @@ pub fn fmt(template: impl AsRef<str>, args: &[(&str, &str)]) -> String {
     result
 }
 
-pub fn init() {
+pub fn init(locale_dir: &str) {
     let _ = gettextrs::setlocale(LocaleCategory::LcAll, "");
-    let _ = bindtextdomain("systema", crate::paths::instance().locale_dir);
+    let _ = bindtextdomain("systema", locale_dir);
     let _ = textdomain("systema");
     let _ = bind_textdomain_codeset("systema", "UTF-8");
 }

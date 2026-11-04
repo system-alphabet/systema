@@ -55,7 +55,7 @@ struct Args {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     sysa::paths::init();
-    sysa::l10n::init();
+    sysa::l10n::init(sysa::paths::instance().locale_dir);
     sysa::signals::install_signal_guard();
 
     let args = {
@@ -113,7 +113,7 @@ async fn run_register(name: &str) -> Result<()> {
     info!("Discovered {} units", units.len());
 
     let json = serde_json::to_vec(&units)?;
-    let client = UnitFinder::new();
+    let client = UnitFinder::with_socket(sysa::paths::instance().ipc_socket_path);
     let ack = client.register_units(name, json).await?;
     if ack.success {
         info!("Staging successful: {} units registered", ack.unit_count);

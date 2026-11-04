@@ -25,9 +25,11 @@ pub struct UnitStateAdmin {
 }
 
 impl UnitStateAdmin {
-    pub fn new() -> Self {
+    /// Build a unitstate-admin client speaking to System A's control
+    /// socket at an explicit path.
+    pub fn with_socket(socket_path: impl Into<String>) -> Self {
         UnitStateAdmin {
-            socket_path: crate::paths::instance().control_socket_path.to_string(),
+            socket_path: socket_path.into(),
         }
     }
 
@@ -86,11 +88,5 @@ impl UnitStateAdmin {
                 }
             }
         }
-    }
-}
-
-impl Default for UnitStateAdmin {
-    fn default() -> Self {
-        Self::new()
     }
 }

@@ -94,6 +94,7 @@ impl PowerWorker {
         let callback_pending = pending.clone();
         let reconnect_pending = pending.clone();
         let ipc = WorkerIpc::new(WORKER_ID, &["power"])
+            .with_socket_path(sysa::paths::instance().ipc_socket_path)
             .on_reconnect(move || {
                 let pending = reconnect_pending.clone();
                 async move {

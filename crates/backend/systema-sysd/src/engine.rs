@@ -232,7 +232,7 @@ async fn inject_units(shared: &Arc<EngineShared>, names: &[String]) {
         }
     };
 
-    let client = UnitFinder::new();
+    let client = UnitFinder::with_socket(sysa::paths::instance().ipc_socket_path);
     match client.register_units("systema-sysd/discovery", json).await {
         Ok(reg_ack) if reg_ack.success => {
             match client.commit_units("systema-sysd/discovery").await {

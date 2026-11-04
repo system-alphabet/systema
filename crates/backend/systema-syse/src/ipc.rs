@@ -16,6 +16,7 @@ const WORKER_UNIT_TYPES: &[&str] = &["scope"];
 pub async fn run() -> Result<()> {
     let registry = new_registry();
     WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .run(
             |event_pub| ScopeController::new(registry.clone(), event_pub),
             |env, event_pub| handle_custom(env, event_pub, registry.clone()),

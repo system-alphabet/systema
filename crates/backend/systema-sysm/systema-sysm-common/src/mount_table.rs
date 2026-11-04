@@ -173,7 +173,7 @@ pub async fn commit_mount_units(units: &HashMap<String, UnitIR>) -> bool {
             return false;
         }
     };
-    let finder = UnitFinder::new();
+    let finder = UnitFinder::with_socket(sysa::paths::instance().ipc_socket_path);
     match finder.register_units("systema-sysm/discovery", json).await {
         Ok(ack) if !ack.success => {
             warn!("Unit registration rejected: {}", ack.message);

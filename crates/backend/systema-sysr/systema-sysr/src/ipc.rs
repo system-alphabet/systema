@@ -64,6 +64,7 @@ pub async fn run() -> Result<()> {
     let baseline = controller.snapshot();
 
     let result = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .supports_unit_define()
         .supports_resource_prepare()
         .run(

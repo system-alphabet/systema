@@ -13,6 +13,7 @@ pub async fn run() -> Result<()> {
     spawn_engine(shared.clone(), refresh_rx);
 
     WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .run(
             |event_pub| {
                 // Refresh the publisher used by the background engine on

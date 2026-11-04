@@ -208,7 +208,7 @@ fn print_value(value: &Value, indent: &str) {
 }
 
 async fn run_list(json: bool, uids: Vec<u32>, regex_strs: Vec<String>) -> Result<()> {
-    let admin = StagingAdmin::new();
+    let admin = StagingAdmin::with_socket(sysa::paths::instance().control_socket_path);
 
     let regexes: Vec<Regex> = regex_strs
         .iter()
@@ -281,7 +281,7 @@ async fn run_list(json: bool, uids: Vec<u32>, regex_strs: Vec<String>) -> Result
 }
 
 async fn run_commit(uid: u32) -> Result<()> {
-    let admin = StagingAdmin::new();
+    let admin = StagingAdmin::with_socket(sysa::paths::instance().control_socket_path);
     let result = admin.commit(uid, "").await?;
     if result.success {
         pager_println!(
@@ -367,7 +367,7 @@ async fn main() -> Result<()> {
         std::env::set_var("SYSTEMA_CONTROL_SOCKET", sysa::paths::user_control_socket());
     }
     sysa::paths::init();
-    sysa::l10n::init();
+    sysa::l10n::init(sysa::paths::instance().locale_dir);
     sysa::signals::install_signal_guard();
 
     let matches = build_localized_cli().get_matches();

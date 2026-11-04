@@ -1355,6 +1355,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "colored",
+ "libc",
  "sysa-ipc",
  "tokio",
  "tracing",

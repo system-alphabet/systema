@@ -25,7 +25,7 @@
 
 use std::path::Path;
 
-use sysa_ipc::paths;
+use crate::paths;
 
 /// Fallback machine-id files consulted after the primary
 /// [`sysa_ipc::paths::machine_id_file`], covering the locations other

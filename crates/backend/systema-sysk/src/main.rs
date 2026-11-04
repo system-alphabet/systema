@@ -39,7 +39,7 @@ struct Args {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     sysa::paths::init();
-    sysa::l10n::init();
+    sysa::l10n::init(sysa::paths::instance().locale_dir);
     sysa::signals::install_signal_guard();
 
     let args = {

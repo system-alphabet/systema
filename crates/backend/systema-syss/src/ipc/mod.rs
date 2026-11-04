@@ -63,6 +63,7 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
     // and only then exchanges the `worker.exit` goodbye.
     let shared_for_cleanup = shared.clone();
     WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .on_reconnect({
             let no_cgroup_backend = no_cgroup_backend.clone();
             move || {

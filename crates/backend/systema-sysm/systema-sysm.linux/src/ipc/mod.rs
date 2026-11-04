@@ -14,6 +14,7 @@ pub async fn run() -> Result<()> {
     let automount_registry = new_automount_registry();
 
     WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
         .run(
             move |event_pub| {
                 // Spawn MountInfoMonitor with a clone of the fresh EventPublisher.

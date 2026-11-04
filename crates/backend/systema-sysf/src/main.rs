@@ -72,7 +72,7 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     sysa::paths::init();
-    sysa::l10n::init();
+    sysa::l10n::init(sysa::paths::instance().locale_dir);
     sysa::signals::install_signal_guard();
 
     let args = {
@@ -244,7 +244,7 @@ async fn run_finders(name: &str) -> Result<()> {
 async fn run_commit(name: &str) -> Result<()> {
     info!("System F committing staging area (name='{name}')");
 
-    let client = UnitFinder::new();
+    let client = UnitFinder::with_socket(sysa::paths::instance().ipc_socket_path);
     let ack = client.commit_units(name).await?;
     if ack.success {
         info!("Commit successful: {} units committed", ack.unit_count);
@@ -263,7 +263,7 @@ async fn run_commit(name: &str) -> Result<()> {
 async fn run_query(name: &str) -> Result<()> {
     info!("System F querying staging area (name='{name}')");
 
-    let client = UnitFinder::new();
+    let client = UnitFinder::with_socket(sysa::paths::instance().ipc_socket_path);
     let result = client.query_staging(name).await?;
     if result.success {
         info!("Staging area contains {} units", result.unit_count);

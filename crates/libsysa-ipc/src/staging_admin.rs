@@ -14,9 +14,11 @@ pub struct StagingAdmin {
 }
 
 impl StagingAdmin {
-    pub fn new() -> Self {
+    /// Build a staging-admin client speaking to System A's control socket
+    /// at an explicit path.
+    pub fn with_socket(socket_path: impl Into<String>) -> Self {
         StagingAdmin {
-            socket_path: crate::paths::instance().control_socket_path.to_string(),
+            socket_path: socket_path.into(),
         }
     }
 
@@ -93,11 +95,5 @@ impl StagingAdmin {
         let result = AdminStagingResult::decode(result_env.payload.as_slice())
             .context(crate::l10n::t_("Failed to decode AdminStagingResult"))?;
         Ok(result)
-    }
-}
-
-impl Default for StagingAdmin {
-    fn default() -> Self {
-        Self::new()
     }
 }

@@ -340,9 +340,9 @@ pub struct WorkerIpc {
     on_shutdown: Option<Arc<dyn Fn() -> ShutdownCleanup + Send + Sync>>,
     on_reconnect: Option<Arc<dyn Fn() -> ReconnectHook + Send + Sync>>,
     on_method_result: Option<MethodResultHook>,
-    /// Test-only override of System A's socket path, so the fake System A in
-    /// the tests need not live at the compiled-in `/run/...` location.
-    #[cfg(test)]
+    /// Override of System A's socket path.  All callers must set this via
+    /// [`Self::with_socket_path`] before running; sysa-ipc no longer owns
+    /// the baked-in path registry (that moved to [`sysa::paths`]).
     socket_path: Option<String>,
 }
 
@@ -360,14 +360,15 @@ impl WorkerIpc {
             on_shutdown: None,
             on_reconnect: None,
             on_method_result: None,
-            #[cfg(test)]
             socket_path: None,
         }
     }
 
-    /// Connect to `path` instead of the configured socket (tests only).
-    #[cfg(test)]
-    pub(crate) fn with_socket_path(mut self, path: impl Into<String>) -> Self {
+    /// Connect to `path` instead of the compiled-in socket.
+    ///
+    /// Every caller must chain this before [`Self::run`] — sysa-ipc no
+    /// longer carries the baked-in path registry (see [`sysa::paths`]).
+    pub fn with_socket_path(mut self, path: impl Into<String>) -> Self {
         self.socket_path = Some(path.into());
         self
     }
@@ -627,13 +628,10 @@ impl WorkerIpc {
         use futures::StreamExt;
         use tokio_util::codec::LengthDelimitedCodec;
 
-        #[cfg(test)]
         let socket_path = self
             .socket_path
             .clone()
-            .unwrap_or_else(|| crate::paths::instance().ipc_socket_path.to_string());
-        #[cfg(not(test))]
-        let socket_path = crate::paths::instance().ipc_socket_path.to_string();
+            .expect("WorkerIpc::with_socket_path must be called before run()");
 
         info!("Connecting to System A at {}", socket_path);
 

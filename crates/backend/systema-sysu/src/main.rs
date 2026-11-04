@@ -444,7 +444,7 @@ async fn main() -> Result<()> {
     // the surrounding shell exported (plan §3.1).
     envs::install();
     sysa::paths::init();
-    sysa::l10n::init();
+    sysa::l10n::init(sysa::paths::instance().locale_dir);
     sysa::signals::install_signal_guard();
 
     let args = build_args();

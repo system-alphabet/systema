@@ -11,10 +11,11 @@
 //! - Event bus topics (server-side dispatch of unit state)
 //! - Mount-point jurisdiction policy and unit name helpers
 //! - `--version` / `--full-version` output
+//! - The bake-in path default registry (once in libsysa so nothing
+//!   lower in the dependency stack needs to carry it)
 
 pub use sysa_ipc::{
-    controller, finder, ipc, ir, l10n, paths, proto, signals, staging_admin, unitstate_admin,
-    worker_ipc,
+    controller, finder, ipc, ir, l10n, proto, signals, staging_admin, unitstate_admin, worker_ipc,
 };
 
 pub mod event_bus;
@@ -22,5 +23,6 @@ pub mod firstboot;
 pub mod logging;
 pub mod mounts;
 pub mod notify;
+pub mod paths;
 pub mod unit_name;
 pub mod version;

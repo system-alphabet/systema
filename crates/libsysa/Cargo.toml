@@ -13,3 +13,4 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 colored.workspace = true
+libc = "0.2"

@@ -15,8 +15,8 @@ pub fn fmt(template: impl AsRef<str>, args: &[(&str, &str)]) -> String {
     l10n_gettext::fmt(template, args)
 }
 
-pub fn init() {
-    l10n_gettext::init();
+pub fn init(locale_dir: &str) {
+    l10n_gettext::init(locale_dir);
     #[cfg(all(debug_assertions, feature = "l10n_debug"))]
     l10n_debug::try_init();
 }

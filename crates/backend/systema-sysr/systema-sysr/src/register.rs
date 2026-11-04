@@ -89,7 +89,7 @@ pub fn user_slice_ir(unit_name: &str, description: &str) -> UnitIR {
 /// definition.  Fails only on transport errors or an explicit refusal from
 /// System A.
 pub async fn commit_slice(unit_name: &str, description: &str) -> Result<()> {
-    let client = UnitFinder::new();
+    let client = UnitFinder::with_socket(sysa::paths::instance().ipc_socket_path);
     commit_slice_with(&client, unit_name, description).await
 }
 

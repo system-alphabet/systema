@@ -105,7 +105,7 @@ fn render_unit(name: &str, json: &[u8], color: bool) -> Result<()> {
 }
 
 async fn run(color: bool, name: Option<String>) -> Result<()> {
-    let admin = UnitStateAdmin::new();
+    let admin = UnitStateAdmin::with_socket(sysa::paths::instance().control_socket_path);
     let mut rendered = 0u32;
     let (result, requested, filtered) = match &name {
         Some(requested) => {
@@ -235,7 +235,7 @@ async fn main() -> Result<()> {
         std::env::set_var("SYSTEMA_CONTROL_SOCKET", sysa::paths::user_control_socket());
     }
     sysa::paths::init();
-    sysa::l10n::init();
+    sysa::l10n::init(sysa::paths::instance().locale_dir);
     sysa::signals::install_signal_guard();
 
     let matches = build_localized_cli().get_matches();
