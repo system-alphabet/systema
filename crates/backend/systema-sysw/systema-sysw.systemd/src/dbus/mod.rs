@@ -123,7 +123,10 @@ pub async fn register_unit_object(
                 unit_name: unit_name.to_string(),
             };
             if let Err(e) = conn.object_server().at(path.clone(), obj).await {
-                warn!("Failed to register Service interface for {}: {}", unit_name, e);
+                warn!(
+                    "Failed to register Service interface for {}: {}",
+                    unit_name, e
+                );
             }
         }
         "socket" => {
@@ -132,7 +135,10 @@ pub async fn register_unit_object(
                 unit_name: unit_name.to_string(),
             };
             if let Err(e) = conn.object_server().at(path.clone(), obj).await {
-                warn!("Failed to register Socket interface for {}: {}", unit_name, e);
+                warn!(
+                    "Failed to register Socket interface for {}: {}",
+                    unit_name, e
+                );
             }
         }
         "slice" => {
@@ -140,7 +146,10 @@ pub async fn register_unit_object(
                 unit_name: unit_name.to_string(),
             };
             if let Err(e) = conn.object_server().at(path.clone(), obj).await {
-                warn!("Failed to register Slice interface for {}: {}", unit_name, e);
+                warn!(
+                    "Failed to register Slice interface for {}: {}",
+                    unit_name, e
+                );
             }
         }
         "scope" => {
@@ -149,7 +158,10 @@ pub async fn register_unit_object(
                 unit_name: unit_name.to_string(),
             };
             if let Err(e) = conn.object_server().at(path.clone(), obj).await {
-                warn!("Failed to register Scope interface for {}: {}", unit_name, e);
+                warn!(
+                    "Failed to register Scope interface for {}: {}",
+                    unit_name, e
+                );
             }
         }
         "mount" => {
@@ -158,7 +170,10 @@ pub async fn register_unit_object(
                 unit_name: unit_name.to_string(),
             };
             if let Err(e) = conn.object_server().at(path.clone(), obj).await {
-                warn!("Failed to register Mount interface for {}: {}", unit_name, e);
+                warn!(
+                    "Failed to register Mount interface for {}: {}",
+                    unit_name, e
+                );
             }
         }
         _ => {}
@@ -175,10 +190,16 @@ pub async fn register_unit_object(
         .remove::<zbus::fdo::Properties, _>(path.clone())
         .await
     {
-        warn!("Failed to remove default Properties for {}: {}", unit_name, e);
+        warn!(
+            "Failed to remove default Properties for {}: {}",
+            unit_name, e
+        );
     }
     if let Err(e) = conn.object_server().at(path, custom_props).await {
-        warn!("Failed to register custom Properties for {}: {}", unit_name, e);
+        warn!(
+            "Failed to register custom Properties for {}: {}",
+            unit_name, e
+        );
     }
 
     info!("Registered D-Bus unit object for {}", unit_name);
@@ -265,12 +286,17 @@ pub async fn run_dbus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection
         .remove::<zbus::fdo::Properties, _>("/org/freedesktop/systemd1")
         .await
     {
-        warn!("Failed to remove default Properties interface from manager: {}", e);
+        warn!(
+            "Failed to remove default Properties interface from manager: {}",
+            e
+        );
     }
-    let props = properties::ManagerProperties {
-        ctx: ctx.clone(),
-    };
-    match conn.object_server().at("/org/freedesktop/systemd1", props).await {
+    let props = properties::ManagerProperties { ctx: ctx.clone() };
+    match conn
+        .object_server()
+        .at("/org/freedesktop/systemd1", props)
+        .await
+    {
         Ok(_) => {}
         Err(e) => {
             warn!("Failed to register custom Properties on manager: {}", e);

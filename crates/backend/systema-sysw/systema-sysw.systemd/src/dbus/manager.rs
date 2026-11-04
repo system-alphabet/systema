@@ -55,9 +55,17 @@ pub fn job_object_path(job_id: u64) -> OwnedObjectPath {
 /// rejecting here keeps the D-Bus error type faithful).
 fn parse_job_mode(mode: &str) -> zbus::fdo::Result<()> {
     let valid = [
-        "fail", "replace", "replace-irreversibly", "isolate", "flush",
-        "ignore-dependencies", "ignore-requirements", "triggering",
-        "restart-dependencies", "lenient", "queue",
+        "fail",
+        "replace",
+        "replace-irreversibly",
+        "isolate",
+        "flush",
+        "ignore-dependencies",
+        "ignore-requirements",
+        "triggering",
+        "restart-dependencies",
+        "lenient",
+        "queue",
     ];
     if valid.contains(&mode) {
         Ok(())
@@ -202,20 +210,12 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                     }
                     "t" => {
                         if let zvariant::Value::U64(u) = item {
-                            push_prop_entry(
-                                out,
-                                key,
-                                sysa::proto::manager_value::Value::U(*u),
-                            );
+                            push_prop_entry(out, key, sysa::proto::manager_value::Value::U(*u));
                         }
                     }
                     "b" => {
                         if let zvariant::Value::Bool(b) = item {
-                            push_prop_entry(
-                                out,
-                                key,
-                                sysa::proto::manager_value::Value::B(*b),
-                            );
+                            push_prop_entry(out, key, sysa::proto::manager_value::Value::B(*b));
                         }
                     }
                     "h" => {
@@ -256,9 +256,7 @@ fn push_prop_entry(
 ) {
     out.push(TransientProperty {
         key: key.to_string(),
-        value: Some(sysa::proto::ManagerValue {
-            value: Some(value),
-        }),
+        value: Some(sysa::proto::ManagerValue { value: Some(value) }),
     });
 }
 
@@ -738,9 +736,11 @@ impl ManagerInterface {
     async fn list_units(&self) -> zbus::fdo::Result<Vec<UnitInfo>> {
         debug!("D-Bus ListUnits");
         let mirror = self.ctx.mirror.read();
-        let result: Vec<UnitInfo> = mirror.names().iter().filter_map(|n| {
-            mirror.get(n).map(unit_info_entry)
-        }).collect();
+        let result: Vec<UnitInfo> = mirror
+            .names()
+            .iter()
+            .filter_map(|n| mirror.get(n).map(unit_info_entry))
+            .collect();
         Ok(result)
     }
 
@@ -751,9 +751,7 @@ impl ManagerInterface {
             .names()
             .into_iter()
             .filter_map(|n| mirror.get(&n).map(unit_info_entry))
-            .filter(|info| {
-                states.is_empty() || states.iter().any(|s| s == &info.2)
-            })
+            .filter(|info| states.is_empty() || states.iter().any(|s| s == &info.2))
             .collect();
         Ok(result)
     }
@@ -1435,12 +1433,24 @@ mod tests {
         assert_eq!(parse_job_type("stop").unwrap(), ("stop", false));
         assert_eq!(parse_job_type("restart").unwrap(), ("restart", false));
         assert_eq!(parse_job_type("reload").unwrap(), ("reload", false));
-        assert_eq!(parse_job_type("try-restart").unwrap(), ("try-restart", false));
+        assert_eq!(
+            parse_job_type("try-restart").unwrap(),
+            ("try-restart", false)
+        );
         assert_eq!(parse_job_type("try-reload").unwrap(), ("try-reload", false));
-        assert_eq!(parse_job_type("reload-or-start").unwrap(), ("reload-or-start", false));
-        assert_eq!(parse_job_type("verify-active").unwrap(), ("verify-active", false));
+        assert_eq!(
+            parse_job_type("reload-or-start").unwrap(),
+            ("reload-or-start", false)
+        );
+        assert_eq!(
+            parse_job_type("verify-active").unwrap(),
+            ("verify-active", false)
+        );
         assert_eq!(parse_job_type("nop").unwrap(), ("nop", false));
-        assert_eq!(parse_job_type("reload-or-restart").unwrap(), ("restart", true));
+        assert_eq!(
+            parse_job_type("reload-or-restart").unwrap(),
+            ("restart", true)
+        );
         assert_eq!(
             parse_job_type("reload-or-try-restart").unwrap(),
             ("try-restart", true)
@@ -1515,12 +1525,15 @@ mod tests {
             .properties
             .iter()
             .any(|p| p.key == "After" && p.value.as_ref().is_some()));
+        assert!(bag.properties.iter().any(|p| p.key == "Description"
+            && matches!(
+                p.value.as_ref().unwrap().value,
+                Some(sysa::proto::manager_value::Value::S(_))
+            )));
         assert!(bag
             .properties
             .iter()
-            .any(|p| p.key == "Description"
-                && matches!(p.value.as_ref().unwrap().value, Some(sysa::proto::manager_value::Value::S(_)))));
-        assert!(bag.properties.iter().any(|p| p.key == "DefaultDependencies"));
+            .any(|p| p.key == "DefaultDependencies"));
     }
 
     /// Open a pidfd naming `pid`.  Needs Linux 5.3+.

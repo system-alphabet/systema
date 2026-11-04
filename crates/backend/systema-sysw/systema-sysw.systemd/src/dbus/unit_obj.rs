@@ -242,32 +242,44 @@ impl UnitObject {
 
     #[zbus(property, name = "MemoryMin")]
     fn memory_min(&self) -> u64 {
-        self.resource().map(|rc| parse_size_bytes(&rc.memory_min)).unwrap_or(0)
+        self.resource()
+            .map(|rc| parse_size_bytes(&rc.memory_min))
+            .unwrap_or(0)
     }
 
     #[zbus(property, name = "MemoryLow")]
     fn memory_low(&self) -> u64 {
-        self.resource().map(|rc| parse_size_bytes(&rc.memory_low)).unwrap_or(0)
+        self.resource()
+            .map(|rc| parse_size_bytes(&rc.memory_low))
+            .unwrap_or(0)
     }
 
     #[zbus(property, name = "MemoryHigh")]
     fn memory_high(&self) -> u64 {
-        self.resource().map(|rc| parse_size_bytes(&rc.memory_high)).unwrap_or(0)
+        self.resource()
+            .map(|rc| parse_size_bytes(&rc.memory_high))
+            .unwrap_or(0)
     }
 
     #[zbus(property, name = "MemoryMax")]
     fn memory_max(&self) -> u64 {
-        self.resource().map(|rc| parse_size_bytes(&rc.memory_max)).unwrap_or(0)
+        self.resource()
+            .map(|rc| parse_size_bytes(&rc.memory_max))
+            .unwrap_or(0)
     }
 
     #[zbus(property, name = "MemorySwapMax")]
     fn memory_swap_max(&self) -> u64 {
-        self.resource().map(|rc| parse_size_bytes(&rc.memory_swap_max)).unwrap_or(0)
+        self.resource()
+            .map(|rc| parse_size_bytes(&rc.memory_swap_max))
+            .unwrap_or(0)
     }
 
     #[zbus(property, name = "CPUQuotaUSec")]
     fn cpu_quota_u_sec(&self) -> u64 {
-        self.resource().map(|rc| parse_cpu_quota_usec(&rc.cpu_quota)).unwrap_or(0)
+        self.resource()
+            .map(|rc| parse_cpu_quota_usec(&rc.cpu_quota))
+            .unwrap_or(0)
     }
 
     #[zbus(property, name = "CPUQuotaPeriodUSec")]
@@ -279,12 +291,16 @@ impl UnitObject {
 
     #[zbus(property, name = "CPUWeight")]
     fn cpu_weight(&self) -> u64 {
-        self.resource().map(|rc| rc.cpu_weight as u64).unwrap_or(100)
+        self.resource()
+            .map(|rc| rc.cpu_weight as u64)
+            .unwrap_or(100)
     }
 
     #[zbus(property, name = "StartupCPUWeight")]
     fn startup_cpu_weight(&self) -> u64 {
-        self.resource().map(|rc| rc.startup_cpu_weight as u64).unwrap_or(100)
+        self.resource()
+            .map(|rc| rc.startup_cpu_weight as u64)
+            .unwrap_or(100)
     }
 
     #[zbus(property, name = "IOWeight")]
@@ -294,32 +310,44 @@ impl UnitObject {
 
     #[zbus(property, name = "StartupIOWeight")]
     fn startup_io_weight(&self) -> u64 {
-        self.resource().map(|rc| rc.startup_io_weight as u64).unwrap_or(100)
+        self.resource()
+            .map(|rc| rc.startup_io_weight as u64)
+            .unwrap_or(100)
     }
 
     #[zbus(property, name = "TasksMax")]
     fn tasks_max(&self) -> u64 {
-        self.resource().map(|rc| rc.tasks_max as u64).unwrap_or(u64::MAX)
+        self.resource()
+            .map(|rc| rc.tasks_max as u64)
+            .unwrap_or(u64::MAX)
     }
 
     #[zbus(property, name = "AllowedCPUs")]
     fn allowed_cpus(&self) -> String {
-        self.resource().map(|rc| rc.allowed_cpus.clone()).unwrap_or_default()
+        self.resource()
+            .map(|rc| rc.allowed_cpus.clone())
+            .unwrap_or_default()
     }
 
     #[zbus(property, name = "AllowedMemoryNodes")]
     fn allowed_memory_nodes(&self) -> String {
-        self.resource().map(|rc| rc.allowed_memory_nodes.clone()).unwrap_or_default()
+        self.resource()
+            .map(|rc| rc.allowed_memory_nodes.clone())
+            .unwrap_or_default()
     }
 
     #[zbus(property, name = "CPUSetCPUs")]
     fn cpu_set_cpus(&self) -> String {
-        self.resource().map(|rc| rc.cpu_set_cpus.clone()).unwrap_or_default()
+        self.resource()
+            .map(|rc| rc.cpu_set_cpus.clone())
+            .unwrap_or_default()
     }
 
     #[zbus(property, name = "CPUSetMemoryNodes")]
     fn cpu_set_memory_nodes(&self) -> String {
-        self.resource().map(|rc| rc.cpu_set_memory_nodes.clone()).unwrap_or_default()
+        self.resource()
+            .map(|rc| rc.cpu_set_memory_nodes.clone())
+            .unwrap_or_default()
     }
 
     // ------------------------------------------------------------------
@@ -452,11 +480,7 @@ impl UnitObject {
     }
 
     fn metric(&self, key: &str) -> u64 {
-        self.metrics()
-            .metrics
-            .get(key)
-            .copied()
-            .unwrap_or(u64::MAX)
+        self.metrics().metrics.get(key).copied().unwrap_or(u64::MAX)
     }
 }
 

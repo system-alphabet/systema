@@ -14,7 +14,10 @@ use anyhow::Result;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "systema-sysw.systemd", about = "System Wrapper — systemd D-Bus bridge")]
+#[command(
+    name = "systema-sysw.systemd",
+    about = "System Wrapper — systemd D-Bus bridge"
+)]
 struct Args {
     #[arg(long, short = 'D', help = "Enable debug-level logging")]
     debug: bool,
@@ -114,6 +117,28 @@ async fn main() -> Result<()> {
     let systemd_system_dir = format!("{runstatedir}/systemd/system");
     if let Err(e) = std::fs::create_dir_all(&systemd_system_dir) {
         tracing::warn!("Failed to create {systemd_system_dir}: {e}");
+    }
+
+    // Provision the systemd first-boot marker the way real systemd's pid1
+    // does.  The *classification* is systema's own (`sysa::firstboot`: the
+    // /firstboot override flag, or no machine-id file anywhere); the marker
+    // exists only for the systemd ecosystem in the image, which expects it
+    // at /run/systemd/first-boot during a first boot.  Mirror both arms of
+    // systemd's lifecycle: create it on a first boot, and drop it (e.g. a
+    // stale marker on a non-tmpfs /run) once the machine id is committed —
+    // first-boot-only conditions must never see it again afterwards.
+    let firstboot_marker = format!("{runstatedir}/systemd/first-boot");
+    let marker_path = std::path::Path::new(&firstboot_marker);
+    if sysa::firstboot::is_first_boot() {
+        if !marker_path.exists() {
+            if let Err(e) = std::fs::write(marker_path, b"") {
+                tracing::warn!("Failed to create {firstboot_marker}: {e}");
+            }
+        }
+    } else if marker_path.exists() {
+        if let Err(e) = std::fs::remove_file(marker_path) {
+            tracing::warn!("Failed to remove stale {firstboot_marker}: {e}");
+        }
     }
 
     // Reconnect loop: keep serving D-Bus across control-session restarts.

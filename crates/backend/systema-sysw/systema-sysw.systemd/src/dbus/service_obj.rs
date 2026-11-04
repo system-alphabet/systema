@@ -16,7 +16,11 @@ impl ServiceObject {
     #[zbus(property)]
     fn r#type(&self) -> String {
         let t = self.snapshot().service_type;
-        if t.is_empty() { "simple".to_string() } else { t }
+        if t.is_empty() {
+            "simple".to_string()
+        } else {
+            t
+        }
     }
 
     #[zbus(property)]
@@ -55,7 +59,11 @@ impl ServiceObject {
     #[zbus(property)]
     fn restart(&self) -> String {
         let r = self.snapshot().restart;
-        if r.is_empty() { "no".to_string() } else { r }
+        if r.is_empty() {
+            "no".to_string()
+        } else {
+            r
+        }
     }
 
     #[zbus(property)]
@@ -66,7 +74,11 @@ impl ServiceObject {
     #[zbus(property)]
     fn notify_access(&self) -> String {
         let n = self.snapshot().notify_access;
-        if n.is_empty() { "none".to_string() } else { n }
+        if n.is_empty() {
+            "none".to_string()
+        } else {
+            n
+        }
     }
 
     #[zbus(property)]

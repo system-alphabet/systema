@@ -36,8 +36,7 @@ async fn emit_signals(conn: &zbus::Connection, event: &ControlEvent) {
     };
     match event.kind {
         ControlEventKind::JobNew => {
-            if let Ok(payload) = sysa::proto::JobEvent::decode(event.envelope.payload.as_slice())
-            {
+            if let Ok(payload) = sysa::proto::JobEvent::decode(event.envelope.payload.as_slice()) {
                 let _ = ManagerInterface::job_new(
                     &signal_ctx,
                     payload.job_id as u32,
@@ -48,8 +47,7 @@ async fn emit_signals(conn: &zbus::Connection, event: &ControlEvent) {
             }
         }
         ControlEventKind::JobCompleted => {
-            if let Ok(payload) = sysa::proto::JobEvent::decode(event.envelope.payload.as_slice())
-            {
+            if let Ok(payload) = sysa::proto::JobEvent::decode(event.envelope.payload.as_slice()) {
                 let _ = ManagerInterface::job_removed(
                     &signal_ctx,
                     payload.job_id as u32,
@@ -69,8 +67,8 @@ async fn emit_signals(conn: &zbus::Connection, event: &ControlEvent) {
                 sysa::proto::UnitRemovedEvent::decode(event.envelope.payload.as_slice())
             {
                 let job_path = OwnedObjectPath::try_from("/").unwrap();
-                let _ = ManagerInterface::unit_removed(&signal_ctx, payload.unit_name, job_path)
-                    .await;
+                let _ =
+                    ManagerInterface::unit_removed(&signal_ctx, payload.unit_name, job_path).await;
             }
         }
         _ => {}
@@ -123,7 +121,8 @@ async fn event_loop(ctx: Arc<dbus::BridgeContext>, mut rx: mpsc::UnboundedReceiv
                 }
             }
             ControlEventKind::JobNew => {
-                if let Ok(payload) = sysa::proto::JobEvent::decode(event.envelope.payload.as_slice())
+                if let Ok(payload) =
+                    sysa::proto::JobEvent::decode(event.envelope.payload.as_slice())
                 {
                     ctx.mirror.write().add_job(sysa::proto::JobInfo {
                         job_id: payload.job_id,
@@ -134,7 +133,8 @@ async fn event_loop(ctx: Arc<dbus::BridgeContext>, mut rx: mpsc::UnboundedReceiv
                 }
             }
             ControlEventKind::JobCompleted => {
-                if let Ok(payload) = sysa::proto::JobEvent::decode(event.envelope.payload.as_slice())
+                if let Ok(payload) =
+                    sysa::proto::JobEvent::decode(event.envelope.payload.as_slice())
                 {
                     ctx.mirror.write().remove_job(payload.job_id);
                 }
@@ -321,7 +321,11 @@ mod tests {
         let server_framed = sysa::ipc::frame_stream(server);
         tokio::spawn(async move { mock_server(server_framed).await });
 
-        let client = Arc::new(ControlClient::connect_on(client, "test", None).await.unwrap());
+        let client = Arc::new(
+            ControlClient::connect_on(client, "test", None)
+                .await
+                .unwrap(),
+        );
         let mirror: MirrorHandle = Arc::new(parking_lot::RwLock::new(UnitMirror::new()));
         let ctx = BridgeContext::new(mirror, client.clone(), None);
 
