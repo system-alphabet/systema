@@ -316,7 +316,10 @@ async fn run_daemon_reload(name: &str) -> Result<()> {
             &[("path", &socket_path_owned.display().to_string())],
         )
     })?;
-    info!("System F daemon-reload listening on {}", socket_path_owned.display());
+    info!(
+        "System F daemon-reload listening on {}",
+        socket_path_owned.display()
+    );
 
     // The result of the loop is the exit code; clean up the socket on return.
     let result = run_daemon_reload_loop(&listener, name).await;
@@ -326,10 +329,7 @@ async fn run_daemon_reload(name: &str) -> Result<()> {
 }
 
 /// Inner loop: accept connections, process triggers, send acks.
-async fn run_daemon_reload_loop(
-    listener: &tokio::net::UnixListener,
-    name: &str,
-) -> Result<()> {
+async fn run_daemon_reload_loop(listener: &tokio::net::UnixListener, name: &str) -> Result<()> {
     loop {
         let (mut stream, addr) = match listener.accept().await {
             Ok(pair) => pair,

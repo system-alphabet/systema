@@ -6,7 +6,9 @@ use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
 use tracing::info;
 
 use crate::engine::{publish_timer, send_fired, status_of, EngineShared};
-use crate::schedule::{compute_next_elapse, default_target_unit, epoch_now, missed_calendar_elapse};
+use crate::schedule::{
+    compute_next_elapse, default_target_unit, epoch_now, missed_calendar_elapse,
+};
 use crate::state::{TimerInstance, TimerState};
 
 /// Timer controller: owns every `.timer` unit registered with System C.
@@ -116,9 +118,7 @@ impl UnitController for TimerController {
         publish_timer(&self.shared, unit_name);
 
         if let Some(missed) = missed {
-            info!(
-                "Persistent timer '{unit_name}' catching up on missed elapse at epoch {missed}"
-            );
+            info!("Persistent timer '{unit_name}' catching up on missed elapse at epoch {missed}");
             let target = self
                 .shared
                 .registry
@@ -194,6 +194,8 @@ impl UnitController for TimerController {
 
     async fn sync_state(&self) -> Vec<UnitStatus> {
         let reg = self.shared.registry.read();
-        reg.iter().map(|(name, inst)| status_of(name, inst)).collect()
+        reg.iter()
+            .map(|(name, inst)| status_of(name, inst))
+            .collect()
     }
 }

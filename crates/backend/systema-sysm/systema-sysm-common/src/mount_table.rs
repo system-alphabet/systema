@@ -174,10 +174,7 @@ pub async fn commit_mount_units(units: &HashMap<String, UnitIR>) -> bool {
         }
     };
     let finder = UnitFinder::new();
-    match finder
-        .register_units("systema-sysm/discovery", json)
-        .await
-    {
+    match finder.register_units("systema-sysm/discovery", json).await {
         Ok(ack) if !ack.success => {
             warn!("Unit registration rejected: {}", ack.message);
             return false;

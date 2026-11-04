@@ -25,7 +25,11 @@ impl DeviceController {
 
     /// Find the real device a unit should bind to right now.
     /// Precedence: canonical name match, then explicit match rules.
-    fn resolve_unit(&self, unit_name: &str, cfg: &DeviceConfig) -> Option<crate::discovery::DeviceMeta> {
+    fn resolve_unit(
+        &self,
+        unit_name: &str,
+        cfg: &DeviceConfig,
+    ) -> Option<crate::discovery::DeviceMeta> {
         let devices = enumerate_devices();
         if let Some(node) = node_from_unit_name(unit_name) {
             if let Some(dev) = devices.iter().find(|d| d.node == node) {
@@ -54,15 +58,15 @@ impl DeviceController {
         };
         {
             let mut reg = self.shared.registry.write();
-            let inst = reg.entry(unit_name.to_string()).or_insert_with(|| {
-                DeviceInstance {
+            let inst = reg
+                .entry(unit_name.to_string())
+                .or_insert_with(|| DeviceInstance {
                     state: DeviceState::Dead,
                     config: None,
                     dev: None,
                     invocation_id: None,
                     last_error: None,
-                }
-            });
+                });
             inst.state = state;
             inst.config = cfg;
             inst.dev = dev;
@@ -159,18 +163,14 @@ impl UnitController for DeviceController {
         })?;
 
         let dev = self.resolve_unit(unit_name, &device_cfg);
-        self.commit_instance(
-            unit_name,
-            Some(device_cfg),
-            dev,
-            None,
-            None,
-        );
+        self.commit_instance(unit_name, Some(device_cfg), dev, None, None);
         Ok(())
     }
 
     async fn sync_state(&self) -> Vec<UnitStatus> {
         let reg = self.shared.registry.read();
-        reg.iter().map(|(name, inst)| status_of(name, inst)).collect()
+        reg.iter()
+            .map(|(name, inst)| status_of(name, inst))
+            .collect()
     }
 }

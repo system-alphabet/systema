@@ -16,14 +16,12 @@ use crate::discovery::DeviceMeta;
 
 /// Does this device satisfy every rule in `cfg`?
 pub fn device_matches(cfg: &DeviceConfig, dev: &DeviceMeta) -> bool {
-    if !cfg.device_name.is_empty()
-        && !glob_match(&cfg.device_name, &dev.node) {
-            return false;
-        }
-    if !cfg.device_path.is_empty()
-        && !glob_match(&cfg.device_path, &dev.dev_file) {
-            return false;
-        }
+    if !cfg.device_name.is_empty() && !glob_match(&cfg.device_name, &dev.node) {
+        return false;
+    }
+    if !cfg.device_path.is_empty() && !glob_match(&cfg.device_path, &dev.dev_file) {
+        return false;
+    }
     if !cfg.sysfs_path.is_empty() {
         let Some(sp) = &dev.sysfs_path else {
             return false;

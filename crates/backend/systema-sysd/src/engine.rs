@@ -16,9 +16,9 @@ use parking_lot::Mutex;
 use sysa::controller::UnitStatus;
 use sysa::finder::UnitFinder;
 use sysa::worker_ipc::EventPublisher;
+use sysf::ir::{UnitIR, UnitType};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info, warn};
-use sysf::ir::{UnitIR, UnitType};
 
 use crate::discovery::{enumerate_devices, DeviceMeta};
 use crate::matchrule::{device_matches, has_rules};
@@ -59,7 +59,10 @@ impl EngineShared {
 }
 
 /// Spawn the discovery engine loop on the current runtime.
-pub fn spawn_engine(shared: Arc<EngineShared>, mut refresh_rx: tokio::sync::mpsc::UnboundedReceiver<()>) {
+pub fn spawn_engine(
+    shared: Arc<EngineShared>,
+    mut refresh_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+) {
     tokio::spawn(async move {
         // The uevent watcher is an optimisation; if it fails to start the
         // poll timer below remains the safety net.
@@ -136,8 +139,7 @@ fn reconcile(shared: &Arc<EngineShared>, devices: &[DeviceMeta]) -> Vec<String> 
         }
         match &inst.config {
             Some(cfg) if has_rules(cfg) => {
-                let matched =
-                    devices.iter().find(|d| device_matches(cfg, d)).cloned();
+                let matched = devices.iter().find(|d| device_matches(cfg, d)).cloned();
                 match matched {
                     Some(dev) => {
                         if !inst.state.is_active() {
@@ -187,12 +189,7 @@ async fn inject_units(shared: &Arc<EngineShared>, names: &[String]) {
             let description = inst
                 .dev
                 .as_ref()
-                .map(|d| {
-                    format!(
-                        "{} ({}:{})",
-                        d.dev_file, d.major, d.minor
-                    )
-                })
+                .map(|d| format!("{} ({}:{})", d.dev_file, d.major, d.minor))
                 .unwrap_or_else(|| format!("Device {}", name.trim_end_matches(".device")));
             units.insert(
                 name.clone(),

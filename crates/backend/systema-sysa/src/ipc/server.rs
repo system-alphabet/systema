@@ -1394,7 +1394,10 @@ async fn try_finder_query(
 /// The `admin.*` API was moved to the control port ([`crate::ipc::control`]);
 /// only this pure builder remains in the allocator module, shared with the
 /// control session handler.
-pub(crate) fn build_admin_result(op: &AdminStagingOp, allocator: &AllocatorHandle) -> AdminStagingResult {
+pub(crate) fn build_admin_result(
+    op: &AdminStagingOp,
+    allocator: &AllocatorHandle,
+) -> AdminStagingResult {
     let state = allocator.read();
     match op.op.as_str() {
         "list" => {
@@ -1785,8 +1788,7 @@ async fn handle_state_update(
             let snap_buf = {
                 let state = allocator.read();
                 let mut buf = bytes::BytesMut::new();
-                let _ = crate::snapshot::unit_snapshot(&state, &status.unit_name)
-                    .encode(&mut buf);
+                let _ = crate::snapshot::unit_snapshot(&state, &status.unit_name).encode(&mut buf);
                 buf
             };
             dispatched.push(Event {

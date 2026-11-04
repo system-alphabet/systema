@@ -18,9 +18,9 @@ use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
+use tokio::net::UnixStream;
 use tokio::select;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
-use tokio::net::UnixStream;
 use tracing::{debug, warn};
 
 use sysa::ipc::{frame_stream, make_envelope};
@@ -97,7 +97,11 @@ impl ControlClient {
     /// tasks, exactly like [`ControlClient::connect`] but without owning the
     /// transport.  Used by embedders that provide their own socket (and by
     /// the socketpair tests).
-    pub async fn connect_on(stream: UnixStream, flavor: &str, worker_id: Option<&str>) -> Result<ControlClient> {
+    pub async fn connect_on(
+        stream: UnixStream,
+        flavor: &str,
+        worker_id: Option<&str>,
+    ) -> Result<ControlClient> {
         let version = env!("CARGO_PKG_VERSION").to_string();
 
         let framed = frame_stream(stream);
@@ -279,8 +283,8 @@ pub mod calls {
 
     use sysa::proto::{
         GetUnitByInvocationRequest, GetUnitByPidRequest, GetUnitByPidResult, JobInfo,
-        ListJobsRequest, ListJobsResult, ListSnapshotsRequest, ListSnapshotsResult, LoadUnitRequest,
-        LoadUnitResult, UnitSnapshot, UnitSnapshotRequest, UnitSnapshotResult,
+        ListJobsRequest, ListJobsResult, ListSnapshotsRequest, ListSnapshotsResult,
+        LoadUnitRequest, LoadUnitResult, UnitSnapshot, UnitSnapshotRequest, UnitSnapshotResult,
     };
 
     use super::ControlClient;
@@ -301,9 +305,12 @@ pub mod calls {
     /// name).
     pub async fn unit_snapshot(client: &ControlClient, name: &str) -> Result<UnitSnapshot> {
         let reply: UnitSnapshotResult = client
-            .call("manager.unit_snapshot", &UnitSnapshotRequest {
-                name: name.to_string(),
-            })
+            .call(
+                "manager.unit_snapshot",
+                &UnitSnapshotRequest {
+                    name: name.to_string(),
+                },
+            )
             .await?;
         if !reply.success {
             anyhow::bail!("unit_snapshot {name}: {}", reply.message);
@@ -330,19 +337,27 @@ pub mod calls {
         name: &str,
     ) -> Result<(LoadUnitResult, UnitSnapshot)> {
         let load: LoadUnitResult = client
-            .call("manager.load_unit", &LoadUnitRequest {
-                name: name.to_string(),
-            })
+            .call(
+                "manager.load_unit",
+                &LoadUnitRequest {
+                    name: name.to_string(),
+                },
+            )
             .await?;
         if !load.success {
             anyhow::bail!("load_unit {name}: {}", load.message);
         }
         let snap: UnitSnapshotResult = client
-            .call("manager.unit_snapshot", &UnitSnapshotRequest {
-                name: name.to_string(),
-            })
+            .call(
+                "manager.unit_snapshot",
+                &UnitSnapshotRequest {
+                    name: name.to_string(),
+                },
+            )
             .await?;
-        let unit = snap.unit.ok_or_else(|| anyhow::anyhow!("unit_snapshot {name}: no unit"))?;
+        let unit = snap
+            .unit
+            .ok_or_else(|| anyhow::anyhow!("unit_snapshot {name}: no unit"))?;
         Ok((load, unit))
     }
 
@@ -368,9 +383,7 @@ pub mod calls {
     /// Resolve a unit by PID; returns the canonical unit name.
     pub async fn get_unit_by_pid(client: &ControlClient, pid: u32) -> Result<String> {
         let reply: GetUnitByPidResult = client
-            .call("manager.get_unit_by_pid", &GetUnitByPidRequest {
-                pid,
-            })
+            .call("manager.get_unit_by_pid", &GetUnitByPidRequest { pid })
             .await?;
         if !reply.success {
             anyhow::bail!("get_unit_by_pid: {}", reply.message);
@@ -517,7 +530,9 @@ mod tests {
         let (server_stream, client_stream) = UnixStream::pair().unwrap();
         MockControlServer::spawn(server_stream, hello_script()).await;
 
-        let client = ControlClient::connect_on(client_stream, "test", None).await.unwrap();
+        let client = ControlClient::connect_on(client_stream, "test", None)
+            .await
+            .unwrap();
 
         // manager.hello handshake succeeded during connect; now exercise an
         // RPC through the same framed pair.
@@ -570,8 +585,12 @@ mod tests {
         MockControlServer::spawn(server_a, script_a).await;
         MockControlServer::spawn(server_b, script_b).await;
 
-        let client_a = ControlClient::connect_on(client_a, "test-a", None).await.unwrap();
-        let client_b = ControlClient::connect_on(client_b, "test-b", None).await.unwrap();
+        let client_a = ControlClient::connect_on(client_a, "test-a", None)
+            .await
+            .unwrap();
+        let client_b = ControlClient::connect_on(client_b, "test-b", None)
+            .await
+            .unwrap();
 
         // Trigger the scripted event pushes on both sessions with an RPC each.
         let events_a = client_a.events();

@@ -251,7 +251,12 @@ fn rate_limited(inst: &mut PathInstance, now: u64) -> bool {
 
 /// Notify System A that a path condition fired, asking it to start the
 /// target unit.
-pub(crate) fn send_fired(shared: &Arc<EngineShared>, path_unit: &str, target_unit: &str, epoch: u64) {
+pub(crate) fn send_fired(
+    shared: &Arc<EngineShared>,
+    path_unit: &str,
+    target_unit: &str,
+    epoch: u64,
+) {
     let guard = shared.event_pub.lock();
     let Some(pub_) = guard.as_ref() else {
         warn!("No IPC connection to System A; cannot trigger '{target_unit}'");
@@ -314,10 +319,10 @@ pub(crate) fn epoch_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::backend::{PathBackend, PathChange};
     use crate::spec::{PathSpec, PathSpecKind};
     use crate::state::PathInstance;
+    use async_trait::async_trait;
     use std::time::Duration;
     use sysa::proto::PathConfig;
 
@@ -356,7 +361,12 @@ mod tests {
         file
     }
 
-    fn insert_instance(shared: &Arc<EngineShared>, unit: &str, specs: Vec<PathSpec>, cfg: PathConfig) {
+    fn insert_instance(
+        shared: &Arc<EngineShared>,
+        unit: &str,
+        specs: Vec<PathSpec>,
+        cfg: PathConfig,
+    ) {
         let inst = PathInstance {
             state: PathState::Dead,
             config: cfg,
@@ -427,7 +437,14 @@ mod tests {
         shared.registry.write().get_mut("foo.path").unwrap().state = PathState::Waiting;
 
         // An attrib event (chmod) that does not alter the content signature.
-        process_change(&shared, "foo.path", FsEvent { attrib: true, ..Default::default() });
+        process_change(
+            &shared,
+            "foo.path",
+            FsEvent {
+                attrib: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(state_of(&shared, "foo.path"), PathState::Waiting);
     }
 
@@ -456,7 +473,10 @@ mod tests {
         process_change(
             &shared,
             "foo.path",
-            FsEvent { written: true, ..Default::default() },
+            FsEvent {
+                written: true,
+                ..Default::default()
+            },
         );
         assert_eq!(state_of(&shared, "foo.path"), PathState::Running);
     }
@@ -493,7 +513,13 @@ mod tests {
         recheck_level(&shared, "foo.path");
         assert_eq!(state_of(&shared, "foo.path"), PathState::Failed);
         let reg = shared.registry.read();
-        assert!(reg.get("foo.path").unwrap().last_error.as_ref().unwrap().contains("rate limit"));
+        assert!(reg
+            .get("foo.path")
+            .unwrap()
+            .last_error
+            .as_ref()
+            .unwrap()
+            .contains("rate limit"));
     }
 
     #[tokio::test]

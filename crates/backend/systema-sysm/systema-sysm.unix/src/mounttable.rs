@@ -18,10 +18,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
+use systema_sysf::ir::UnitIR;
 use systema_sysm_common::mount_table::{
     build_mount_unit_ir, commit_mount_units, reconcile, MountTableEntry, MountTableSnapshot,
 };
-use systema_sysf::ir::UnitIR;
 use tracing::{debug, info, warn};
 
 use sysa::controller::UnitStatus;
@@ -232,11 +232,7 @@ fn bsd_flag_table() -> &'static [(u64, &'static str)] {
         (libc::MNT_NOATIME as u64, "noatime"),
         #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
         (libc::MNT_NOSYMFOLLOW as u64, "nosymfollow"),
-        #[cfg(any(
-            target_os = "macos",
-            target_os = "freebsd",
-            target_os = "netbsd"
-        ))]
+        #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "netbsd"))]
         (libc::MNT_UNION as u64, "union"),
         #[cfg(target_os = "netbsd")]
         (libc::MNT_RELATIME as u64, "relatime"),
@@ -315,7 +311,9 @@ fn read_mount_p() -> Result<Vec<MountTableEntry>> {
             &[("status", &(output.status).to_string())]
         ));
     }
-    Ok(parse_mount_p_output(&String::from_utf8_lossy(&output.stdout)))
+    Ok(parse_mount_p_output(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 /// Parse fstab-style `mount -p` output:
@@ -771,6 +769,9 @@ mod tests {
         assert_eq!(flags_to_options(1 | 4 | 256, table), "ro,noexec,noatime");
         assert_eq!(flags_to_options(0, table), "");
         assert_eq!(flags_to_options(2 | 8 | 64, table), "sync,nosuid,async");
-        assert_eq!(flags_to_options(1 | 2 | 4 | 8 | 16 | 64 | 256, table), "ro,sync,noexec,nosuid,nodev,async,noatime");
+        assert_eq!(
+            flags_to_options(1 | 2 | 4 | 8 | 16 | 64 | 256, table),
+            "ro,sync,noexec,nosuid,nodev,async,noatime"
+        );
     }
 }

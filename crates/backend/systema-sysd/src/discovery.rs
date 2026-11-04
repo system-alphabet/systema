@@ -108,8 +108,8 @@ fn scan_devices(caps: Capabilities) -> Vec<DeviceMeta> {
         // mode() is u32 but the libc S_IF* constants are u16 on some BSDs,
         // so cast both sides to u32 for a portable comparison.
         let ifmt = libc::S_IFMT as u32;
-        let is_dev_node = (mode & ifmt) == libc::S_IFBLK as u32
-            || (mode & ifmt) == libc::S_IFCHR as u32;
+        let is_dev_node =
+            (mode & ifmt) == libc::S_IFBLK as u32 || (mode & ifmt) == libc::S_IFCHR as u32;
         if !is_dev_node {
             continue;
         }
@@ -136,7 +136,9 @@ fn scan_devices(caps: Capabilities) -> Vec<DeviceMeta> {
 fn load_sysfs(meta: &mut DeviceMeta) {
     let anchor = Path::new(SYSFS_ROOT).join("dev");
     for sub in ["block", "char"] {
-        let ln = anchor.join(sub).join(format!("{}:{}", meta.major, meta.minor));
+        let ln = anchor
+            .join(sub)
+            .join(format!("{}:{}", meta.major, meta.minor));
         if let Ok(target) = fs::canonicalize(&ln) {
             let sp = target.to_string_lossy().to_string();
             meta.sysfs_path = Some(sp.clone());

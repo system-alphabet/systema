@@ -49,12 +49,7 @@ mod imp {
     }
 
     /// Mount `fstype` at `path`.  Returns the `Errno` of a failed mount.
-    pub fn do_mount(
-        fstype: &str,
-        path: &str,
-        options: &str,
-        flags: Flags,
-    ) -> Result<(), Errno> {
+    pub fn do_mount(fstype: &str, path: &str, options: &str, flags: Flags) -> Result<(), Errno> {
         mount(Some(fstype), path, Some(fstype), flags, Some(options))
     }
 
@@ -95,12 +90,7 @@ mod imp {
     /// FreeBSD's `nmount(2)` takes `name=value` pairs; the Linux-style
     /// `options` string is best-effort (it may be empty), the essential
     /// `fstype`/`fspath` pair is always supplied.
-    pub fn do_mount(
-        fstype: &str,
-        path: &str,
-        options: &str,
-        _flags: Flags,
-    ) -> Result<(), Errno> {
+    pub fn do_mount(fstype: &str, path: &str, options: &str, _flags: Flags) -> Result<(), Errno> {
         let mut nm = Nmount::new();
         nm.str_opt_owned("fstype", fstype)
             .str_opt_owned("fspath", path);
@@ -208,7 +198,9 @@ fn is_mount_point(path: &str) -> bool {
         debug!("Cannot read /proc/self/mountinfo; assuming {path} is not a mount point");
         return false;
     };
-    mountinfo.lines().any(|line| line.split(' ').nth(4) == Some(path))
+    mountinfo
+        .lines()
+        .any(|line| line.split(' ').nth(4) == Some(path))
 }
 
 /// Mount a filesystem at `path`, mirroring systemd's `mount_table`

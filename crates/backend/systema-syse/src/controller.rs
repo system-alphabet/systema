@@ -252,7 +252,14 @@ impl UnitController for ScopeController {
             ))
         })?;
 
-        stop_and_wait(&self.registry, &self.event_pub, unit_name, &cgroup_path, timeout).await;
+        stop_and_wait(
+            &self.registry,
+            &self.event_pub,
+            unit_name,
+            &cgroup_path,
+            timeout,
+        )
+        .await;
         Ok(())
     }
 
@@ -275,15 +282,16 @@ mod tests {
     use prost::Message;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use tokio::sync::{mpsc, oneshot};
     use sysa::proto::{ScopeConfig, UnitConfig};
     use sysa::worker_ipc::EventPublisher;
+    use tokio::sync::{mpsc, oneshot};
 
     fn test_controller() -> (ScopeController, ScopeRegistry) {
         let registry = new_registry();
         let (tx, _rx) = mpsc::unbounded_channel::<bytes::Bytes>();
-        let pending: Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<sysa::proto::UnitStateUpdateAck>>>> =
-            Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let pending: Arc<
+            std::sync::Mutex<HashMap<u64, oneshot::Sender<sysa::proto::UnitStateUpdateAck>>>,
+        > = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let publisher = EventPublisher::new(tx, "system-e-1", pending, Arc::default());
         (ScopeController::new(registry.clone(), publisher), registry)
     }
@@ -346,10 +354,7 @@ mod tests {
     #[tokio::test]
     async fn reload_is_rejected() {
         let (controller, _registry) = test_controller();
-        let err = controller
-            .reload("test.scope", &[])
-            .await
-            .unwrap_err();
+        let err = controller.reload("test.scope", &[]).await.unwrap_err();
         assert!(err.to_string().contains("cannot be reloaded"));
     }
 }

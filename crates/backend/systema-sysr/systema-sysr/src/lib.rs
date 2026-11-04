@@ -9,4 +9,4 @@ pub mod ipc;
 pub mod register;
 pub mod worker;
 
-pub use worker::{ManagedUnit, ResourceRegistry, ResourceWorker, new_registry, DEFAULT_SLICE};
+pub use worker::{new_registry, ManagedUnit, ResourceRegistry, ResourceWorker, DEFAULT_SLICE};

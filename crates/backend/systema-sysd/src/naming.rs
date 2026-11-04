@@ -29,7 +29,11 @@ pub fn unit_name_for_node(basename: &str) -> String {
 /// `/dev` basename, if the name follows the "dev-<node>.device" convention.
 pub fn node_from_unit_name(unit_name: &str) -> Option<String> {
     let rest = unit_name.strip_prefix("dev-")?.strip_suffix(".device")?;
-    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if rest.is_empty()
+        || !rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return None;
     }
     Some(rest.to_string())
@@ -44,7 +48,10 @@ mod tests {
         assert_eq!(unit_name_for_node("sda"), "dev-sda.device");
         assert_eq!(unit_name_for_node("nvme0n1"), "dev-nvme0n1.device");
         assert_eq!(unit_name_for_node("ttyS0"), "dev-ttys0.device");
-        assert_eq!(node_from_unit_name("dev-sda.device"), Some("sda".to_string()));
+        assert_eq!(
+            node_from_unit_name("dev-sda.device"),
+            Some("sda".to_string())
+        );
         assert_eq!(node_from_unit_name("dev-sda.service"), None);
         assert_eq!(node_from_unit_name("sda.device"), None);
     }

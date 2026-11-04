@@ -41,7 +41,10 @@ pub enum ResourceError {
     /// Resource control is not available on this platform / configuration.
     Unavailable(String),
     /// A cgroupfs read or write failed.
-    Io { path: String, source: std::io::Error },
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
     /// The cgroup still holds processes or child cgroups.
     NotEmpty(String),
     /// The value could not be applied to `path`.

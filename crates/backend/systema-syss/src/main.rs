@@ -144,7 +144,15 @@ async fn main() -> Result<()> {
     if !args.no_raper {
         // SAFETY: procctl(P_PID, 0, PROC_REAP_ACQUIRE, NULL) declares the
         // calling process as a reaper; NULL data is required and safe here.
-        if unsafe { libc::procctl(libc::P_PID, 0, libc::PROC_REAP_ACQUIRE, std::ptr::null_mut()) } != 0 {
+        if unsafe {
+            libc::procctl(
+                libc::P_PID,
+                0,
+                libc::PROC_REAP_ACQUIRE,
+                std::ptr::null_mut(),
+            )
+        } != 0
+        {
             let err = std::io::Error::last_os_error();
             warn!("PROC_REAP_ACQUIRE failed (services may be orphaned): {err}");
         }

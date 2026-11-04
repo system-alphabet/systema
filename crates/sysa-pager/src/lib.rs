@@ -5,13 +5,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
 /// Configuration for opening a pager.
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PagerConfig {
     /// When true, `open()` returns a no-op guard and no pager is started.
     pub disable: bool,
 }
-
 
 static STATE: Mutex<Option<PagerState>> = Mutex::new(None);
 

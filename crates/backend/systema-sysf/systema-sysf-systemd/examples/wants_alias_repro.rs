@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use systema_sysf::Finder;
-use systema_sysf_systemd::loader::discover_all;
 use systema_sysf_systemd::finder::SystemdFinder;
+use systema_sysf_systemd::loader::discover_all;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -30,8 +30,7 @@ async fn main() {
     eprintln!("discovered {} units", files.len());
 
     let finder = SystemdFinder::new();
-    let map: HashMap<String, systema_sysf::ir::UnitIR> =
-        finder.find_all().await.expect("find_all");
+    let map: HashMap<String, systema_sysf::ir::UnitIR> = finder.find_all().await.expect("find_all");
 
     for key in [
         "graphical.target",

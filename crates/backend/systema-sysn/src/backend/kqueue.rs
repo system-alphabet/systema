@@ -81,7 +81,10 @@ impl KqueueBackend {
         // O_RDONLY|O_NONBLOCK: avoid blocking on special files; the fd is
         // only used as a vnode reference for kevent.
         let fd = unsafe {
-            libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            libc::open(
+                c_path.as_ptr(),
+                libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC,
+            )
         };
         if fd < 0 {
             debug!(
@@ -173,8 +176,7 @@ impl PathBackend for KqueueBackend {
             // not `Send`, so it must not survive the `.await` below. The
             // buffer is scoped to this block and dropped before the sleep.
             let result = {
-                let mut events: [libc::kevent; MAX_EVENTS] =
-                    unsafe { std::mem::zeroed() };
+                let mut events: [libc::kevent; MAX_EVENTS] = unsafe { std::mem::zeroed() };
                 // SAFETY: events array is MAX_EVENTS long and valid for write.
                 let n = unsafe {
                     libc::kevent(

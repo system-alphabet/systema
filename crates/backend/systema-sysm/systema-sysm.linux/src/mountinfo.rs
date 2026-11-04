@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
+use systema_sysf::ir::UnitIR;
 use systema_sysm_common::mount_table::{
     build_mount_unit_ir, commit_mount_units, reconcile, MountTableEntry, MountTableSnapshot,
 };
-use systema_sysf::ir::UnitIR;
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
@@ -566,8 +566,12 @@ mod tests {
             rt.block_on(async {
                 let registry = crate::linux::state::new_mount_registry();
                 tokio::spawn(async move {
-                    let publisher =
-                        EventPublisher::new(tx, "system-m-1", Default::default(), Default::default());
+                    let publisher = EventPublisher::new(
+                        tx,
+                        "system-m-1",
+                        Default::default(),
+                        Default::default(),
+                    );
                     let mut monitor = MountInfoMonitor::new(registry, publisher);
                     monitor.run().await;
                 });

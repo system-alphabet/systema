@@ -19,7 +19,10 @@ use clap::Parser;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "systema-syse", about = "System E — System External Process Worker")]
+#[command(
+    name = "systema-syse",
+    about = "System E — System External Process Worker"
+)]
 struct Args {
     #[arg(long, short = 'D', help = "Enable debug-level logging")]
     debug: bool,

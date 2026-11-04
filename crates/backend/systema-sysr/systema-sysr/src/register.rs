@@ -243,12 +243,27 @@ mod tests {
 
     #[test]
     fn parent_of_user_slice_is_user_slice() {
-        assert_eq!(parent_slice_name("user-1000.slice"), Some("user.slice".to_string()));
-        assert_eq!(parent_slice_name("user-0.slice"), Some("user.slice".to_string()));
+        assert_eq!(
+            parent_slice_name("user-1000.slice"),
+            Some("user.slice".to_string())
+        );
+        assert_eq!(
+            parent_slice_name("user-0.slice"),
+            Some("user.slice".to_string())
+        );
         // No "-" prefix → hangs off the root slice.
-        assert_eq!(parent_slice_name("user.slice"), Some("-".to_string() + ".slice"));
-        assert_eq!(parent_slice_name("system.slice"), Some("-".to_string() + ".slice"));
-        assert_eq!(parent_slice_name("foo-bar.slice"), Some("foo.slice".to_string()));
+        assert_eq!(
+            parent_slice_name("user.slice"),
+            Some("-".to_string() + ".slice")
+        );
+        assert_eq!(
+            parent_slice_name("system.slice"),
+            Some("-".to_string() + ".slice")
+        );
+        assert_eq!(
+            parent_slice_name("foo-bar.slice"),
+            Some("foo.slice".to_string())
+        );
         // Malformed names.
         assert_eq!(parent_slice_name("user-1000.service"), None);
         assert_eq!(parent_slice_name(".slice"), None);
@@ -268,7 +283,10 @@ mod tests {
         assert_eq!(user.slice.as_deref(), Some("user.slice"));
         assert_eq!(user.source_format.as_deref(), Some("dynamic"));
         assert_eq!(user.description.as_deref(), Some("User Slice of UID 1000"));
-        let deps = user.dependencies.as_ref().expect("parent declared as dependency");
+        let deps = user
+            .dependencies
+            .as_ref()
+            .expect("parent declared as dependency");
         assert!(deps.requires.contains("user.slice"));
         assert!(deps.after.contains("user.slice"));
 
@@ -355,7 +373,10 @@ mod tests {
                     }
                     None => UnitRegistrationAck {
                         success: false,
-                        message: format!("no staging area for UID {} with name '{}'", msg.uid, msg.name),
+                        message: format!(
+                            "no staging area for UID {} with name '{}'",
+                            msg.uid, msg.name
+                        ),
                         unit_count: 0,
                     },
                 }
@@ -425,7 +446,10 @@ mod tests {
         assert_eq!(refused, 0, "a concurrent commit was refused (staging race)");
         for i in 0..8 {
             assert!(
-                committed.lock().unwrap().contains(&format!("user-{i}.slice")),
+                committed
+                    .lock()
+                    .unwrap()
+                    .contains(&format!("user-{i}.slice")),
                 "user-{i}.slice was never committed"
             );
         }

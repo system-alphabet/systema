@@ -74,7 +74,10 @@ impl InotifyBackend {
             }
         };
         drop(guard);
-        self.by_wd.lock().unwrap().insert(wd.clone(), unit.to_string());
+        self.by_wd
+            .lock()
+            .unwrap()
+            .insert(wd.clone(), unit.to_string());
         self.units
             .lock()
             .unwrap()
@@ -135,7 +138,13 @@ impl PathBackend for InotifyBackend {
             let mut by_unit: HashMap<String, FsEvent> = HashMap::new();
             let mut overflow = false;
 
-            let events = self.inotify.get_ref().0.lock().unwrap().read_events(&mut buf);
+            let events = self
+                .inotify
+                .get_ref()
+                .0
+                .lock()
+                .unwrap()
+                .read_events(&mut buf);
             match events {
                 Ok(events) => {
                     for ev in events {

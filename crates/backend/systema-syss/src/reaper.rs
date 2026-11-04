@@ -48,9 +48,9 @@ use std::time::Duration;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::signal::unix::{Signal, SignalKind};
-use tracing::warn;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use tracing::info;
+use tracing::warn;
 
 use crate::ipc::SharedRegistry;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -183,7 +183,10 @@ async fn sweep(shared: &SharedRegistry) {
             // Reaped (it was our zombie child — waitpid(WNOHANG) only ever
             // returns the pid when it collected an exited child).
             p if p == pid as i32 => {
-                info!("Reaped orphaned child PID {pid} ({comm}): {}", describe(pid, status));
+                info!(
+                    "Reaped orphaned child PID {pid} ({comm}): {}",
+                    describe(pid, status)
+                );
             }
             // -1: raced with another waiter (ECHILD) or a transient error.
             _ => {}

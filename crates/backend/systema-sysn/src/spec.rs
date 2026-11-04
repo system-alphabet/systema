@@ -80,7 +80,10 @@ pub fn split_glob_pattern(pattern: &str) -> (PathBuf, String) {
         Some(idx) => {
             let dir = &pattern[..idx];
             let base = &pattern[idx + 1..];
-            (PathBuf::from(if dir.is_empty() { "/" } else { dir }), base.to_string())
+            (
+                PathBuf::from(if dir.is_empty() { "/" } else { dir }),
+                base.to_string(),
+            )
         }
         None => (PathBuf::from("."), pattern.to_string()),
     }

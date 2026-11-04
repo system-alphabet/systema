@@ -10,10 +10,7 @@ use clap::Parser;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(
-    name = "systema-sysr",
-    about = "System R — System Resource Worker"
-)]
+#[command(name = "systema-sysr", about = "System R — System Resource Worker")]
 struct Args {
     #[arg(long, short = 'D', help = "Enable debug-level logging")]
     debug: bool,

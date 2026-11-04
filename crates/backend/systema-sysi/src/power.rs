@@ -371,7 +371,10 @@ mod tests {
     #[test]
     fn rejects_unknown_names() {
         assert_eq!(PowerAction::from_unit_name("evil.power"), None);
-        assert_eq!(PowerAction::from_unit_name("systemd-poweroff.service"), None);
+        assert_eq!(
+            PowerAction::from_unit_name("systemd-poweroff.service"),
+            None
+        );
         assert_eq!(PowerAction::from_unit_name(""), None);
     }
 
@@ -385,7 +388,10 @@ mod tests {
             PowerAction::Suspend,
             PowerAction::Hibernate,
         ] {
-            assert_eq!(PowerAction::from_unit_name(&action.to_string()), Some(action));
+            assert_eq!(
+                PowerAction::from_unit_name(&action.to_string()),
+                Some(action)
+            );
         }
     }
 
@@ -444,7 +450,14 @@ mod tests {
     fn all_definitions_registers_six_units() {
         let units = all_power_definitions();
         assert_eq!(units.len(), 6);
-        for name in ["poweroff.power", "reboot.power", "halt.power", "kexec.power", "suspend.power", "hibernate.power"] {
+        for name in [
+            "poweroff.power",
+            "reboot.power",
+            "halt.power",
+            "kexec.power",
+            "suspend.power",
+            "hibernate.power",
+        ] {
             assert!(units.contains_key(name), "missing {name}");
         }
     }

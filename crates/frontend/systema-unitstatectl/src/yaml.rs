@@ -24,12 +24,7 @@ use serde_json::Value;
 ///
 /// When `color` is false the output is plain ASCII; when true it is styled
 /// for a terminal.
-pub fn render_doc(
-    w: &mut String,
-    name: &str,
-    value: &Value,
-    color: bool,
-) -> std::fmt::Result {
+pub fn render_doc(w: &mut String, name: &str, value: &Value, color: bool) -> std::fmt::Result {
     writeln!(w, "{}", style(color, "---", Style::Dim))?;
     writeln!(
         w,
@@ -97,12 +92,7 @@ fn emit_array(w: &mut String, items: &[Value], indent: usize, color: bool) -> st
         match item {
             Value::Object(child) => {
                 if child.is_empty() {
-                    writeln!(
-                        w,
-                        "{}- {}",
-                        pad(indent),
-                        style(color, "{}", Style::Dim)
-                    )?;
+                    writeln!(w, "{}- {}", pad(indent), style(color, "{}", Style::Dim))?;
                 } else {
                     writeln!(w, "{}- ", pad(indent))?;
                     emit_map(w, child, indent + 2, color)?;
@@ -124,7 +114,11 @@ fn emit_array(w: &mut String, items: &[Value], indent: usize, color: bool) -> st
 fn emit_scalar_inline(out: &mut String, value: &Value, color: bool) {
     match value {
         Value::Null => out.push_str(&style(color, "null", Style::Dim)),
-        Value::Bool(b) => out.push_str(&style(color, if *b { "true" } else { "false" }, Style::Bool)),
+        Value::Bool(b) => out.push_str(&style(
+            color,
+            if *b { "true" } else { "false" },
+            Style::Bool,
+        )),
         Value::Number(n) => out.push_str(&style(color, &n.to_string(), Style::Number)),
         Value::String(s) if plain_safe(s) => out.push_str(&style(color, s, Style::Scalar)),
         Value::String(s) => out.push_str(&style(color, &quote(s), Style::Scalar)),

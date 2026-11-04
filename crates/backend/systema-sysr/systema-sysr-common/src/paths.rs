@@ -208,7 +208,10 @@ mod tests {
 
     #[test]
     fn slice_components() {
-        assert_eq!(slice_name_components("system.slice"), Some(vec!["system".to_string()]));
+        assert_eq!(
+            slice_name_components("system.slice"),
+            Some(vec!["system".to_string()])
+        );
         assert_eq!(
             slice_name_components("foo-bar.slice"),
             Some(vec!["foo".to_string(), "bar".to_string()])
@@ -219,7 +222,10 @@ mod tests {
 
     #[test]
     fn slice_paths() {
-        assert_eq!(slice_cgroup_path("system.slice"), "/sys/fs/cgroup/system.slice");
+        assert_eq!(
+            slice_cgroup_path("system.slice"),
+            "/sys/fs/cgroup/system.slice"
+        );
         assert_eq!(
             slice_cgroup_path("foo-bar.slice"),
             "/sys/fs/cgroup/foo.slice/bar.slice"
@@ -263,9 +269,18 @@ mod tests {
 
     #[test]
     fn quota_to_cpu_max() {
-        assert_eq!(cpu_quota_to_cpu_max("50%"), Some("50000 100000".to_string()));
-        assert_eq!(cpu_quota_to_cpu_max("100%"), Some("100000 100000".to_string()));
-        assert_eq!(cpu_quota_to_cpu_max("10.5%"), Some("10500 100000".to_string()));
+        assert_eq!(
+            cpu_quota_to_cpu_max("50%"),
+            Some("50000 100000".to_string())
+        );
+        assert_eq!(
+            cpu_quota_to_cpu_max("100%"),
+            Some("100000 100000".to_string())
+        );
+        assert_eq!(
+            cpu_quota_to_cpu_max("10.5%"),
+            Some("10500 100000".to_string())
+        );
         assert_eq!(cpu_quota_to_cpu_max("infinity"), None);
     }
 
@@ -298,10 +313,7 @@ mod tests {
             split_device_directive("/dev/sda 100"),
             Some(("/dev/sda", "100"))
         );
-        assert_eq!(
-            split_device_directive("8:0 10M"),
-            Some(("8:0", "10M"))
-        );
+        assert_eq!(split_device_directive("8:0 10M"), Some(("8:0", "10M")));
         assert_eq!(split_device_directive(""), None);
         assert_eq!(split_device_directive("/dev/sda"), None);
     }

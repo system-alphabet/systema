@@ -8,7 +8,7 @@
 //! (`"50%"`, `"1G"`, `"0-3"`); the Linux backend normalises them when
 //! writing to cgroupfs.
 
-use crate::paths::{cpu_quota_to_cpu_max_period, parse_memory_size, parse_cpu_period_us};
+use crate::paths::{cpu_quota_to_cpu_max_period, parse_cpu_period_us, parse_memory_size};
 
 /// Parser default for `TasksMax=` when the directive is absent (unlimited).
 pub const DEFAULT_TASKS_MAX: u32 = u32::MAX;
@@ -210,8 +210,8 @@ impl ResourceConfig {
     /// Parsed CPU quota as a cgroup v2 `cpu.max` payload, honouring
     /// `CPUQuotaPeriodSec=` (default period 100ms).
     pub fn cpu_max(&self) -> Option<String> {
-        let period = parse_cpu_period_us(&self.cpu_quota_period)
-            .unwrap_or(crate::CPU_MAX_PERIOD_US);
+        let period =
+            parse_cpu_period_us(&self.cpu_quota_period).unwrap_or(crate::CPU_MAX_PERIOD_US);
         cpu_quota_to_cpu_max_period(&self.cpu_quota, period)
     }
 

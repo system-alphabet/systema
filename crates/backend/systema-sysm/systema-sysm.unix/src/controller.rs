@@ -233,7 +233,9 @@ impl UnitController for MountController {
                 // Dead.
                 let (partner_mounted, mount_cfg) = {
                     let reg = self.automount_registry.lock();
-                    let cfg = reg.get(unit_name).and_then(|inst| inst.mount_config.clone());
+                    let cfg = reg
+                        .get(unit_name)
+                        .and_then(|inst| inst.mount_config.clone());
                     let mounted = {
                         let mreg = self.registry.lock();
                         let partner = companion_mount_unit(unit_name);

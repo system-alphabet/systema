@@ -98,25 +98,65 @@ struct Args {
     )]
     worker_flags: Option<String>,
 
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System A only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System A only"
+    )]
     sysa_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System S only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System S only"
+    )]
     syss_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System E only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System E only"
+    )]
     syse_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System T only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System T only"
+    )]
     syst_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System C only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System C only"
+    )]
     sysc_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System K only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System K only"
+    )]
     sysk_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System N only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System N only"
+    )]
     sysn_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System D only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System D only"
+    )]
     sysd_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System R only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System R only"
+    )]
     sysr_flags: Option<String>,
-    #[arg(long, allow_hyphen_values = true, help = "Extra flags for System M only")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Extra flags for System M only"
+    )]
     sysm_flags: Option<String>,
 
     #[arg(long, short = 'v', help = "Print version information and exit")]
@@ -350,7 +390,10 @@ async fn main() -> Result<()> {
     }
 
     let power_ctl = args.powerctl;
-    info!("Power control policy: --powerctl={power_ctl} (pid {})", std::process::id());
+    info!(
+        "Power control policy: --powerctl={power_ctl} (pid {})",
+        std::process::id()
+    );
 
     let set = workers::build_worker_set(&args.skip_workers)?;
     let summary = set.iter().map(|s| s.name).collect::<Vec<_>>().join(", ");

@@ -53,7 +53,9 @@ fn unit_rc(unit: &crate::unit::types::UnitFile) -> Option<&ResourceControl> {
 
 /// `[Service]` projection consumed by the bridge's Service object.
 fn service_snapshot(unit: &crate::unit::types::UnitFile, snap: &mut UnitSnapshot) {
-    let Some(s) = unit.service.as_ref() else { return };
+    let Some(s) = unit.service.as_ref() else {
+        return;
+    };
     snap.service_type = s.service_type.as_str().to_string();
     snap.restart = s.restart.as_str().to_string();
     snap.restart_sec = s.restart_sec as u64;
@@ -213,7 +215,10 @@ fn sorted(set: &std::collections::HashSet<String>) -> Vec<String> {
 pub fn list_snapshots(state: &AllocatorState) -> Vec<UnitSnapshot> {
     let mut units: Vec<String> = state.units.keys().cloned().collect();
     units.sort();
-    units.into_iter().map(|n| unit_snapshot(state, &n)).collect()
+    units
+        .into_iter()
+        .map(|n| unit_snapshot(state, &n))
+        .collect()
 }
 
 /// Build the `manager.list_jobs` reply payload (running jobs only, like
@@ -345,10 +350,7 @@ mod tests {
         assert_eq!(snap.active_state, "active");
         assert_eq!(snap.sub_state, "running");
         assert_eq!(snap.main_pid, 12345);
-        assert_eq!(
-            snap.invocation_id,
-            "0123456789abcdef0123456789abcdef"
-        );
+        assert_eq!(snap.invocation_id, "0123456789abcdef0123456789abcdef");
         assert_eq!(snap.active_enter_timestamp, 1_700_000_000_000_000);
         assert_eq!(
             snap.extensions.get("last_exit_code").map(String::as_str),

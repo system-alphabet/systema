@@ -13,7 +13,7 @@
 //! bug-class signals (SIGSEGV &c.) keep their default action, and SIGPIPE
 //! keeps the Rust-runtime default so writes still surface `EPIPE`.
 
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 use tracing::{debug, info};
 
 /// Wait for a graceful-shutdown request and return the signal that arrived.

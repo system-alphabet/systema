@@ -73,7 +73,8 @@ impl ServiceController {
             }
             Err(e) => {
                 warn!("{} (PID {}): notify start failed: {}", unit_name, pid, e);
-                let _ = stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
+                let _ =
+                    stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
                 self.publish_state(unit_name);
                 Err(anyhow!("{}", e))
             }
@@ -211,7 +212,8 @@ impl ServiceController {
                     "Timeout waiting for oneshot {} ({}s), stopping",
                     unit_name, timeout
                 );
-                let _ = stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
+                let _ =
+                    stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
                 self.publish_state(unit_name);
                 Err(anyhow!(sysa::l10n::fmt(
                     sysa::l10n::t_("oneshot service {unit_name} timed out after {timeout}s"),
@@ -455,7 +457,13 @@ impl UnitController for ServiceController {
                 .and_then(|inst| inst.timeout_stop_secs)
                 .unwrap_or(30)
         };
-        stop_service(self.registry.clone(), unit_name, timeout, Some(&self.cgroup)).await?;
+        stop_service(
+            self.registry.clone(),
+            unit_name,
+            timeout,
+            Some(&self.cgroup),
+        )
+        .await?;
         self.publish_state(unit_name);
         Ok(())
     }
@@ -466,7 +474,10 @@ impl UnitController for ServiceController {
         if Self::is_noop_service(&cfg) {
             // ExecStart-less "action" service: restart is a no-op success
             // (there was never a process to stop or start).
-            info!("{}: no ExecStart, restart completes without spawning a process", unit_name);
+            info!(
+                "{}: no ExecStart, restart completes without spawning a process",
+                unit_name
+            );
             let inv_id = if invocation_id.is_empty() {
                 None
             } else {
@@ -480,7 +491,13 @@ impl UnitController for ServiceController {
             .as_ref()
             .map(|s| s.timeout_stop_secs)
             .unwrap_or(30);
-        stop_service(self.registry.clone(), unit_name, timeout, Some(&self.cgroup)).await?;
+        stop_service(
+            self.registry.clone(),
+            unit_name,
+            timeout,
+            Some(&self.cgroup),
+        )
+        .await?;
         let inv_id = if invocation_id.is_empty() {
             None
         } else {
@@ -804,15 +821,13 @@ mod tests {
             ..Default::default()
         };
         let result = ctrl
-            .start(
-                "systemd-poweroff.service",
-                &config.encode_to_vec(),
-                "inv-1",
-            )
+            .start("systemd-poweroff.service", &config.encode_to_vec(), "inv-1")
             .await;
         assert!(result.is_ok(), "no-op start must succeed: {result:?}");
         let reg = ctrl.registry.lock();
-        let inst = reg.get("systemd-poweroff.service").expect("unit should exist");
+        let inst = reg
+            .get("systemd-poweroff.service")
+            .expect("unit should exist");
         assert_eq!(inst.state, ServiceState::Running);
         assert_eq!(inst.main_pid, None);
     }

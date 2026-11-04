@@ -41,12 +41,7 @@ impl PathBackend for PollingBackend {
     }
 
     fn armed_units(&self) -> Vec<String> {
-        self.armed
-            .lock()
-            .unwrap()
-            .iter()
-            .cloned()
-            .collect()
+        self.armed.lock().unwrap().iter().cloned().collect()
     }
 
     async fn changes(&self) -> Vec<PathChange> {

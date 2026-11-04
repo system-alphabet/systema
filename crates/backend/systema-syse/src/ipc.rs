@@ -89,11 +89,7 @@ pub(crate) async fn monitor_scope(
             let reg = registry.lock();
             match reg.get(&unit_name) {
                 None => break,
-                Some(inst) => (
-                    inst.state,
-                    inst.runtime_max_secs,
-                    inst.timeout_stop_secs,
-                ),
+                Some(inst) => (inst.state, inst.runtime_max_secs, inst.timeout_stop_secs),
             }
         };
 

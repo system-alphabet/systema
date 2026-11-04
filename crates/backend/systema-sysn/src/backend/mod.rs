@@ -98,8 +98,6 @@ pub fn default_backend() -> anyhow::Result<Box<dyn PathBackend>> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub mod linux;
 #[cfg(any(
     target_os = "freebsd",
     target_os = "macos",
@@ -108,6 +106,8 @@ pub mod linux;
     target_os = "dragonfly"
 ))]
 pub mod kqueue;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub mod linux;
 #[cfg(not(any(
     target_os = "linux",
     target_os = "android",

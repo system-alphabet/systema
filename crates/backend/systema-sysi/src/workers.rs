@@ -305,12 +305,13 @@ mod tests {
         let linux = build_worker_set_for(Platform::Linux, &[]).unwrap();
         assert_eq!(
             names(&linux),
-            vec!["sysa", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr", "sysm", "sysw"]
+            vec![
+                "sysa", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr", "sysm",
+                "sysw"
+            ]
         );
         assert_eq!(linux.len(), 11);
-        assert!(
-            linux.iter().all(|s| s.kind == ProcessKind::LongRunning)
-        );
+        assert!(linux.iter().all(|s| s.kind == ProcessKind::LongRunning));
         fn binary_of<'a>(set: &'a [WorkerSpec], name: &'a str) -> &'a str {
             set.iter().find(|s| s.name == name).unwrap().binary
         }

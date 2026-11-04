@@ -10,9 +10,7 @@ use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
 use sysa::proto::PathConfig;
 use tracing::info;
 
-use crate::engine::{
-    arm_unit, publish_path, recheck_level, status_of, EngineShared,
-};
+use crate::engine::{arm_unit, publish_path, recheck_level, status_of, EngineShared};
 use crate::spec::{PathSpec, PathSpecKind};
 use crate::state::{PathInstance, PathState};
 
@@ -333,7 +331,10 @@ mod tests {
 
     #[test]
     fn parent_dir_splitting() {
-        assert_eq!(parent_dir_of("/var/spool/app"), Some(PathBuf::from("/var/spool")));
+        assert_eq!(
+            parent_dir_of("/var/spool/app"),
+            Some(PathBuf::from("/var/spool"))
+        );
         assert_eq!(parent_dir_of("/file"), Some(PathBuf::from("/")));
         assert_eq!(parent_dir_of("relative"), None);
     }

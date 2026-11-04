@@ -22,16 +22,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
-use systema_sysr_common::{
-    CgroupMetrics, ResourceConfig, ResourceController, slice_cgroup_path, unit_cgroup_path,
-    user_slice_cgroup_path, user_slice_name, user_slice_root_path,
-};
 use sysa::controller::{UnitController, UnitStatus};
 use sysa::proto::{
     CgroupMetricsUpdate, CgroupProcess, UnitCgroupMetrics, UnitCgroupQuery, UnitCgroupResult,
     UnitResourceEvent, UserSessionEvent,
 };
 use sysa::worker_ipc::EventPublisher;
+use systema_sysr_common::{
+    slice_cgroup_path, unit_cgroup_path, user_slice_cgroup_path, user_slice_name,
+    user_slice_root_path, CgroupMetrics, ResourceConfig, ResourceController,
+};
 use tracing::{debug, info, warn};
 
 /// The default parent slice for services that do not set `[Unit] Slice=`.
@@ -226,10 +226,7 @@ impl ResourceWorker {
                     };
                     for pid in pids {
                         if let Err(e) = self.controller.attach(&attach_path, pid) {
-                            warn!(
-                                "Cannot move pid {} into {}: {}",
-                                pid, event.unit_name, e
-                            );
+                            warn!("Cannot move pid {} into {}: {}", pid, event.unit_name, e);
                         }
                     }
                     let parent_slice = if event.unit_name.ends_with(".slice") {
@@ -245,17 +242,25 @@ impl ResourceWorker {
                             config,
                             cgroup_path,
                             parent_slice,
-                            main_pid: event.pids.first().copied().or(if event.main_pid != 0 {
-                                Some(event.main_pid)
-                            } else {
-                                None
-                            }).unwrap_or(0),
+                            main_pid: event
+                                .pids
+                                .first()
+                                .copied()
+                                .or(if event.main_pid != 0 {
+                                    Some(event.main_pid)
+                                } else {
+                                    None
+                                })
+                                .unwrap_or(0),
                         },
                     );
                     debug!("Applied resource control for {}", event.unit_name);
                 }
                 Err(e) => {
-                    warn!("Cannot apply resource control for {}: {}", event.unit_name, e);
+                    warn!(
+                        "Cannot apply resource control for {}: {}",
+                        event.unit_name, e
+                    );
                 }
             }
         } else {
@@ -303,7 +308,10 @@ impl ResourceWorker {
         if !config.delegate {
             // Defensive: only Delegate= units get a placement path, so a
             // mis-routed prepare can never move a process somewhere new.
-            debug!("resource.prepare for {}: no Delegate= — no placement", event.unit_name);
+            debug!(
+                "resource.prepare for {}: no Delegate= — no placement",
+                event.unit_name
+            );
             return Ok(String::new());
         }
         self.controller
@@ -318,30 +326,33 @@ impl ResourceWorker {
         } else {
             format!("{cgroup_path}/{subgroup}")
         };
-        debug!("Prepared delegated cgroup for {} at {placement}", event.unit_name);
+        debug!(
+            "Prepared delegated cgroup for {} at {placement}",
+            event.unit_name
+        );
         Ok(placement)
     }
 
-/// Apply a [`UserSessionEvent`] whose slice units were already committed to
-/// System A (see [`Self::handle_user_session_event`] for the semantics; this
-/// wrapper first makes sure System A knows the `user-<UID>.slice` unit, so
-/// the state published below is never reported for an unknown unit).
-pub async fn handle_user_session_event_registered(&self, event: &UserSessionEvent) {
-    let slice_name = user_slice_name(event.uid);
-    if let Err(e) = crate::register::commit_slice(
-        &slice_name,
-        &crate::register::user_slice_description(event.uid),
-    )
-    .await
-    {
-        warn!("Cannot register {slice_name} with System A: {e}");
+    /// Apply a [`UserSessionEvent`] whose slice units were already committed to
+    /// System A (see [`Self::handle_user_session_event`] for the semantics; this
+    /// wrapper first makes sure System A knows the `user-<UID>.slice` unit, so
+    /// the state published below is never reported for an unknown unit).
+    pub async fn handle_user_session_event_registered(&self, event: &UserSessionEvent) {
+        let slice_name = user_slice_name(event.uid);
+        if let Err(e) = crate::register::commit_slice(
+            &slice_name,
+            &crate::register::user_slice_description(event.uid),
+        )
+        .await
+        {
+            warn!("Cannot register {slice_name} with System A: {e}");
+        }
+        self.handle_user_session_event(event);
     }
-    self.handle_user_session_event(event);
-}
 
-/// Ensure the `user.slice` root cgroup exists (idempotent).  It is the
-/// container of every per-user slice and, like systemd's static
-/// `user.slice`, is present from the moment System R is up.
+    /// Ensure the `user.slice` root cgroup exists (idempotent).  It is the
+    /// container of every per-user slice and, like systemd's static
+    /// `user.slice`, is present from the moment System R is up.
     pub fn ensure_user_slice_root(&self) {
         let path = user_slice_root_path();
         if let Err(e) = self.controller.ensure(&path, &ResourceConfig::default()) {
@@ -351,20 +362,20 @@ pub async fn handle_user_session_event_registered(&self, event: &UserSessionEven
         debug!("User slice root {path} is in place");
     }
 
-/// The UIDs that currently have at least one live login session.
-pub fn active_user_slice_uids(&self) -> Vec<u32> {
-    self.sessions
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(_, &n)| n > 0)
-        .map(|(&uid, _)| uid)
-        .collect()
-}
+    /// The UIDs that currently have at least one live login session.
+    pub fn active_user_slice_uids(&self) -> Vec<u32> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, &n)| n > 0)
+            .map(|(&uid, _)| uid)
+            .collect()
+    }
 
-/// Apply a [`UserSessionEvent`]: track the absolute number of live login
-/// sessions per UID and keep the user's `user-<UID>.slice` alive as long
-/// as at least one session is logged in (systemd-logind semantics).
+    /// Apply a [`UserSessionEvent`]: track the absolute number of live login
+    /// sessions per UID and keep the user's `user-<UID>.slice` alive as long
+    /// as at least one session is logged in (systemd-logind semantics).
     ///
     /// On the 0 → N transition the slice cgroup hierarchy is ensured and the
     /// `user.slice` root plus the user's slice are reported active to System
@@ -615,8 +626,8 @@ fn diff_metrics(
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use systema_sysr_common::{CgroupBaseline, NoopController, ResourceError};
     use sysa::proto::ResourceConfig as ProtoResourceConfig;
+    use systema_sysr_common::{CgroupBaseline, NoopController, ResourceError};
 
     fn dummy_publisher() -> EventPublisher {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
@@ -690,7 +701,13 @@ mod tests {
     fn service_entry_uses_event_slice_parent() {
         let w = worker();
         w.handle_resource_event(&resource_event("svc.service", "work.slice", true));
-        let entry = w.registry.lock().unwrap().get("svc.service").cloned().unwrap();
+        let entry = w
+            .registry
+            .lock()
+            .unwrap()
+            .get("svc.service")
+            .cloned()
+            .unwrap();
         assert_eq!(entry.parent_slice, "work.slice");
         assert_eq!(entry.cgroup_path, "/sys/fs/cgroup/work.slice/svc.service");
     }
@@ -699,7 +716,13 @@ mod tests {
     fn default_slice_parent_when_event_slice_empty() {
         let w = worker();
         w.handle_resource_event(&resource_event("svc.service", "", true));
-        let entry = w.registry.lock().unwrap().get("svc.service").cloned().unwrap();
+        let entry = w
+            .registry
+            .lock()
+            .unwrap()
+            .get("svc.service")
+            .cloned()
+            .unwrap();
         assert_eq!(entry.parent_slice, "system.slice");
     }
 
@@ -753,15 +776,24 @@ mod tests {
         let mut last = HashMap::new();
 
         // First sample: everything is new, everything changes.
-        let changed = diff_metrics(vec![sample_unit("a.service", 10), sample_unit("b.service", 20)], &mut last);
+        let changed = diff_metrics(
+            vec![sample_unit("a.service", 10), sample_unit("b.service", 20)],
+            &mut last,
+        );
         assert_eq!(changed.len(), 2);
 
         // Unchanged sample: nothing is pushed.
-        let changed = diff_metrics(vec![sample_unit("a.service", 10), sample_unit("b.service", 20)], &mut last);
+        let changed = diff_metrics(
+            vec![sample_unit("a.service", 10), sample_unit("b.service", 20)],
+            &mut last,
+        );
         assert!(changed.is_empty());
 
         // Only the unit whose value moved is pushed.
-        let changed = diff_metrics(vec![sample_unit("a.service", 42), sample_unit("b.service", 20)], &mut last);
+        let changed = diff_metrics(
+            vec![sample_unit("a.service", 42), sample_unit("b.service", 20)],
+            &mut last,
+        );
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0].unit_name, "a.service");
         assert_eq!(changed[0].metrics.get("MemoryCurrent"), Some(&42));
@@ -789,7 +821,10 @@ mod tests {
         let reg = w.registry.lock().unwrap();
         assert!(reg.contains_key("user.slice"));
         let user_slice = reg.get("user-1000.slice").cloned().unwrap();
-        assert_eq!(user_slice.cgroup_path, "/sys/fs/cgroup/user.slice/1000.slice");
+        assert_eq!(
+            user_slice.cgroup_path,
+            "/sys/fs/cgroup/user.slice/1000.slice"
+        );
         assert_eq!(user_slice.parent_slice, "user.slice");
         assert_eq!(*w.sessions.lock().unwrap().get(&1000).unwrap(), 1);
     }
@@ -1080,12 +1115,7 @@ mod tests {
             fail_ensure: true,
             ..Default::default()
         });
-        let w = ResourceWorker::new(
-            ctrl,
-            new_registry(),
-            new_user_sessions(),
-            dummy_publisher(),
-        );
+        let w = ResourceWorker::new(ctrl, new_registry(), new_user_sessions(), dummy_publisher());
         let mut ev = resource_event("plain.service", "", false);
         ev.resource.as_mut().unwrap().delegate = true;
         let err = w.prepare(&ev).unwrap_err();

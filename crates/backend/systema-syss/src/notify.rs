@@ -101,11 +101,7 @@ mod imp {
         match c {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             ControlMessageOwned::ScmCredentials(u) => Some(u.pid() as u32),
-            #[cfg(any(
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "dragonfly"
-            ))]
+            #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "dragonfly"))]
             ControlMessageOwned::ScmCreds(u) => Some(u.pid() as u32),
             _ => None,
         }
@@ -115,11 +111,7 @@ mod imp {
     fn credentials_option() -> nix::libc::c_int {
         nix::libc::SO_PASSCRED
     }
-    #[cfg(any(
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "dragonfly"
-    ))]
+    #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "dragonfly"))]
     fn credentials_option() -> nix::libc::c_int {
         nix::libc::LOCAL_CREDS
     }

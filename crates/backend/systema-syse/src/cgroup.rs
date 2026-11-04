@@ -42,7 +42,11 @@ pub fn read_cgroup_procs(cgroup_path: &str) -> Result<Vec<u32>> {
 /// Whether the scope's cgroup is empty, from `cgroup.events` (`populated 0`).
 pub fn is_cgroup_empty(cgroup_path: &str) -> bool {
     fs::read_to_string(PathBuf::from(cgroup_path).join("cgroup.events"))
-        .map(|content| content.lines().any(|l| l.starts_with("populated") && l.ends_with('0')))
+        .map(|content| {
+            content
+                .lines()
+                .any(|l| l.starts_with("populated") && l.ends_with('0'))
+        })
         .unwrap_or(true)
 }
 

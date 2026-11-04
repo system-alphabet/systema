@@ -69,11 +69,7 @@ fn btime_from_proc_stat() -> Option<u64> {
 }
 
 /// Read the boot time from `sysctl kern.boottime`.
-#[cfg(any(
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "macos"
-))]
+#[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "macos"))]
 fn boottime_sysctl() -> Option<u64> {
     unsafe {
         let mut tv: libc::timeval = std::mem::zeroed();
@@ -239,12 +235,8 @@ fn parse_weekdays(tok: &str) -> Result<Option<BTreeSet<u32>>, String> {
     if tok == "*" || tok.is_empty() {
         return Ok(None);
     }
-    let names = [
-        "mon", "tue", "wed", "thu", "fri", "sat", "sun",
-    ];
-    let idx = |s: &str| -> Option<u32> {
-        names.iter().position(|n| *n == s).map(|i| i as u32 + 1)
-    };
+    let names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    let idx = |s: &str| -> Option<u32> { names.iter().position(|n| *n == s).map(|i| i as u32 + 1) };
     let mut set = BTreeSet::new();
     for part in tok.split(',') {
         let part = part.trim();
@@ -640,12 +632,14 @@ pub fn compute_next_elapse(
         }
     }
     if let Some(v) = cfg.on_unit_active_sec {
-        let base = last_elapse.map(|e| e.saturating_add(v as u64))
+        let base = last_elapse
+            .map(|e| e.saturating_add(v as u64))
             .unwrap_or_else(|| activated_epoch.saturating_add(v as u64));
         candidates.push((base, "OnUnitActiveSec"));
     }
     if let Some(v) = cfg.on_unit_inactive_sec {
-        let base = last_elapse.map(|e| e.saturating_add(v as u64))
+        let base = last_elapse
+            .map(|e| e.saturating_add(v as u64))
             .unwrap_or_else(|| activated_epoch.saturating_add(v as u64));
         candidates.push((base, "OnUnitInactiveSec"));
     }
@@ -690,11 +684,7 @@ pub fn missed_calendar_elapse(cfg: &TimerConfig, since_epoch: u64) -> Option<u64
 
 /// Testable core of [`missed_calendar_elapse`]: compare in wall-clock terms
 /// so the result is timezone-independent.
-fn missed_calendar_at(
-    cfg: &TimerConfig,
-    now: NaiveDateTime,
-    since: NaiveDateTime,
-) -> Option<u64> {
+fn missed_calendar_at(cfg: &TimerConfig, now: NaiveDateTime, since: NaiveDateTime) -> Option<u64> {
     if !cfg.persistent || cfg.on_calendar.is_empty() {
         return None;
     }
@@ -736,7 +726,17 @@ mod tests {
 
     #[test]
     fn parse_shorthands() {
-        for s in ["minutely", "hourly", "daily", "weekly", "monthly", "yearly", "annually", "quarterly", "semi-annually"] {
+        for s in [
+            "minutely",
+            "hourly",
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly",
+            "annually",
+            "quarterly",
+            "semi-annually",
+        ] {
             assert!(CalendarSpec::parse(s).is_ok(), "failed to parse {s}");
         }
     }
@@ -762,7 +762,10 @@ mod tests {
     fn wrapping_weekday_range() {
         let spec = CalendarSpec::parse("Fri..Mon 12:00").unwrap();
         let thursday = ndt(2026, 8, 6, 12, 0, 0);
-        assert_eq!(spec.next_after(thursday).unwrap(), ndt(2026, 8, 7, 12, 0, 0));
+        assert_eq!(
+            spec.next_after(thursday).unwrap(),
+            ndt(2026, 8, 7, 12, 0, 0)
+        );
     }
 
     #[test]
@@ -803,11 +806,7 @@ mod tests {
         assert_eq!(spec.next_after(now).unwrap(), ndt(2026, 12, 25, 0, 0, 0));
     }
 
-    fn tcfg(
-        on_boot: Option<u32>,
-        on_active: Option<u32>,
-        calendar: Vec<String>,
-    ) -> TimerConfig {
+    fn tcfg(on_boot: Option<u32>, on_active: Option<u32>, calendar: Vec<String>) -> TimerConfig {
         TimerConfig {
             on_active_sec: on_active,
             on_boot_sec: on_boot,
@@ -922,7 +921,10 @@ mod tests {
 
     #[test]
     fn sets_parse() {
-        assert_eq!(parse_comp("9..17", 0, 23).unwrap(), BTreeSet::from([9, 10, 11, 12, 13, 14, 15, 16, 17]));
+        assert_eq!(
+            parse_comp("9..17", 0, 23).unwrap(),
+            BTreeSet::from([9, 10, 11, 12, 13, 14, 15, 16, 17])
+        );
         assert_eq!(parse_comp("*", 0, 23).unwrap(), BTreeSet::new());
         assert!(parse_comp("40", 0, 23).is_err());
     }

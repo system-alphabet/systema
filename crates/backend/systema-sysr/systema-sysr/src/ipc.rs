@@ -35,7 +35,7 @@ use sysa::proto::{
 use sysa::worker_ipc::{EventPublisher, WorkerIpc};
 use tracing::{debug, warn};
 
-use crate::worker::{ResourceWorker, new_registry, new_user_sessions};
+use crate::worker::{new_registry, new_user_sessions, ResourceWorker};
 
 const WORKER_ID: &str = "system-r-1";
 /// System R owns slice jobs; service cgroups are managed purely through the
@@ -68,8 +68,11 @@ pub async fn run() -> Result<()> {
         .supports_resource_prepare()
         .run(
             move |event_pub| {
-                let worker =
-                    ResourceWorker::with_defaults(registry.clone(), sessions.clone(), event_pub.clone());
+                let worker = ResourceWorker::with_defaults(
+                    registry.clone(),
+                    sessions.clone(),
+                    event_pub.clone(),
+                );
                 // Subscribe to events for every unit (empty list = all).
                 // System A replays the currently active units on subscribe.
                 event_pub.subscribe_units(&[]);
@@ -162,10 +165,7 @@ fn spawn_user_slice_registration(worker: &ResourceWorker) {
 
 /// Decode an `event.publish` envelope and apply the resource event through
 /// the current worker.
-fn handle_resource_envelope(
-    env: &Envelope,
-    current: &Arc<Mutex<Option<ResourceWorker>>>,
-) {
+fn handle_resource_envelope(env: &Envelope, current: &Arc<Mutex<Option<ResourceWorker>>>) {
     let event = match UnitResourceEvent::decode(env.payload.as_slice()) {
         Ok(e) => e,
         Err(e) => {
@@ -176,7 +176,10 @@ fn handle_resource_envelope(
     let worker = current.lock().unwrap();
     match worker.as_ref() {
         Some(worker) => worker.handle_resource_event(&event),
-        None => warn!("event.publish for {} before worker initialised", event.unit_name),
+        None => warn!(
+            "event.publish for {} before worker initialised",
+            event.unit_name
+        ),
     }
 }
 
@@ -185,10 +188,7 @@ fn handle_resource_envelope(
 /// unit is committed to System A (finder API, needs its own connection)
 /// before the lifecycle handling, so the worker runs the event on a
 /// spawned task.
-fn handle_user_sessions_envelope(
-    env: &Envelope,
-    current: &Arc<Mutex<Option<ResourceWorker>>>,
-) {
+fn handle_user_sessions_envelope(env: &Envelope, current: &Arc<Mutex<Option<ResourceWorker>>>) {
     let event = match UserSessionEvent::decode(env.payload.as_slice()) {
         Ok(e) => e,
         Err(e) => {
@@ -203,7 +203,10 @@ fn handle_user_sessions_envelope(
                 worker.handle_user_session_event_registered(&event).await;
             });
         }
-        None => warn!("user.sessions for uid {} before worker initialised", event.uid),
+        None => warn!(
+            "user.sessions for uid {} before worker initialised",
+            event.uid
+        ),
     }
 }
 

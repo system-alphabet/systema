@@ -6,8 +6,8 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
 use systema_sysr_common::{
-    CGROUP_ROOT, CgroupBaseline, CgroupMetrics, CgroupProcess, DEFAULT_TASKS_MAX,
-    ResourceConfig, ResourceController, ResourceError, split_device_directive,
+    split_device_directive, CgroupBaseline, CgroupMetrics, CgroupProcess, ResourceConfig,
+    ResourceController, ResourceError, CGROUP_ROOT, DEFAULT_TASKS_MAX,
 };
 use tracing::{debug, warn};
 
@@ -45,7 +45,10 @@ impl CgroupV2Controller {
     /// Relative path of `path` under the cgroup root, or `None` when `path`
     /// is outside the hierarchy.
     fn rel(&self, path: &str) -> Option<PathBuf> {
-        Path::new(path).strip_prefix(&self.root).ok().map(|p| p.to_path_buf())
+        Path::new(path)
+            .strip_prefix(&self.root)
+            .ok()
+            .map(|p| p.to_path_buf())
     }
 
     /// Absolute filesystem path for a relative cgroup path (`""` = root).
@@ -178,7 +181,10 @@ impl CgroupV2Controller {
                 continue;
             };
             let Some(id) = resolve_device(device) else {
-                warn!("Cannot resolve device '{device}' for io.weight on {}", dir.display());
+                warn!(
+                    "Cannot resolve device '{device}' for io.weight on {}",
+                    dir.display()
+                );
                 continue;
             };
             self.write_limit(dir, "io.weight", &format!("{id} {value}"));
@@ -192,7 +198,10 @@ impl CgroupV2Controller {
                 if let Some(id) = resolve_device(device) {
                     max.entry(id).or_default().push(format!("rbps={value}"));
                 } else {
-                    warn!("Cannot resolve device '{device}' for io.max on {}", dir.display());
+                    warn!(
+                        "Cannot resolve device '{device}' for io.max on {}",
+                        dir.display()
+                    );
                 }
             }
         }
@@ -201,7 +210,10 @@ impl CgroupV2Controller {
                 if let Some(id) = resolve_device(device) {
                     max.entry(id).or_default().push(format!("wbps={value}"));
                 } else {
-                    warn!("Cannot resolve device '{device}' for io.max on {}", dir.display());
+                    warn!(
+                        "Cannot resolve device '{device}' for io.max on {}",
+                        dir.display()
+                    );
                 }
             }
         }
@@ -213,11 +225,7 @@ impl CgroupV2Controller {
     fn write_limit(&self, dir: &Path, file: &str, value: &str) {
         let path = dir.join(file);
         if let Err(e) = write_file(&path, value) {
-            warn!(
-                "Cannot apply {file}={value} on {}: {}",
-                dir.display(),
-                e
-            );
+            warn!("Cannot apply {file}={value} on {}: {}", dir.display(), e);
         }
     }
 }
@@ -649,12 +657,11 @@ impl ResourceController for CgroupV2Controller {
 
         // 1. Resolve the owner.  The User=/Group= strings arrive verbatim
         //    from System A; nss runs here, at the point of use.
-        let (uid, gid) = resolve_owner(owner_user, owner_group).map_err(|message| {
-            ResourceError::Invalid {
+        let (uid, gid) =
+            resolve_owner(owner_user, owner_group).map_err(|message| ResourceError::Invalid {
                 path: path.to_string(),
                 message,
-            }
-        })?;
+            })?;
 
         // 2. Chown the whole subtree, including the cgroup.* control files
         //    that already exist: chowning the directory alone would leave
@@ -673,7 +680,7 @@ impl ResourceController for CgroupV2Controller {
                     path: path.to_string(),
                     message: sysa::l10n::fmt(
                         sysa::l10n::t_(
-                            "DelegateSubgroup '{subgroup}' must be a single directory name"
+                            "DelegateSubgroup '{subgroup}' must be a single directory name",
                         ),
                         &[("subgroup", &subgroup.to_string())],
                     ),
@@ -726,10 +733,7 @@ impl ResourceController for CgroupV2Controller {
         };
         let full = self.full(&rel);
         match read_file(&full.join("cgroup.procs")) {
-            Ok(s) => s
-                .lines()
-                .filter_map(|l| l.trim().parse().ok())
-                .collect(),
+            Ok(s) => s.lines().filter_map(|l| l.trim().parse().ok()).collect(),
             Err(_) => Vec::new(),
         }
     }
@@ -749,8 +753,7 @@ impl ResourceController for CgroupV2Controller {
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.rel(path)
-            .is_some_and(|rel| self.full(&rel).is_dir())
+        self.rel(path).is_some_and(|rel| self.full(&rel).is_dir())
     }
 
     fn remove(&self, path: &str) -> Result<(), ResourceError> {
@@ -1013,8 +1016,11 @@ mod tests {
         let me = std::process::id();
         std::fs::write(root.join("cgroup.procs"), format!("{me}\n")).unwrap();
         std::fs::write(root.join("sub.service/cgroup.procs"), format!("{me}\n")).unwrap();
-        std::fs::write(root.join("sub.service/deep.scope/cgroup.procs"), format!("{me}\n"))
-            .unwrap();
+        std::fs::write(
+            root.join("sub.service/deep.scope/cgroup.procs"),
+            format!("{me}\n"),
+        )
+        .unwrap();
         // A pseudo-file sibling must not be mistaken for a child cgroup.
         std::fs::write(root.join("memory.current"), "1\n").unwrap();
 
@@ -1041,8 +1047,14 @@ mod tests {
 
         assert_eq!(read_number(&dir.join("memory.current")), Some(1_048_576));
         assert_eq!(read_number(&dir.join("pids.max")), None);
-        assert_eq!(read_key_value(&dir.join("cpu.stat"), "usage_usec"), Some(12345));
-        assert_eq!(read_key_value(&dir.join("cpu.stat"), "user_usec"), Some(100));
+        assert_eq!(
+            read_key_value(&dir.join("cpu.stat"), "usage_usec"),
+            Some(12345)
+        );
+        assert_eq!(
+            read_key_value(&dir.join("cpu.stat"), "user_usec"),
+            Some(100)
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
