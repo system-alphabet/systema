@@ -26,5 +26,6 @@ target
 
 # Freebuff
 .freebuff/
+.cloud-attachments/
 
 .cargo/config.toml
