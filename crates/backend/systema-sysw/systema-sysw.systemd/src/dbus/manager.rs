@@ -397,13 +397,36 @@ impl ManagerInterface {
     async fn get_unit(&self, name: &str) -> zbus::fdo::Result<OwnedObjectPath> {
         debug!("D-Bus GetUnit: {}", name);
         let name = super::resolve_canonical(&self.ctx, name).await;
-        if self.ctx.mirror.read().get(&name).is_some() {
-            Ok(unit_object_path(&name))
-        } else {
-            Err(zbus::fdo::Error::UnknownObject(sysa::l10n::fmt(
+        // A mirrored unit that is really loaded already has its D-Bus object;
+        // re-assert it because the registration may still be in flight.
+        let loaded = self
+            .ctx
+            .mirror
+            .read()
+            .get(&name)
+            .map(|snapshot| snapshot.load_state == "loaded")
+            .unwrap_or(false);
+        if loaded {
+            super::ensure_unit_object(&self.ctx, &name).await;
+            return Ok(unit_object_path(&name));
+        }
+        // Unknown or only `not-found` in the mirror: load the definition on
+        // demand, exactly like `LoadUnit`.  System A materializes a template
+        // instance (`modprobe@ntfs.service` from `modprobe@.service`) without
+        // starting it, so `status` behaves like it does under systemd.  The
+        // fresh snapshot replaces the `not-found` one before the object is
+        // registered, otherwise its properties would lie.
+        match systema_sysw_common::client::calls::load_unit_snapshot(&self.ctx.client, &name).await
+        {
+            Ok((load, snapshot)) => {
+                self.ctx.mirror.write().upsert(snapshot);
+                super::ensure_unit_object(&self.ctx, &load.name).await;
+                Ok(unit_object_path(&load.name))
+            }
+            Err(_) => Err(zbus::fdo::Error::UnknownObject(sysa::l10n::fmt(
                 sysa::l10n::t_("Unit {name} is not loaded."),
                 &[("name", &name.to_string())],
-            )))
+            ))),
         }
     }
 
