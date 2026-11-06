@@ -147,11 +147,16 @@ pub(crate) async fn monitor_service(
                     status.code(),
                     status.success()
                 );
-                let stay_active = {
+                // `ExecStart=-`: a non-zero exit is recorded in
+                // `last_exit_code` but counts as success for the unit.
+                let (stay_active, succeeded) = {
                     let reg = registry.lock();
                     reg.get(&unit_name)
-                        .map(|inst| status.success() && inst.remain_after_exit)
-                        .unwrap_or(false)
+                        .map(|inst| {
+                            let succeeded = inst.exit_succeeded(status.success());
+                            (succeeded && inst.remain_after_exit, succeeded)
+                        })
+                        .unwrap_or((false, status.success()))
                 };
                 if stay_active {
                     // RemainAfterExit=yes: keep the unit "active" after a
@@ -173,7 +178,7 @@ pub(crate) async fn monitor_service(
                     publish_service_state(&registry, &event_pub, &unit_name);
                     break;
                 }
-                let state = if status.success() {
+                let state = if succeeded {
                     ServiceState::Dead
                 } else {
                     ServiceState::Failed

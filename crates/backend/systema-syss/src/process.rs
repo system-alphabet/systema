@@ -274,12 +274,16 @@ pub async fn start_service(
         expand_argv(&parsed.args, &env_table)
     };
 
-    // Update state to Starting.
+    // Update state to Starting.  The parsed `-` prefix of `ExecStart=` is
+    // recorded here so both exit observers (`await_oneshot_exit()` for
+    // oneshot units and `monitor_service()` for long-running ones) treat a
+    // non-zero exit as a successful activation.
     {
         let mut reg = registry.lock();
         let inst = reg.entry(unit_name.clone()).or_default();
         inst.state = ServiceState::Starting;
         inst.invocation_id = invocation_id.clone();
+        inst.ignore_failure = parsed.flags.ignore_failure;
     }
 
     // Build the Command plus the exact argv that will be handed to exec (the

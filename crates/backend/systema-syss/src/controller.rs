@@ -145,10 +145,24 @@ impl ServiceController {
                     status.code(),
                     status.success()
                 );
+                // `ExecStart=-`: the exit code is still recorded below, but
+                // a non-zero status counts as success for the unit.
+                let succeeded = {
+                    let reg = self.registry.lock();
+                    reg.get(unit_name)
+                        .map(|inst| inst.exit_succeeded(status.success()))
+                        .unwrap_or_else(|| status.success())
+                };
+                if !status.success() && succeeded {
+                    info!(
+                        "Service {}: ignoring non-zero exit code (ExecStart=- prefix)",
+                        unit_name
+                    );
+                }
                 let stay_active = cfg
                     .service
                     .as_ref()
-                    .map(|s| status.success() && s.remain_after_exit)
+                    .map(|s| succeeded && s.remain_after_exit)
                     .unwrap_or(false);
                 if stay_active {
                     info!(
@@ -164,7 +178,7 @@ impl ServiceController {
                         }
                     }
                 } else {
-                    let state = if status.success() {
+                    let state = if succeeded {
                         ServiceState::Dead
                     } else {
                         ServiceState::Failed
@@ -180,7 +194,7 @@ impl ServiceController {
                     }
                 }
                 self.publish_state(unit_name);
-                if !status.success() {
+                if !succeeded {
                     let message = sysa::l10n::fmt(
                         sysa::l10n::t_("oneshot service {unit_name} exited with code {code}"),
                         &[
@@ -779,6 +793,61 @@ mod tests {
         let reg = ctrl.registry.lock();
         let inst = reg.get("oneshot-test.service").expect("unit should exist");
         assert_eq!(inst.state, ServiceState::Failed);
+        assert_eq!(inst.last_exit_code, Some(1));
+    }
+
+    #[tokio::test]
+    async fn await_oneshot_exit_ignores_failure() {
+        // `ExecStart=-...`: a non-zero exit is recorded but does not fail the
+        // unit, so the start job completes successfully.
+        let child = tokio::process::Command::new("false")
+            .spawn()
+            .expect("failed to spawn false");
+        let ctrl = controller();
+        register_unit(&ctrl, "oneshot-test.service");
+        ctrl.registry
+            .lock()
+            .get_mut("oneshot-test.service")
+            .expect("unit should exist")
+            .ignore_failure = true;
+        let cfg = oneshot_cfg();
+        let result = ctrl
+            .await_oneshot_exit("oneshot-test.service", child.id().unwrap_or(0), child, &cfg)
+            .await;
+        assert!(
+            result.is_ok(),
+            "an ignored non-zero exit must not fail the job: {result:?}"
+        );
+        let reg = ctrl.registry.lock();
+        let inst = reg.get("oneshot-test.service").expect("unit should exist");
+        assert_eq!(inst.state, ServiceState::Dead);
+        assert_eq!(inst.last_exit_code, Some(1));
+    }
+
+    #[tokio::test]
+    async fn await_oneshot_exit_ignored_failure_remain_after_exit() {
+        // plymouth-read-write.service shape: Type=oneshot, RemainAfterExit=yes
+        // and `ExecStart=-...`; an ignored failure must still keep the unit
+        // active.
+        let mut cfg = oneshot_cfg();
+        cfg.service.as_mut().unwrap().remain_after_exit = true;
+        let child = tokio::process::Command::new("false")
+            .spawn()
+            .expect("failed to spawn false");
+        let ctrl = controller();
+        register_unit(&ctrl, "oneshot-test.service");
+        ctrl.registry
+            .lock()
+            .get_mut("oneshot-test.service")
+            .expect("unit should exist")
+            .ignore_failure = true;
+        let result = ctrl
+            .await_oneshot_exit("oneshot-test.service", child.id().unwrap_or(0), child, &cfg)
+            .await;
+        assert!(result.is_ok(), "ignored failure must succeed: {result:?}");
+        let reg = ctrl.registry.lock();
+        let inst = reg.get("oneshot-test.service").expect("unit should exist");
+        assert_eq!(inst.state, ServiceState::Running);
         assert_eq!(inst.last_exit_code, Some(1));
     }
 

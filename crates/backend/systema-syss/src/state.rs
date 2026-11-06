@@ -42,6 +42,11 @@ pub struct ServiceInstance {
     /// process exits successfully (oneshot style) instead of going
     /// inactive.
     pub remain_after_exit: bool,
+    /// `ExecStart=-...`: the main process's non-zero exit status is still
+    /// recorded in `last_exit_code`, but does not fail the unit.  Set from
+    /// the parsed `-` prefix on every activation, so a restart cannot
+    /// inherit a stale verdict.
+    pub ignore_failure: bool,
     /// Invocation ID (UUID v4) of the current activation, as provided by
     /// System A.  Cleared when the service exits or is stopped.
     pub invocation_id: Option<String>,
@@ -61,9 +66,18 @@ impl ServiceInstance {
             last_exit_code: None,
             timeout_stop_secs: None,
             remain_after_exit: false,
+            ignore_failure: false,
             invocation_id: None,
             cgroup_path: None,
         }
+    }
+
+    /// Whether a main-process exit with the given success flag counts as a
+    /// successful activation.  `ExecStart=-` turns a non-zero exit into a
+    /// success for the unit, exactly like systemd's `ignore_failure`
+    /// handling in `service_sigchld_event()`.
+    pub fn exit_succeeded(&self, status_success: bool) -> bool {
+        status_success || self.ignore_failure
     }
 }
 
@@ -78,4 +92,26 @@ pub type ServiceRegistry = Arc<Mutex<HashMap<String, ServiceInstance>>>;
 
 pub fn new_registry() -> ServiceRegistry {
     Arc::new(Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_exit_always_succeeds() {
+        assert!(ServiceInstance::new().exit_succeeded(true));
+    }
+
+    #[test]
+    fn non_zero_exit_fails_by_default() {
+        assert!(!ServiceInstance::new().exit_succeeded(false));
+    }
+
+    #[test]
+    fn ignored_failure_turns_non_zero_exit_into_success() {
+        let mut inst = ServiceInstance::new();
+        inst.ignore_failure = true;
+        assert!(inst.exit_succeeded(false));
+    }
 }
