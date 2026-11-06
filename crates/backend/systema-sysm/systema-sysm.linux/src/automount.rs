@@ -37,52 +37,121 @@ const fn iowr(ty: u8, nr: u8, size: usize) -> libc::Ioctl {
     ioc(IOC_READ | IOC_WRITE, ty, nr, size)
 }
 
+/// `struct autofs_dev_ioctl` (`<linux/auto_dev-ioctl.h>`): a 16-byte header
+/// followed by an 8-byte command parameter union, 24 bytes in total.
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy)]
 struct AutofsDevIoctl {
     ver_major: u32,
     ver_minor: u32,
+    /// Total data size: this struct plus an optional trailing path.
     size: u32,
+    /// Autofs mount fd the command applies to (`-1` where not applicable).
     ioctlfd: i32,
-    arg1: u64,
-    arg2: u64,
+    /// Parameter union, split into native-endian words.  Every command
+    /// except `TIMEOUT` reads a `u32` from the low word; `TIMEOUT` reads
+    /// the whole `u64`.
+    arg_lo: u32,
+    arg_hi: u32,
 }
 
-const AUTOFS_TYPE: u8 = 0xf9;
-const AUTOFS_DEV_IOCTL_SIZEOF: usize = std::mem::size_of::<AutofsDevIoctl>();
-const AUTOFS_DEV_IOCTL_VERSION: libc::Ioctl = iowr(AUTOFS_TYPE, 0x00, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_OPENMOUNT: libc::Ioctl = iowr(AUTOFS_TYPE, 0x04, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_PROTOVER: libc::Ioctl = iowr(AUTOFS_TYPE, 0x01, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_PROTOSUBVER: libc::Ioctl = iowr(AUTOFS_TYPE, 0x02, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_TIMEOUT: libc::Ioctl = iowr(AUTOFS_TYPE, 0x0b, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_EXPIRE: libc::Ioctl = iowr(AUTOFS_TYPE, 0x0c, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_ACK: libc::Ioctl = iowr(AUTOFS_TYPE, 0x09, AUTOFS_DEV_IOCTL_SIZEOF);
-const AUTOFS_DEV_IOCTL_FAIL: libc::Ioctl = iowr(AUTOFS_TYPE, 0x0d, AUTOFS_DEV_IOCTL_SIZEOF);
+impl AutofsDevIoctl {
+    /// Kernel `init_autofs_dev_ioctl()`: the interface version the kernel
+    /// validates, the size of the struct itself, and no command fd.
+    fn new() -> Self {
+        Self {
+            ver_major: AUTOFS_DEV_IOCTL_VERSION_MAJOR,
+            ver_minor: AUTOFS_DEV_IOCTL_VERSION_MINOR,
+            size: AUTOFS_DEV_IOCTL_SIZEOF as u32,
+            ioctlfd: -1,
+            arg_lo: 0,
+            arg_hi: 0,
+        }
+    }
 
-const AUTOFS_DEV_IOCTL_OPENMOUNT_SIZEOF: usize = AUTOFS_DEV_IOCTL_SIZEOF + 256; // room for path
+    fn with_ioctl_fd(ioctl_fd: i32) -> Self {
+        Self {
+            ioctlfd: ioctl_fd,
+            ..Self::new()
+        }
+    }
+
+    fn arg_u32(&self) -> u32 {
+        self.arg_lo
+    }
+
+    fn set_arg_u32(&mut self, value: u32) {
+        self.arg_lo = value;
+        self.arg_hi = 0;
+    }
+
+    /// Store a `u64` union member (`args_timeout.timeout`) in native byte
+    /// order so the kernel reads it correctly on either endianness.
+    fn set_arg_u64(&mut self, value: u64) {
+        let bytes = value.to_ne_bytes();
+        self.arg_lo = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        self.arg_hi = u32::from_ne_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    }
+}
+
+/// Type byte shared by the autofs misc-device commands (`AUTOFS_IOCTL`).
+const AUTOFS_IOCTL: u8 = 0x93;
+
+const AUTOFS_DEV_IOCTL_SIZEOF: usize = std::mem::size_of::<AutofsDevIoctl>();
+/// The kernel validates the command's encoded size against its own struct;
+/// pin the ABI so a layout drift cannot silently turn every ioctl into
+/// `-ENOTTY`/`-EINVAL` again.
+const _: () = assert!(AUTOFS_DEV_IOCTL_SIZEOF == 24);
+
+/// `AUTOFS_DEV_IOCTL_VERSION_MAJOR`/`_MINOR`: the kernel rejects any
+/// request whose major differs and any newer minor.
+const AUTOFS_DEV_IOCTL_VERSION_MAJOR: u32 = 1;
+const AUTOFS_DEV_IOCTL_VERSION_MINOR: u32 = 1;
+
+// Command numbers from `<linux/auto_dev-ioctl.h>` (`*_CMD` enum).
+const AUTOFS_DEV_IOCTL_VERSION: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x71, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_PROTOVER: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x72, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_PROTOSUBVER: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x73, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_OPENMOUNT: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x74, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_READY: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x76, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_FAIL: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x77, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_TIMEOUT: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x7a, AUTOFS_DEV_IOCTL_SIZEOF);
+const AUTOFS_DEV_IOCTL_EXPIRE: libc::Ioctl = iowr(AUTOFS_IOCTL, 0x7c, AUTOFS_DEV_IOCTL_SIZEOF);
 
 // ---------------------------------------------------------------------------
 // Autofs v5 packet
 // ---------------------------------------------------------------------------
 
+/// `struct autofs_v5_packet` (`<linux/auto_fs.h>`): packet header, request
+/// token and the identity of the requesting process.
 #[repr(C)]
 #[derive(Debug, Clone)]
 struct AutofsPacket {
-    // autofs_v5_packet_union header + v5_packet body
-    // From linux/auto_fs.h: struct autofs_v5_packet has: wait_queue_token, len, name, dev_t, pid, uid, gid, ...
-    proto: u32,
+    /// `struct autofs_packet_hdr`.
+    proto_version: u32,
     type_: u32,
     wait_queue_token: u32,
-    len: u32,
-    name: [u8; 256],
-    dev_t: u64,
-    pid: u32,
+    dev: u32,
+    ino: u64,
     uid: u32,
     gid: u32,
+    pid: u32,
+    tgid: u32,
+    len: u32,
+    /// `NAME_MAX + 1`.
+    name: [u8; 256],
 }
 
-const AUTOFS_PTYPE_MISSING_DIRECT: u32 = 5;
-const AUTOFS_PTYPE_EXPIRE_DIRECT: u32 = 2;
+// Pin the field offsets the kernel writes; the struct's tail padding is
+// ABI-dependent (304 bytes on LP64, 300 on ILP32), the offsets are not.
+const _: () = assert!(std::mem::offset_of!(AutofsPacket, wait_queue_token) == 8);
+const _: () = assert!(std::mem::offset_of!(AutofsPacket, len) == 40);
+const _: () = assert!(std::mem::offset_of!(AutofsPacket, name) == 44);
+
+/// Direct-mount request and expire packet types
+/// (`autofs_ptype_missing_direct` / `autofs_ptype_expire_direct`).
+const AUTOFS_PTYPE_MOUNT_DIRECT: u32 = 5;
+const AUTOFS_PTYPE_EXPIRE_DIRECT: u32 = 6;
 
 // ---------------------------------------------------------------------------
 // Dev autofs fd (global, shared across all automount instances)
@@ -90,6 +159,11 @@ const AUTOFS_PTYPE_EXPIRE_DIRECT: u32 = 2;
 
 static mut DEV_AUTOFS_FD: i32 = -1;
 
+/// Open `/dev/autofs` once and cache the fd.
+///
+/// Must run only after the kernel has an autofs user: a modular autofs
+/// registers the misc device when `mount(2)` asks for the filesystem, and
+/// `open(2)` never triggers module autoloading on its own.
 fn ensure_dev_autofs() -> Result<i32> {
     unsafe {
         if DEV_AUTOFS_FD >= 0 {
@@ -101,13 +175,17 @@ fn ensure_dev_autofs() -> Result<i32> {
             libc::O_RDONLY | libc::O_CLOEXEC,
         );
         if fd < 0 {
-            anyhow::bail!(sysa::l10n::t_(
-                "Failed to open /dev/autofs (is autofs kernel module loaded?)"
+            let err = std::io::Error::last_os_error();
+            anyhow::bail!(sysa::l10n::fmt(
+                sysa::l10n::t_(
+                    "Failed to open /dev/autofs (is the autofs kernel module loaded?): {e}"
+                ),
+                &[("e", &err.to_string())]
             ));
         }
 
-        // Verify version
-        let mut params: AutofsDevIoctl = Default::default();
+        // Verify version.
+        let mut params = AutofsDevIoctl::new();
         let rc = libc::ioctl(
             fd,
             AUTOFS_DEV_IOCTL_VERSION,
@@ -133,20 +211,20 @@ fn ensure_dev_autofs() -> Result<i32> {
 // ---------------------------------------------------------------------------
 
 fn open_ioctl_fd(dev_autofs_fd: i32, where_: &str, dev_id: u64) -> Result<i32> {
-    let _path_c = CString::new(where_).unwrap();
     let path_bytes = where_.as_bytes();
-
-    // Allocate buffer: struct + path + null
-    let buf_size = AUTOFS_DEV_IOCTL_OPENMOUNT_SIZEOF;
+    // `param.size` covers the struct plus the NUL-terminated path; the
+    // kernel copies exactly that many bytes from user space.
+    let buf_size = AUTOFS_DEV_IOCTL_SIZEOF + path_bytes.len() + 1;
     let mut buf = vec![0u8; buf_size];
 
     unsafe {
         let params = &mut *(buf.as_mut_ptr() as *mut AutofsDevIoctl);
-        params.size = (AUTOFS_DEV_IOCTL_SIZEOF + path_bytes.len() + 1) as u32;
-        params.ioctlfd = -1;
-        params.arg1 = dev_id; // openmount.devid = dev_id
+        *params = AutofsDevIoctl::new();
+        params.size = buf_size as u32;
+        // `args_openmount.devid`: the encoded device number of the mount.
+        params.set_arg_u32(dev_id as u32);
 
-        // Copy path after the struct
+        // Copy path after the struct.
         let path_ptr = buf.as_mut_ptr().add(AUTOFS_DEV_IOCTL_SIZEOF);
         std::ptr::copy_nonoverlapping(path_bytes.as_ptr(), path_ptr, path_bytes.len());
         *path_ptr.add(path_bytes.len()) = 0;
@@ -176,10 +254,7 @@ fn open_ioctl_fd(dev_autofs_fd: i32, where_: &str, dev_id: u64) -> Result<i32> {
 
 fn check_autofs_protocol(dev_autofs_fd: i32, ioctl_fd: i32) -> Result<()> {
     unsafe {
-        let mut params: AutofsDevIoctl = AutofsDevIoctl {
-            ioctlfd: ioctl_fd,
-            ..Default::default()
-        };
+        let mut params = AutofsDevIoctl::with_ioctl_fd(ioctl_fd);
 
         let rc = libc::ioctl(
             dev_autofs_fd,
@@ -189,12 +264,9 @@ fn check_autofs_protocol(dev_autofs_fd: i32, ioctl_fd: i32) -> Result<()> {
         if rc < 0 {
             anyhow::bail!(sysa::l10n::t_("AUTOFS_DEV_IOCTL_PROTOVER failed"));
         }
-        let major = params.arg1 as u32;
+        let major = params.arg_u32();
 
-        let mut params2: AutofsDevIoctl = AutofsDevIoctl {
-            ioctlfd: ioctl_fd,
-            ..Default::default()
-        };
+        let mut params2 = AutofsDevIoctl::with_ioctl_fd(ioctl_fd);
         let rc = libc::ioctl(
             dev_autofs_fd,
             AUTOFS_DEV_IOCTL_PROTOSUBVER,
@@ -203,7 +275,7 @@ fn check_autofs_protocol(dev_autofs_fd: i32, ioctl_fd: i32) -> Result<()> {
         if rc < 0 {
             anyhow::bail!(sysa::l10n::t_("AUTOFS_DEV_IOCTL_PROTOSUBVER failed"));
         }
-        let minor = params2.arg1 as u32;
+        let minor = params2.arg_u32();
 
         debug!("Autofs protocol version {}.{}", major, minor);
     }
@@ -212,11 +284,8 @@ fn check_autofs_protocol(dev_autofs_fd: i32, ioctl_fd: i32) -> Result<()> {
 
 fn set_autofs_timeout(dev_autofs_fd: i32, ioctl_fd: i32, timeout_sec: u32) -> Result<()> {
     unsafe {
-        let mut params: AutofsDevIoctl = AutofsDevIoctl {
-            ioctlfd: ioctl_fd,
-            arg1: timeout_sec as u64,
-            ..Default::default()
-        };
+        let mut params = AutofsDevIoctl::with_ioctl_fd(ioctl_fd);
+        params.set_arg_u64(timeout_sec as u64);
 
         let rc = libc::ioctl(
             dev_autofs_fd,
@@ -233,13 +302,10 @@ fn set_autofs_timeout(dev_autofs_fd: i32, ioctl_fd: i32, timeout_sec: u32) -> Re
 fn send_ack_or_fail(ioctl_fd: i32, token: u32, success: bool) -> Result<()> {
     let dev_autofs_fd = ensure_dev_autofs()?;
     unsafe {
-        let mut params: AutofsDevIoctl = AutofsDevIoctl {
-            ioctlfd: ioctl_fd,
-            arg1: token as u64,
-            ..Default::default()
-        };
+        let mut params = AutofsDevIoctl::with_ioctl_fd(ioctl_fd);
+        params.set_arg_u32(token);
         let cmd = if success {
-            AUTOFS_DEV_IOCTL_ACK
+            AUTOFS_DEV_IOCTL_READY
         } else {
             AUTOFS_DEV_IOCTL_FAIL
         };
@@ -354,8 +420,6 @@ pub async fn automount_enter_waiting(
         libc::fcntl(pipe_fds[0], libc::F_SETFL, flags | libc::O_NONBLOCK);
     }
 
-    let dev_autofs_fd = ensure_dev_autofs()?;
-
     // Create mount point directory.
     let dir_mode = if config.directory_mode.is_empty() {
         "0755"
@@ -371,13 +435,30 @@ pub async fn automount_enter_waiting(
         .arg(&where_)
         .status();
 
-    // Mount autofs.
+    // Mount autofs.  Besides creating the sentinel this is what makes the
+    // kernel issue `request_module("fs-autofs")`, loading a modular autofs
+    // and thereby materialising `/dev/autofs`.
     mount_autofs(pipe_fds[1], &where_, &config.extra_options)?;
 
     // Close write end in parent.
     unsafe {
         libc::close(pipe_fds[1]);
     }
+
+    // Resolve the autofs device only now: before the mount above, a modular
+    // autofs has no device node yet and the open fails with ENOENT.  A
+    // failure here leaves the sentinel without a daemon, so tear it down
+    // before reporting.
+    let dev_autofs_fd = match ensure_dev_autofs() {
+        Ok(fd) => fd,
+        Err(e) => {
+            let _ = unmount_autofs(&where_);
+            unsafe {
+                libc::close(pipe_fds[0]);
+            }
+            return Err(e);
+        }
+    };
 
     // Stat the mount point to get dev_id.
     let dev_id = {
@@ -552,99 +633,104 @@ async fn automount_pipe_reader(
         }
     };
 
-    loop {
+    'reader: loop {
         let mut guard = match async_fd.readable().await {
             Ok(g) => g,
-            Err(_) => break,
+            Err(_) => break 'reader,
         };
 
-        let mut packet: AutofsPacket = unsafe { std::mem::zeroed() };
-        let packet_size = std::mem::size_of::<AutofsPacket>();
-        let n = unsafe {
-            libc::read(
-                read_fd,
-                &mut packet as *mut _ as *mut libc::c_void,
-                packet_size,
-            )
-        };
+        // Drain everything the kernel queued for this readiness edge, then
+        // clear the readiness flag.  Dropping the guard does NOT clear it
+        // (tokio's `AsyncFdReadyGuard` has no `Drop` and `retain_ready()` is
+        // a no-op), so without `clear_ready()` the loop would spin on
+        // `WouldBlock` and starve the single-threaded runtime.
+        'packets: loop {
+            let mut packet: AutofsPacket = unsafe { std::mem::zeroed() };
+            let packet_size = std::mem::size_of::<AutofsPacket>();
+            let n = unsafe {
+                libc::read(
+                    read_fd,
+                    &mut packet as *mut _ as *mut libc::c_void,
+                    packet_size,
+                )
+            };
 
-        guard.retain_ready();
-        drop(guard);
-
-        if n <= 0 {
-            if n < 0 {
-                let err = std::io::Error::last_os_error();
-                if err.kind() == std::io::ErrorKind::WouldBlock {
-                    continue;
+            if n <= 0 {
+                if n < 0 {
+                    let err = std::io::Error::last_os_error();
+                    if err.kind() == std::io::ErrorKind::WouldBlock {
+                        guard.clear_ready();
+                        break 'packets;
+                    }
+                    warn!("Error reading automount pipe for {}: {}", unit_name, err);
                 }
-                warn!("Error reading automount pipe for {}: {}", unit_name, err);
+                // EOF or error — pipe closed
+                break 'reader;
             }
-            // EOF or error — pipe closed
-            break;
-        }
 
-        let event = match packet.type_ {
-            AUTOFS_PTYPE_MISSING_DIRECT => {
-                debug!(
-                    "Automount mount request for {} (token={})",
-                    unit_name, packet.wait_queue_token
-                );
-                {
-                    let mut reg = registry.lock();
-                    if let Some(inst) = reg.get_mut(&unit_name) {
-                        inst.state = AutomountState::Running;
+            let event = match packet.type_ {
+                AUTOFS_PTYPE_MOUNT_DIRECT => {
+                    debug!(
+                        "Automount mount request for {} (token={})",
+                        unit_name, packet.wait_queue_token
+                    );
+                    {
+                        let mut reg = registry.lock();
+                        if let Some(inst) = reg.get_mut(&unit_name) {
+                            inst.state = AutomountState::Running;
+                        }
+                    }
+                    TriggerEvent::MountRequest {
+                        token: packet.wait_queue_token,
                     }
                 }
-                TriggerEvent::MountRequest {
-                    token: packet.wait_queue_token,
+                AUTOFS_PTYPE_EXPIRE_DIRECT => {
+                    debug!(
+                        "Automount expire request for {} (token={})",
+                        unit_name, packet.wait_queue_token
+                    );
+                    TriggerEvent::ExpireRequest {
+                        token: packet.wait_queue_token,
+                    }
                 }
-            }
-            AUTOFS_PTYPE_EXPIRE_DIRECT => {
-                debug!(
-                    "Automount expire request for {} (token={})",
-                    unit_name, packet.wait_queue_token
-                );
-                TriggerEvent::ExpireRequest {
-                    token: packet.wait_queue_token,
+                other => {
+                    warn!("Unknown automount packet type {} for {}", other, unit_name);
+                    continue 'packets;
                 }
-            }
-            other => {
-                warn!("Unknown automount packet type {} for {}", other, unit_name);
-                continue;
-            }
-        };
+            };
 
-        // Snapshot the data the trigger handler needs.  The ioctl fd is
-        // taken under the lock and may be gone if the instance is being
-        // torn down concurrently — in that case drop the trigger entirely.
-        let (mount_config, ioctl_fd, where_) = {
-            let reg = registry.lock();
-            match reg.get(&unit_name) {
-                Some(inst) => {
-                    let fd = match inst.ioctl_fd {
-                        Some(fd) => fd,
-                        None => {
-                            warn!(
-                                "Dropping {} trigger: no ioctl fd (teardown in progress?)",
-                                unit_name
-                            );
-                            continue;
-                        }
-                    };
-                    (inst.mount_config.clone(), fd, inst.where_.clone())
+            // Snapshot the data the trigger handler needs.  The ioctl fd is
+            // taken under the lock and may be gone if the instance is being
+            // torn down concurrently — in that case drop the trigger entirely.
+            let (mount_config, ioctl_fd, where_) = {
+                let reg = registry.lock();
+                match reg.get(&unit_name) {
+                    Some(inst) => {
+                        let fd = match inst.ioctl_fd {
+                            Some(fd) => fd,
+                            None => {
+                                warn!(
+                                    "Dropping {} trigger: no ioctl fd (teardown in progress?)",
+                                    unit_name
+                                );
+                                continue 'packets;
+                            }
+                        };
+                        (inst.mount_config.clone(), fd, inst.where_.clone())
+                    }
+                    None => continue 'packets,
                 }
-                None => continue,
-            }
-        };
+            };
 
-        let _ = trigger_tx.send(AutomountTrigger {
-            unit_name: unit_name.clone(),
-            mount_unit: companion_mount_unit(&unit_name),
-            where_,
-            mount_config,
-            ioctl_fd,
-            event,
-        });
+            let _ = trigger_tx.send(AutomountTrigger {
+                unit_name: unit_name.clone(),
+                mount_unit: companion_mount_unit(&unit_name),
+                where_,
+                mount_config,
+                ioctl_fd,
+                event,
+            });
+        }
     }
 
     // Pipe closed — mark as dead, but only if this reader's fd is still the
@@ -678,10 +764,7 @@ fn do_expire(registry: AutomountRegistry, unit_name: &str) -> Result<()> {
     let dev_autofs_fd = ensure_dev_autofs()?;
 
     unsafe {
-        let mut params: AutofsDevIoctl = AutofsDevIoctl {
-            ioctlfd: ioctl_fd,
-            ..Default::default()
-        };
+        let mut params = AutofsDevIoctl::with_ioctl_fd(ioctl_fd);
 
         // Try expire in a loop until EAGAIN.  When the kernel selects an
         // object to expire it sends an expire_direct packet on the pipe and

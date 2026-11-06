@@ -1099,8 +1099,8 @@ msgid   "Mount point {mount_point} remained mounted after umount."
 msgstr  "Mount point {mount_point} remained mounted after umount."
 #
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/automount.rs, line: 101
-msgid   "Failed to open /dev/autofs (is autofs kernel module loaded?)"
-msgstr  "Failed to open /dev/autofs (is autofs kernel module loaded?)"
+msgid   "Failed to open /dev/autofs (is the autofs kernel module loaded?): {e}"
+msgstr  "Failed to open /dev/autofs (is the autofs kernel module loaded?): {e}"
 #
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/automount.rs, line: 114
 msgid   "AUTOFS_DEV_IOCTL_VERSION failed"
