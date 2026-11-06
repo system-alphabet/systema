@@ -31,7 +31,11 @@ use sysa::proto::{
 pub fn encode_unit_path(name: &str) -> String {
     let mut out = String::new();
     for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
+        // systemd's `sd_bus_path_encode` keeps only ASCII alphanumerics and
+        // escapes everything else (_ included) as `_XX`.  Escaping only a
+        // subset makes `status` (which computes the path client-side) look up
+        // a different object than the one registered here.
+        if ch.is_ascii_alphanumeric() {
             out.push(ch);
         } else {
             out.push_str(&format!("_{:02x}", ch as u32));
@@ -1514,6 +1518,12 @@ mod tests {
         assert_eq!(encode_unit_path("-.slice"), "_2d_2eslice");
         assert_eq!(encode_unit_path("dev-sda1.mount"), "dev_2dsda1_2emount");
         assert_eq!(encode_unit_path("plain"), "plain");
+        // `_` is escaped like any other non-alphanumeric character, matching
+        // `sd_bus_path_encode` (systemctl computes this path client-side).
+        assert_eq!(
+            encode_unit_path("proc-sys-fs-binfmt_misc.automount"),
+            "proc_2dsys_2dfs_2dbinfmt_5fmisc_2eautomount"
+        );
     }
 
     #[test]
