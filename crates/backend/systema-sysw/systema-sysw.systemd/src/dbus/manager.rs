@@ -241,6 +241,20 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                             }
                         }
                     }
+                    "(sasb)" => {
+                        // `ExecStart=` (and friends) — one command element per
+                        // struct: (argv[0], argv, ignore_failure).
+                        if let zvariant::Value::Structure(st) = item {
+                            match exec_of_struct(st) {
+                                Some(ex) => push_prop_entry(
+                                    out,
+                                    key,
+                                    sysa::proto::manager_value::Value::Exec(ex),
+                                ),
+                                None => debug!("dropping {key} entry: malformed exec struct"),
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -258,6 +272,55 @@ fn push_prop_entry(
         key: key.to_string(),
         value: Some(sysa::proto::ManagerValue { value: Some(value) }),
     });
+}
+
+/// Decode one `(s a(s) b)` exec struct (the element type of `ExecStart=`).
+fn exec_of_struct(st: &zvariant::Structure) -> Option<sysa::proto::Exec> {
+    let fields = st.fields();
+    if fields.len() != 3 {
+        return None;
+    }
+    let path = fields.first().and_then(|f| match f {
+        zvariant::Value::Str(s) => Some(s.to_string()),
+        _ => None,
+    })?;
+    let args = match fields.get(1) {
+        Some(zvariant::Value::Array(arr)) => {
+            let mut args = Vec::with_capacity(arr.inner().len());
+            for a in arr.inner() {
+                match a {
+                    zvariant::Value::Str(s) => args.push(s.to_string()),
+                    _ => return None,
+                }
+            }
+            args
+        }
+        _ => return None,
+    };
+    let ignore_failure = match fields.get(2) {
+        Some(zvariant::Value::Bool(b)) => *b,
+        _ => return None,
+    };
+    Some(sysa::proto::Exec {
+        path,
+        args,
+        ignore_failure,
+    })
+}
+
+/// Convert the aux unit list of a `StartTransientUnit` call into proto
+/// payloads.  systemd-run ships the companion `NAME.service` of a transient
+/// timer/path here with its own property bag (`ExecStart=` et al).
+fn aux_units_to_proto(
+    aux: Vec<(String, Vec<(String, OwnedValue)>)>,
+) -> Vec<sysa::proto::TransientUnit> {
+    aux.iter()
+        .filter(|(name, _)| !name.is_empty())
+        .map(|(name, props)| sysa::proto::TransientUnit {
+            name: name.clone(),
+            properties: properties_to_bag(props),
+        })
+        .collect()
 }
 
 fn push_scalar_entry(out: &mut Vec<TransientProperty>, key: &str, value: zvariant::Value) {
@@ -669,6 +732,7 @@ impl ManagerInterface {
             properties: properties_to_bag(&properties),
             sender_pid: sender_pid.unwrap_or(0),
             mode: mode.to_string(),
+            aux_units: aux_units_to_proto(_aux_units),
         };
         let reply: EnqueueJobResult = self
             .ctx
@@ -698,6 +762,7 @@ impl ManagerInterface {
         parse_job_mode(mode)?;
         let sender_pid = self.sender_pid(header).await;
         let mut jobs = Vec::with_capacity(units.len());
+        let aux_units = aux_units_to_proto(_aux_units);
         for (name, properties) in units {
             let req = TransientUnitRequest {
                 name: name.clone(),
@@ -705,6 +770,7 @@ impl ManagerInterface {
                 properties: properties_to_bag(&properties),
                 sender_pid: sender_pid.unwrap_or(0),
                 mode: mode.to_string(),
+                aux_units: aux_units.clone(),
             };
             let reply: EnqueueJobResult = self
                 .ctx

@@ -43,7 +43,10 @@ use crate::snapshot;
 use crate::state::{
     next_request_id, next_task_id, AllocatorHandle, AllocatorState, DesiredState, JobKind, JobMode,
 };
-use crate::unit::types::{ResourceControl, UnitFile, UnitKind};
+use crate::unit::types::{
+    ExecCommand, PathSection, ResourceControl, ServiceSection, ServiceType, TimerSection, UnitFile,
+    UnitKind,
+};
 
 /// Bind the control socket and serve control sessions indefinitely.
 pub async fn run_control_listener(allocator: AllocatorHandle) -> Result<()> {
@@ -693,9 +696,37 @@ async fn manager_start_transient(allocator: &AllocatorHandle, env: Envelope) -> 
         sender_pid,
     );
 
+    // Aux/paired units systemd-run ships in the same call — most importantly
+    // the companion `NAME.service` of a transient `NAME.timer`/`NAME.path`
+    // (its `ExecStart=` body).  They must exist in the table before the
+    // trigger unit can ever fire.
+    let mut aux_ufs = Vec::with_capacity(req.aux_units.len());
+    for aux in &req.aux_units {
+        if aux.name.is_empty() {
+            continue;
+        }
+        let aux_name = allocator.read().resolve_unit_name(&aux.name);
+        let aux_props = aux
+            .properties
+            .as_ref()
+            .map(|bag| bag.properties.as_slice())
+            .unwrap_or(&[]);
+        aux_ufs.push(transient_unit_from_properties(
+            &aux_name, aux_props, sender_pid,
+        ));
+    }
+
     {
         let mut state = allocator.write();
-        if !state.units.contains_key(&canonical) {
+        // A repeat call for an existing unit refreshes it when the unit is
+        // transient (systemd allows property re-assignment on transient
+        // units); a real, file-backed definition always wins.
+        let main_upsertable = state
+            .units
+            .get(&canonical)
+            .map(|u| u.transient)
+            .unwrap_or(true);
+        if main_upsertable {
             if uf.kind == UnitKind::Scope {
                 let entry = state.unit_states.entry(canonical.clone()).or_default();
                 entry.pids = uf
@@ -713,6 +744,13 @@ async fn manager_start_transient(allocator: &AllocatorHandle, env: Envelope) -> 
                     .unwrap_or_default();
             }
             state.units.insert(canonical.clone(), uf);
+        }
+        for aux_uf in aux_ufs {
+            let name = aux_uf.name.clone();
+            let upsertable = state.units.get(&name).map(|u| u.transient).unwrap_or(true);
+            if upsertable {
+                state.units.insert(name, aux_uf);
+            }
         }
     }
 
@@ -1578,7 +1616,156 @@ fn transient_unit_from_properties(
         uf.scope = Some(scope);
     }
 
+    // Kind-specific property mapping.  systemd-run sends each unit's own
+    // directives in the bag (the command list in `ExecStart=`, timer delays
+    // as usec counts, path specs as string lists), so a transient call can
+    // fully materialize a service, timer or path unit without a file.
+    if uf.kind == UnitKind::Service {
+        uf.service = Some(transient_service_from_props(props));
+    }
+    if uf.kind == UnitKind::Timer {
+        uf.timer = Some(transient_timer_from_props(props));
+    }
+    if uf.kind == UnitKind::Path {
+        uf.path = Some(transient_path_from_props(props));
+    }
+
     uf
+}
+
+// ---------------------------------------------------------------------------
+// Transient service/timer/path assembly
+// ---------------------------------------------------------------------------
+
+/// Assemble the `[Service]` section of a transient service from its
+/// `systemd-run` property bag.
+fn transient_service_from_props(props: &[TransientProperty]) -> ServiceSection {
+    let commands = prop_execs(props, "ExecStart");
+    // `Type=exec` is systemd's default for transient services; it behaves
+    // like `simple`, which is this model's spelling of the same semantics.
+    let raw_type = prop_string(props, "Type").unwrap_or_else(|| "exec".to_string());
+    let service_type = match raw_type.as_str() {
+        "exec" => ServiceType::Simple,
+        other => ServiceType::from(other),
+    };
+    ServiceSection {
+        service_type,
+        exec_start: commands,
+        exec_stop: Vec::new(),
+        exec_reload: Vec::new(),
+        working_directory: prop_string(props, "WorkingDirectory").unwrap_or_default(),
+        user: prop_string(props, "User").unwrap_or_default(),
+        group: prop_string(props, "Group").unwrap_or_default(),
+        environment: prop_strings(props, "Environment"),
+        standard_output: prop_string(props, "StandardOutput").unwrap_or_default(),
+        standard_error: prop_string(props, "StandardError").unwrap_or_default(),
+        remain_after_exit: prop_bool(props, "RemainAfterExit").unwrap_or(false),
+        ..Default::default()
+    }
+}
+
+/// Assemble the `[Timer]` section of a transient timer from its
+/// `systemd-run` property bag.  On the bus, `On*Sec=`/`AccuracySec=`/
+/// `RandomizedDelaySec=` carry microsecond counts; this model stores them
+/// in whole seconds (ceil, so a sub-second entry still fires on time).
+fn transient_timer_from_props(props: &[TransientProperty]) -> TimerSection {
+    let usecs =
+        |key: &str| -> Option<u32> { prop_u64(props, key).map(|v| secs_from_usecs_value(v)) };
+    TimerSection {
+        on_active_sec: usecs("OnActiveSec"),
+        on_boot_sec: usecs("OnBootSec"),
+        on_startup_sec: usecs("OnStartupSec"),
+        on_unit_active_sec: usecs("OnUnitActiveSec"),
+        on_unit_inactive_sec: usecs("OnUnitInactiveSec"),
+        on_calendar: prop_strings(props, "OnCalendar"),
+        accuracy_sec: prop_u64(props, "AccuracySec")
+            .map(|v| secs_from_usecs_value(v))
+            .unwrap_or_default(),
+        randomized_delay_sec: prop_u64(props, "RandomizedDelaySec")
+            .map(|v| secs_from_usecs_value(v))
+            .unwrap_or_default(),
+        unit: prop_string(props, "Unit").unwrap_or_default(),
+        persistent: prop_bool(props, "Persistent").unwrap_or(false),
+        wake_system: prop_bool(props, "WakeSystem").unwrap_or(false),
+        remain_after_elapse: prop_bool(props, "RemainAfterElapse").unwrap_or(false),
+    }
+}
+
+/// Assemble the `[Path]` section of a transient path unit from its
+/// `systemd-run` property bag (`--path-property=PathModified=/…`).
+fn transient_path_from_props(props: &[TransientProperty]) -> PathSection {
+    PathSection {
+        path_exists: prop_strings(props, "PathExists"),
+        path_exists_glob: prop_strings(props, "PathExistsGlob"),
+        path_changed: prop_strings(props, "PathChanged"),
+        path_modified: prop_strings(props, "PathModified"),
+        directory_not_empty: prop_strings(props, "DirectoryNotEmpty"),
+        unit: prop_string(props, "Unit").unwrap_or_default(),
+        make_directory: prop_bool(props, "MakeDirectory").unwrap_or(false),
+        directory_mode: prop_string(props, "DirectoryMode").unwrap_or_default(),
+        ..Default::default()
+    }
+}
+
+/// Microseconds (the D-Bus encoding of timer settings) → whole seconds.
+/// Ceils so a nonzero sub-second entry keeps firing within a second.
+fn secs_from_usecs_value(u: u64) -> u32 {
+    ((u + 999_999) / 1_000_000).min(u32::MAX as u64) as u32
+}
+
+fn prop_u64(props: &[TransientProperty], key: &str) -> Option<u64> {
+    props
+        .iter()
+        .find(|p| p.key == key)
+        .and_then(|p| p.value.as_ref())
+        .and_then(|v| v.value.as_ref())
+        .and_then(|v| match v {
+            Value::U(u) => Some(*u),
+            Value::I(i) if *i >= 0 => Some(*i as u64),
+            _ => None,
+        })
+}
+
+/// Decode the `ExecStart=` command list into this model's `ExecCommand`s.
+fn prop_execs(props: &[TransientProperty], key: &str) -> Vec<ExecCommand> {
+    props
+        .iter()
+        .filter(|p| p.key == key)
+        .filter_map(|p| p.value.as_ref())
+        .filter_map(|v| v.value.as_ref())
+        .filter_map(|v| match v {
+            Value::Exec(ex) => Some(ExecCommand {
+                raw: exec_raw_join(&ex.path, &ex.args),
+                program: ex.path.clone(),
+                args: ex.args.iter().skip(1).cloned().collect(),
+                ignore_failure: ex.ignore_failure,
+                privileged: false,
+                no_env_lookup: false,
+                no_kill_on_stop: false,
+                no_new_privileges: false,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Render an argv (from systemd's exec struct) back into a command line as
+/// `ExecStart=` would spell it, so the existing runtime split resolves the
+/// same argv.  Arguments containing whitespace/quotes get POSIX single-quote
+/// escaping.
+fn exec_raw_join(program: &str, args: &[String]) -> String {
+    let mut out = String::from(program);
+    for arg in args.iter().skip(1) {
+        if arg.chars().any(|c| {
+            c.is_whitespace() || c == '\'' || c == '"' || c == '\\' || c == '#' || c == ';'
+        }) {
+            out.push_str(&format!(" '{}'", arg.replace('\'', "'\\''")));
+        } else {
+            out.push(' ');
+            out.push_str(arg);
+        }
+    }
+    out
 }
 
 /// The processes a transient scope wraps, as `PIDs=` / `PIDFDs=` list them.
@@ -1670,7 +1857,7 @@ mod tests {
     };
 
     use crate::state::{StagingArea, WorkerEntry};
-    use crate::unit::types::UnitSection;
+    use crate::unit::types::UnitSection as LocalUnitSection;
     use systema_sysf::ir::{UnitIR, UnitType};
 
     fn test_allocator() -> AllocatorHandle {
@@ -1678,7 +1865,7 @@ mod tests {
         {
             let mut state = state.write();
             let mut foo = UnitFile::new("foo.service");
-            foo.unit = UnitSection::default();
+            foo.unit = LocalUnitSection::default();
             state.units.insert("foo.service".to_string(), foo);
             state.units.insert(
                 "default.target".to_string(),
@@ -1689,13 +1876,17 @@ mod tests {
     }
 
     fn register_service_worker(state: &AllocatorHandle) {
+        register_worker(state, "system-s-1", &["service"]);
+    }
+
+    fn register_worker(state: &AllocatorHandle, id: &str, unit_types: &[&str]) {
         let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let mut state = state.write();
         state.workers.insert(
-            "system-s-1".to_string(),
+            id.to_string(),
             WorkerEntry {
-                worker_id: "system-s-1".to_string(),
-                unit_types: vec!["service".to_string()],
+                worker_id: id.to_string(),
+                unit_types: unit_types.iter().map(|t| t.to_string()).collect(),
                 supports_unit_define: false,
                 supports_resource_prepare: false,
                 ready: false,
@@ -2359,5 +2550,227 @@ mod tests {
         let uf = transient_unit_from_properties("session-c3.scope", &[], Some(888));
         let scope = uf.scope.expect("scope section");
         assert!(scope.pids.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Transient service/timer/path assembly (systemd-run property bags)
+    // -------------------------------------------------------------------
+
+    fn sv_prop(key: &str, value: Value) -> TransientProperty {
+        TransientProperty {
+            key: key.to_string(),
+            value: Some(ManagerValue { value: Some(value) }),
+        }
+    }
+
+    fn bag(items: &[(&str, Value)]) -> Vec<TransientProperty> {
+        items.iter().map(|(k, v)| sv_prop(k, v.clone())).collect()
+    }
+
+    fn exec_prop(key: &str, path: &str, args: &[&str]) -> TransientProperty {
+        sv_prop(
+            key,
+            Value::Exec(sysa::proto::Exec {
+                path: path.to_string(),
+                args: args.iter().map(|s| s.to_string()).collect(),
+                ignore_failure: false,
+            }),
+        )
+    }
+
+    #[test]
+    fn transient_timer_seconds_ceil_from_usecs() {
+        // Timer delays arrive on the bus as microsecond counts (type `t`);
+        // this model stores whole seconds and must ceil, else a sub-second
+        // entry (ceil → 1) would never fire at all.
+        let uf = transient_unit_from_properties(
+            "t.timer",
+            &bag(&[
+                ("OnActiveSec", Value::U(90_000_000)),
+                ("OnBootSec", Value::U(1_500_000)),
+                ("AccuracySec", Value::U(60_000_000)),
+                ("OnCalendar", Value::S("*-*-* 02:00:00".to_string())),
+                ("Persistent", Value::B(true)),
+                ("RemainAfterElapse", Value::B(false)),
+            ]),
+            None,
+        );
+        assert_eq!(uf.kind, UnitKind::Timer);
+        let t = uf.timer.expect("timer section");
+        assert_eq!(t.on_active_sec, Some(90));
+        assert_eq!(t.on_boot_sec, Some(2));
+        assert_eq!(t.accuracy_sec, 60);
+        assert_eq!(t.on_calendar, vec!["*-*-* 02:00:00".to_string()]);
+        assert!(t.persistent);
+        assert!(!t.remain_after_elapse);
+    }
+
+    #[test]
+    fn transient_path_specs_from_lists() {
+        // `systemd-run --unit=watch --path-property=PathModified=/etc/os-version`
+        // sends the path's directives as string-list properties.
+        let uf = transient_unit_from_properties(
+            "watch.path",
+            &bag(&[
+                ("PathModified", Value::S("/etc/os-version".to_string())),
+                ("PathExists", Value::S("/run/a".to_string())),
+                ("MakeDirectory", Value::B(true)),
+                ("DirectoryMode", Value::S("0o755".to_string())),
+            ]),
+            None,
+        );
+        assert_eq!(uf.kind, UnitKind::Path);
+        let p = uf.path.expect("path section");
+        assert_eq!(p.path_modified, vec!["/etc/os-version".to_string()]);
+        assert_eq!(p.path_exists, vec!["/run/a".to_string()]);
+        assert!(p.make_directory);
+        assert_eq!(p.directory_mode, "0o755");
+    }
+
+    #[test]
+    fn transient_service_exec_and_type() {
+        // `Type=exec` is systemd's transient-service default and behaves like
+        // `simple`, which is this model's spelling of the same semantics.
+        let mut props = bag(&[
+            ("Type", Value::S("exec".to_string())),
+            ("RemainAfterExit", Value::B(true)),
+            ("WorkingDirectory", Value::S("/var/tmp".to_string())),
+        ]);
+        props.push(exec_prop("ExecStart", "/bin/true", &["/bin/true"]));
+        let uf = transient_unit_from_properties("x.service", &props, None);
+        assert_eq!(uf.kind, UnitKind::Service);
+        let s = uf.service.expect("service section");
+        assert_eq!(s.service_type, ServiceType::Simple);
+        assert!(s.remain_after_exit);
+        assert_eq!(s.working_directory, "/var/tmp");
+    }
+
+    #[test]
+    fn transient_service_exec_commands_decode() {
+        // One a(sasb) element per command: argv[0] repeats the program path
+        // (systemd-run convention); the model's `args` starts after it and
+        // `raw` rejoins the argv so the runtime split resolves the same.
+        let props = vec![
+            exec_prop(
+                "ExecStart",
+                "/usr/bin/sh",
+                &["/usr/bin/sh", "-c", "echo hi"],
+            ),
+            sv_prop("Type", Value::S("oneshot".to_string())),
+        ];
+        let uf = transient_unit_from_properties("oneshot.service", &props, None);
+        let s = uf.service.expect("service section");
+        assert_eq!(s.service_type, ServiceType::Oneshot);
+        assert_eq!(s.exec_start.len(), 1);
+        let cmd = &s.exec_start[0];
+        assert_eq!(cmd.program, "/usr/bin/sh");
+        assert_eq!(cmd.args, vec!["-c".to_string(), "echo hi".to_string()]);
+        assert_eq!(cmd.raw, "/usr/bin/sh -c 'echo hi'");
+    }
+
+    #[test]
+    fn exec_raw_join_quotes_special_args() {
+        // Arguments containing whitespace/quotes must survive the roundtrip
+        // through the raw string and the runtime word split.  The argv passed
+        // here includes argv[0] (systemd's exec-struct convention), which is
+        // skipped except for the program itself.
+        for (args, raw) in [
+            (
+                &["/bin/x".to_string(), "a b".to_string()][..],
+                "/bin/x 'a b'",
+            ),
+            (
+                &["/bin/x".to_string(), "it's".to_string()][..],
+                "/bin/x 'it'\\''s'",
+            ),
+        ] {
+            assert_eq!(exec_raw_join("/bin/x", args), raw);
+        }
+    }
+
+    #[tokio::test]
+    async fn start_transient_installs_timer_and_aux_service() {
+        // systemd-run timer mode ships the companion NAME.service in the
+        // aux list of the same StartTransientUnit call; both units must end
+        // up in the table, the timer with its [Timer] section filled.
+        let allocator = test_allocator();
+        register_worker(&allocator, "system-s-1", &["timer", "service"]);
+        let props = bag(&[
+            ("OnActiveSec", Value::U(10_000_000)),
+            ("Description", Value::S("run periodically".to_string())),
+        ]);
+        let aux = sysa::proto::TransientUnit {
+            name: "auxtick.service".to_string(),
+            properties: Some(sysa::proto::PropertyBag {
+                properties: vec![
+                    exec_prop("ExecStart", "/bin/true", &["/bin/true"]),
+                    sv_prop("Description", Value::S("tick body".to_string())),
+                ],
+            }),
+        };
+        let req = TransientUnitRequest {
+            name: "audittimer.timer".to_string(),
+            kind: String::new(),
+            properties: Some(sysa::proto::PropertyBag { properties: props }),
+            sender_pid: 0,
+            mode: "fail".to_string(),
+            aux_units: vec![aux],
+        };
+        let _ = call(
+            "manager.start_transient",
+            req_env("manager.start_transient", req),
+            allocator.clone(),
+        )
+        .await;
+        let state = allocator.read();
+        let timer = state.units.get("audittimer.timer").expect("timer unit");
+        assert!(timer.transient);
+        assert_eq!(timer.kind, UnitKind::Timer);
+        let t = timer.timer.as_ref().expect("timer section");
+        assert_eq!(t.on_active_sec, Some(10));
+        let service = state.units.get("auxtick.service").expect("aux service");
+        assert!(service.transient);
+        assert_eq!(service.kind, UnitKind::Service);
+        let s = service.service.as_ref().expect("service section");
+        assert_eq!(s.exec_start[0].program, "/bin/true");
+        assert_eq!(service.unit.description, "tick body");
+    }
+
+    #[tokio::test]
+    async fn start_transient_refreshes_transient_but_not_file_backed() {
+        // A repeat transient call refreshes an existing transient unit;
+        // a real, file-backed definition always wins over the transient.
+        let allocator = test_allocator();
+        register_service_worker(&allocator);
+        {
+            let mut state = allocator.write();
+            let mut file_backed = UnitFile::new("real.service");
+            file_backed.unit = LocalUnitSection::default();
+            state.units.insert("real.service".to_string(), file_backed);
+        }
+        for description in ["first", "second"] {
+            let req = TransientUnitRequest {
+                name: "again.service".to_string(),
+                kind: String::new(),
+                properties: Some(sysa::proto::PropertyBag {
+                    properties: vec![sv_prop("Description", Value::S(description.to_string()))],
+                }),
+                sender_pid: 0,
+                mode: "fail".to_string(),
+                aux_units: Vec::new(),
+            };
+            // The upsert happens before the job enqueue; only tolerate the
+            // enqueue error ("job already exists" for the repeat call) since
+            // the unit-table assertions below are what this test is about.
+            let env = req_env("manager.start_transient", req);
+            let _ = dispatch(&allocator, env).await;
+        }
+        let state = allocator.read();
+        let transient = state.units.get("again.service").unwrap();
+        assert!(transient.transient);
+        assert_eq!(transient.unit.description, "second");
+        let real = state.units.get("real.service").unwrap();
+        assert!(!real.transient);
+        assert!(real.unit.description.is_empty());
     }
 }

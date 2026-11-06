@@ -180,7 +180,22 @@ message ManagerValue {
         uint64 u = 3;
         sint64 i = 4;
         string list_item = 5;
+        // One `ExecStart=` command element (D-Bus type `a(sasb)`).
+        Exec exec = 6;
     }
+}
+
+// One command of a transient unit's `ExecStart=` (`a(sasb)` element):
+// the argv array, plus the ignore-failure flag (`-` prefix / `|`-less
+// fourth element of systemd's exec struct).
+message Exec {
+    // argv[0]: the executable path as sent by the caller.
+    string path = 1;
+    // The full argv as sent; args[0] repeats `path` (systemd-run
+    // convention).  argv[0] is the canonical first argument.
+    repeated string args = 2;
+    // Fourth element of systemd's exec struct: failures are ignored.
+    bool ignore_failure = 3;
 }
 
 // One named property in a property bag.
@@ -223,11 +238,22 @@ message TransientUnitRequest {
     // Unit kind, e.g. "service" or "scope".
     string kind = 2;
     // Property bag (Description=, Requires=, Wants=, After=, Slice=,
-    // DefaultDependencies=, PIDs= for scopes, ...).
+    // DefaultDependencies=, PIDs= for scopes, timer/path directives for
+    // transient .timer/.path units, ExecStart= for services, ...).
     PropertyBag properties = 3;
     // Sender PID used to back an empty/zero `PIDs=` on scope units.
     uint32 sender_pid = 4;
     string mode = 5;
+    // Aux/paired transient units carried by the same `StartTransientUnit`
+    // call (systemd-run sends the companion `NAME.service` of a transient
+    // `NAME.timer`/`NAME.path` in its aux list).
+    repeated TransientUnit aux_units = 6;
+}
+
+// One aux unit of a transient `StartTransientUnit` call.
+message TransientUnit {
+    string name = 1;
+    PropertyBag properties = 2;
 }
 
 // `manager.set_unit_properties` — apply runtime resource-control properties
