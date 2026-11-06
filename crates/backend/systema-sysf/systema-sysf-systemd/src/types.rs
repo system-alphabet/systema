@@ -7,6 +7,8 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
+use systema_sysf::ir::Condition;
+
 /// The kind of a systemd unit.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnitKind {
@@ -478,6 +480,19 @@ pub struct UnitSection {
     pub assert_first_boot: Vec<String>,
     /// `AssertMemory=`
     pub assert_memory: Vec<String>,
+
+    // ------------------------------------------------------------------
+    // Evaluated form used by System A
+    // ------------------------------------------------------------------
+    /// `Condition*=` directives in evaluation order, with `|`/`!` flags.
+    ///
+    /// System A fills this from the Finder-reported IR
+    /// (`apply_ir_patch`) and evaluates it right before a start job runs.
+    /// The raw per-kind vectors above are the parser's staging form; the
+    /// scheduler consumes this list.
+    pub conditions: Vec<Condition>,
+    /// `Assert*=` directives in evaluation order, with `|`/`!` flags.
+    pub asserts: Vec<Condition>,
 }
 
 impl Default for UnitSection {
@@ -531,6 +546,8 @@ impl Default for UnitSection {
             assert_host: Vec::new(),
             assert_first_boot: Vec::new(),
             assert_memory: Vec::new(),
+            conditions: Vec::new(),
+            asserts: Vec::new(),
         }
     }
 }

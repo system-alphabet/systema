@@ -992,6 +992,15 @@ fn apply_ir_patch(ir: &UnitIR, uf: &mut UnitFile) {
         uf.install.alias.extend(ir.aliases.iter().cloned());
     }
 
+    // Conditions/asserts are parsed by the Finder and must reach the
+    // scheduler, which evaluates them right before a start job runs.
+    if let Some(conditions) = &ir.conditions {
+        uf.unit.conditions.clone_from(conditions);
+    }
+    if let Some(asserts) = &ir.asserts {
+        uf.unit.asserts.clone_from(asserts);
+    }
+
     // Copy section configs when provided.
     if let Some(svc) = &ir.service {
         uf.service = Some(service_config_to_section(svc));
@@ -1486,6 +1495,35 @@ mod tests {
             .expect("service section");
         assert_eq!(service.service_type, crate::unit::types::ServiceType::Dbus);
         assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
+    }
+
+    #[test]
+    fn commit_propagates_conditions_and_asserts() {
+        let mut state = AllocatorState::new();
+        let mut ir = UnitIR {
+            id: "tpm2-abrmd.service".to_string(),
+            unit_type: Some(UnitType::Service),
+            ..Default::default()
+        };
+        ir.conditions = Some(vec![
+            systema_sysf::ir::Condition::from_value("PathExists", "|/dev/tpm0"),
+            systema_sysf::ir::Condition::from_value("PathExists", "|/dev/tcm0"),
+        ]);
+        ir.asserts = Some(vec![systema_sysf::ir::Condition::from_value(
+            "PathExists",
+            "/",
+        )]);
+        stage(&mut state, 7, vec![ir]);
+
+        state.commit_staging(7, "test").unwrap();
+
+        let unit = &state.units["tpm2-abrmd.service"];
+        assert_eq!(unit.unit.conditions.len(), 2, "conditions survive commit");
+        assert!(
+            unit.unit.conditions.iter().all(|c| c.trigger),
+            "the | trigger flag is preserved"
+        );
+        assert_eq!(unit.unit.asserts.len(), 1, "asserts survive commit");
     }
 
     #[test]

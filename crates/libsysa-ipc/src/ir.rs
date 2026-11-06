@@ -474,21 +474,33 @@ pub struct Condition {
     pub value: String,
     /// Whether the check is negated (prefixed with `!`).
     pub negate: bool,
+    /// Whether this is a *triggering* condition (prefixed with `|`).
+    ///
+    /// systemd semantics: when at least one triggering condition exists, the
+    /// unit starts if any triggering condition applies **and** every regular
+    /// condition applies.  Without triggering conditions all conditions must
+    /// apply (logical AND).
+    #[serde(default)]
+    pub trigger: bool,
 }
 
 impl Condition {
-    /// Build a condition from a raw directive value, honoring the `!`
-    /// negation prefix.
+    /// Build a condition from a raw directive value, honoring the `|` trigger
+    /// and `!` negation prefixes (`|` comes first, then `!`, per systemd.unit).
     pub fn from_value(kind: &str, value: &str) -> Self {
-        let (negate, val) = if let Some(rest) = value.strip_prefix('!') {
-            (true, rest.to_string())
-        } else {
-            (false, value.to_string())
+        let (trigger, rest) = match value.strip_prefix('|') {
+            Some(rest) => (true, rest),
+            None => (false, value),
+        };
+        let (negate, val) = match rest.strip_prefix('!') {
+            Some(rest) => (true, rest.to_string()),
+            None => (false, rest.to_string()),
         };
         Condition {
             kind: kind.to_string(),
             value: val,
             negate,
+            trigger,
         }
     }
 }

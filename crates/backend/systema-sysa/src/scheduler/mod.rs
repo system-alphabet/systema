@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use prost::Message;
+use sysa::ir::Condition;
 use sysa::l10n;
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
@@ -1015,35 +1016,10 @@ async fn enqueue_job_tracked(
         }
     }
 
-    // --- Condition checks: skip start (not failure) if conditions not met ---
+    // Condition checks run at dispatch time for every Start/Restart step (see
+    // the dispatch loop below): systemd evaluates them when the job actually
+    // runs, after the units ordered before it have completed.
     let ignore_deps = mode == JobMode::IgnoreDependencies || mode == JobMode::IgnoreRequirements;
-    if matches!(kind, JobKind::Start | JobKind::Restart) && !ignore_deps {
-        let conditions_met = {
-            let state = allocator.read();
-            state
-                .units
-                .get(unit_name)
-                .map(|u| check_conditions(&u.unit))
-                .unwrap_or(true)
-        };
-        if !conditions_met {
-            info!(
-                "Conditions not met for {}; skipping start (unit stays inactive)",
-                unit_name
-            );
-            let job_id = next_job_id();
-            let mut state = allocator.write();
-            if let Some(ref tx) = state.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id,
-                    unit_name: unit_name.to_string(),
-                    result: JobResultKind::Skipped,
-                });
-            }
-            emit_job_new(&mut state, job_id, unit_name, kind);
-            return Ok(job_id);
-        }
-    }
 
     // --- Assert checks: fail start if asserts not met ---
     if matches!(kind, JobKind::Start | JobKind::Restart) && !ignore_deps {
@@ -1381,6 +1357,46 @@ async fn enqueue_job_tracked(
                 let (mark_tx, mark_rx) = tokio::sync::watch::channel(true);
                 drop(mark_tx);
                 step_marks.insert(name.clone(), mark_rx);
+                continue;
+            }
+        }
+
+        // --- Condition check at dispatch time ---
+        // systemd evaluates `Condition*=` when the job actually runs
+        // (`unit_test_condition()` in `unit_start()`), so a condition that
+        // depends on an earlier unit (e.g. a device node created during
+        // sysinit) sees the finished state.  An unmet condition skips only
+        // this unit: it is neither started nor failed, and dependents
+        // waiting on this step treat it as satisfied.
+        if matches!(step_kind, JobKind::Start | JobKind::Restart) && !ignore_deps {
+            let conditions_met = {
+                let state = allocator.read();
+                state
+                    .units
+                    .get(name.as_str())
+                    .map(|u| check_conditions(&u.unit))
+                    .unwrap_or(true)
+            };
+            if !conditions_met {
+                info!(
+                    "Conditions not met for {}; skipping start (unit stays inactive)",
+                    name
+                );
+                let (mark_tx, mark_rx) = tokio::sync::watch::channel(true);
+                drop(mark_tx);
+                step_marks.insert(name.clone(), mark_rx);
+                if is_root {
+                    let mut state = allocator.write();
+                    if let Some(ref tx) = state.job_completion_tx {
+                        let _ = tx.send(JobCompletion {
+                            job_id,
+                            unit_name: name.clone(),
+                            result: JobResultKind::Skipped,
+                        });
+                    }
+                    emit_job_new(&mut state, job_id, name, step_kind);
+                    return Ok(job_id);
+                }
                 continue;
             }
         }
@@ -2725,127 +2741,163 @@ async fn execute_start_limit_action(
 // Condition and assert evaluation
 // ---------------------------------------------------------------------------
 
-/// Evaluate all `Condition*=` directives in `unit`.
+/// Evaluate all `Condition*=` directives of `unit`.
 ///
-/// Returns `true` if all conditions pass (unit should start), `false` if any
-/// condition fails (unit should be silently skipped, staying inactive).
-///
-/// A value prefixed with `!` negates the check.
+/// Returns `true` if the conditions pass (unit should start), `false` if the
+/// start must be silently skipped (unit stays inactive).
 fn check_conditions(unit: &UnitSection) -> bool {
-    for path in &unit.condition_path_exists {
-        if !eval_condition_bool(path, |p| std::path::Path::new(p).exists()) {
-            return false;
-        }
-    }
-    for glob in &unit.condition_path_exists_glob {
-        if !eval_condition_bool(glob, path_glob_matches) {
-            return false;
-        }
-    }
-    for path in &unit.condition_file_not_empty {
-        if !eval_condition_bool(path, |p| {
-            std::fs::metadata(p).map(|m| m.len() != 0).unwrap_or(false)
-        }) {
-            return false;
-        }
-    }
-    for path in &unit.condition_directory_not_empty {
-        if !eval_condition_bool(path, |p| {
-            std::fs::read_dir(p)
-                .map(|mut d| d.next().is_some())
-                .unwrap_or(false)
-        }) {
-            return false;
-        }
-    }
-    for spec in &unit.condition_ac_power {
-        let (negate, value) = strip_negate(spec);
-        let on_ac = is_on_ac_power();
-        let want = matches!(value.to_lowercase().as_str(), "yes" | "true" | "1");
-        if (on_ac != want) != negate {
-            return false;
-        }
-    }
-    // ConditionFirstBoot=yes passes only on the first boot.
-    for spec in &unit.condition_first_boot {
-        let (negate, value) = strip_negate(spec);
-        let first = sysa::firstboot::is_first_boot();
-        let want = matches!(value.to_lowercase().as_str(), "yes" | "true" | "1");
-        if (first != want) != negate {
-            return false;
-        }
-    }
-    for spec in &unit.condition_kernel_module_loaded {
-        let (negate, module) = strip_negate(spec);
-        let loaded = std::path::Path::new("/sys/module").join(module).exists();
-        if loaded == negate {
-            return false;
-        }
-    }
-    true
+    eval_condition_list(&unit.conditions)
 }
 
-/// Evaluate all `Assert*=` directives in `unit`.
+/// Evaluate all `Assert*=` directives of `unit`.
 ///
-/// Returns `true` if all asserts pass, `false` if any assert fails (unit
-/// should be marked failed, not just skipped).
+/// Returns `true` if the asserts pass, `false` if the start job must fail.
 fn check_asserts(unit: &UnitSection) -> bool {
-    for path in &unit.assert_path_exists {
-        if !eval_condition_bool(path, |p| std::path::Path::new(p).exists()) {
-            return false;
-        }
-    }
-    for glob in &unit.assert_path_exists_glob {
-        if !eval_condition_bool(glob, path_glob_matches) {
-            return false;
-        }
-    }
-    for path in &unit.assert_file_not_empty {
-        if !eval_condition_bool(path, |p| {
-            std::fs::metadata(p).map(|m| m.len() != 0).unwrap_or(false)
-        }) {
-            return false;
-        }
-    }
-    for path in &unit.assert_directory_not_empty {
-        if !eval_condition_bool(path, |p| {
-            std::fs::read_dir(p)
-                .map(|mut d| d.next().is_some())
-                .unwrap_or(false)
-        }) {
-            return false;
-        }
-    }
-    for spec in &unit.assert_first_boot {
-        let (negate, value) = strip_negate(spec);
-        let first = sysa::firstboot::is_first_boot();
-        let want = matches!(value.to_lowercase().as_str(), "yes" | "true" | "1");
-        if (first != want) != negate {
-            return false;
-        }
-    }
-    true
+    eval_condition_list(&unit.asserts)
 }
 
-/// Strip a leading `!` from `spec`, returning `(negated, rest)`.
-fn strip_negate(spec: &str) -> (bool, &str) {
-    if let Some(rest) = spec.strip_prefix('!') {
-        (true, rest)
-    } else {
-        (false, spec)
-    }
-}
-
-/// Evaluate a single condition string against a predicate.
+/// Evaluate a `Condition*=`/`Assert*=` list with systemd semantics.
 ///
-/// If the spec starts with `!`, the result is negated.
-fn eval_condition_bool<F: Fn(&str) -> bool>(spec: &str, pred: F) -> bool {
-    let (negate, path) = strip_negate(spec);
-    let result = pred(path);
-    if negate {
-        !result
+/// Regular conditions are ANDed.  A directive prefixed with `|` is a
+/// *triggering* condition: when at least one trigger exists, the unit also
+/// needs any one of the triggers to apply.  `!` negates the check result.
+///
+/// Kinds this build cannot evaluate are treated as met, so a missing
+/// implementation never silently disables a unit (they are logged at debug).
+fn eval_condition_list(conditions: &[Condition]) -> bool {
+    let mut has_trigger = false;
+    let mut trigger_met = false;
+    let mut regular_met = true;
+
+    for cond in conditions {
+        let Some(result) = eval_condition(cond) else {
+            continue;
+        };
+        let met = if cond.negate { !result } else { result };
+        if cond.trigger {
+            has_trigger = true;
+            trigger_met |= met;
+        } else {
+            regular_met &= met;
+        }
+    }
+
+    regular_met && (!has_trigger || trigger_met)
+}
+
+/// Evaluate one directive.  `None` means "not evaluated by this build".
+fn eval_condition(cond: &Condition) -> Option<bool> {
+    let value = cond.value.as_str();
+    match cond.kind.as_str() {
+        "PathExists" => Some(std::path::Path::new(value).exists()),
+        "PathExistsGlob" => Some(path_glob_matches(value)),
+        "FileNotEmpty" => Some(
+            std::fs::metadata(value)
+                .map(|m| m.is_file() && m.len() != 0)
+                .unwrap_or(false),
+        ),
+        "DirectoryNotEmpty" => Some(
+            std::fs::read_dir(value)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false),
+        ),
+        "KernelModuleLoaded" => Some(std::path::Path::new("/sys/module").join(value).exists()),
+        "KernelCommandLine" => Some(kernel_command_line_matches(value)),
+        "ACPower" => Some(is_on_ac_power() == yes_value(value)),
+        "FirstBoot" => Some(sysa::firstboot::is_first_boot() == yes_value(value)),
+        "Security" => security_enabled(value),
+        "Host" => Some(host_matches(value)),
+        "Environment" => Some(environment_matches(value)),
+        other => {
+            debug!("Condition/Assert kind '{other}' is not evaluated; treated as met");
+            None
+        }
+    }
+}
+
+/// Interpret a systemd boolean-ish condition value.
+fn yes_value(value: &str) -> bool {
+    matches!(value.to_ascii_lowercase().as_str(), "yes" | "true" | "1")
+}
+
+/// `ConditionSecurity=`: whether the named security technology is enabled.
+///
+/// Only technologies observable on this system are implemented; unrecognised
+/// values return `None` (treated as met).
+fn security_enabled(value: &str) -> Option<bool> {
+    let enabled = match value {
+        "selinux" => std::path::Path::new("/sys/fs/selinux").exists(),
+        "apparmor" => std::fs::read_to_string("/sys/module/apparmor/parameters/enabled")
+            .map(|s| s.trim().eq_ignore_ascii_case("Y"))
+            .unwrap_or(false),
+        "tomoyo" => std::path::Path::new("/sys/kernel/security/tomoyo").exists(),
+        "smack" => std::path::Path::new("/sys/fs/smackfs").exists(),
+        "ima" => std::path::Path::new("/sys/kernel/security/ima").exists(),
+        "uefi-secureboot" => secure_boot_enabled(),
+        "tpm2" => tpm2_supported(),
+        // A measured UKI implies the firmware measured the boot chain into a
+        // TPM, so both are required.
+        "measured-uki" => std::path::Path::new("/sys/firmware/efi").exists() && tpm2_supported(),
+        other => {
+            debug!("ConditionSecurity={other} is not evaluated; treated as met");
+            return None;
+        }
+    };
+    Some(enabled)
+}
+
+/// UEFI Secure Boot: the `SecureBoot` EFI variable holds `1` in byte 4.
+fn secure_boot_enabled() -> bool {
+    const SECURE_BOOT: &str =
+        "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+    std::fs::read(SECURE_BOOT)
+        .ok()
+        .and_then(|bytes| bytes.get(4).copied())
+        .map(|value| value == 1)
+        .unwrap_or(false)
+}
+
+/// Whether a TPM2 device is visible to the kernel (ACPI table, event log, or
+/// the tpm class device).
+fn tpm2_supported() -> bool {
+    std::path::Path::new("/sys/firmware/acpi/tables/TPM2").exists()
+        || std::path::Path::new("/sys/kernel/security/tpm0/binary_bios_measurements").exists()
+        || std::path::Path::new("/sys/class/tpm/tpm0").exists()
+}
+
+/// `ConditionKernelCommandLine=`: a word, or `word=value`, on `/proc/cmdline`.
+fn kernel_command_line_matches(value: &str) -> bool {
+    let Ok(cmdline) = std::fs::read_to_string("/proc/cmdline") else {
+        return false;
+    };
+    if let Some((key, expected)) = value.split_once('=') {
+        cmdline
+            .split_whitespace()
+            .any(|token| token == format!("{key}={expected}"))
     } else {
-        result
+        cmdline
+            .split_whitespace()
+            .any(|token| token == value || token == format!("{value}="))
+    }
+}
+
+/// `ConditionHost=`: matches the hostname or the machine ID.
+fn host_matches(value: &str) -> bool {
+    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .or_else(|_| std::fs::read_to_string("/etc/hostname"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let machine_id = std::fs::read_to_string(sysa::paths::instance().machine_id_file)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    value == hostname || value == machine_id
+}
+
+/// `ConditionEnvironment=`: variable set, or set to the given value.
+fn environment_matches(value: &str) -> bool {
+    match value.split_once('=') {
+        Some((key, expected)) => std::env::var(key).map(|v| v == expected).unwrap_or(false),
+        None => std::env::var_os(value).is_some(),
     }
 }
 
@@ -3339,32 +3391,6 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_negate_normal() {
-        let (neg, val) = strip_negate("/some/path");
-        assert!(!neg);
-        assert_eq!(val, "/some/path");
-    }
-
-    #[test]
-    fn test_strip_negate_negated() {
-        let (neg, val) = strip_negate("!/some/path");
-        assert!(neg);
-        assert_eq!(val, "/some/path");
-    }
-
-    #[test]
-    fn test_eval_condition_bool_normal() {
-        assert!(eval_condition_bool("true", |_| true));
-        assert!(!eval_condition_bool("false", |_| false));
-    }
-
-    #[test]
-    fn test_eval_condition_bool_negated() {
-        assert!(eval_condition_bool("!false", |_| false));
-        assert!(!eval_condition_bool("!true", |_| true));
-    }
-
-    #[test]
     fn test_simple_glob_match_exact() {
         assert!(simple_glob_match("foo.service", "foo.service"));
         assert!(!simple_glob_match("foo.service", "bar.service"));
@@ -3394,6 +3420,10 @@ mod tests {
     // check_conditions / check_asserts tests
     // =========================================================================
 
+    fn condition(kind: &str, value: &str) -> Condition {
+        Condition::from_value(kind, value)
+    }
+
     #[test]
     fn test_check_conditions_no_conditions() {
         let unit = UnitSection::default();
@@ -3410,8 +3440,8 @@ mod tests {
     fn test_check_conditions_kernel_module_loaded_existing() {
         let mut unit = UnitSection::default();
         // "configfs" is loaded on virtually all Linux systems.
-        unit.condition_kernel_module_loaded
-            .push("configfs".to_string());
+        unit.conditions
+            .push(condition("KernelModuleLoaded", "configfs"));
         assert!(check_conditions(&unit));
     }
 
@@ -3419,8 +3449,8 @@ mod tests {
     fn test_check_conditions_kernel_module_loaded_negated_existing() {
         let mut unit = UnitSection::default();
         // "!configfs" → skip if loaded → should fail.
-        unit.condition_kernel_module_loaded
-            .push("!configfs".to_string());
+        unit.conditions
+            .push(condition("KernelModuleLoaded", "!configfs"));
         assert!(!check_conditions(&unit));
     }
 
@@ -3428,8 +3458,10 @@ mod tests {
     fn test_check_conditions_kernel_module_loaded_missing() {
         let mut unit = UnitSection::default();
         // A module name that definitely does not exist.
-        unit.condition_kernel_module_loaded
-            .push("definitely_not_a_module_abc123".to_string());
+        unit.conditions.push(condition(
+            "KernelModuleLoaded",
+            "definitely_not_a_module_abc123",
+        ));
         assert!(!check_conditions(&unit));
     }
 
@@ -3437,9 +3469,45 @@ mod tests {
     fn test_check_conditions_kernel_module_loaded_negated_missing() {
         let mut unit = UnitSection::default();
         // "!<nonexistent>" → skip if loaded → module not loaded → should pass.
-        unit.condition_kernel_module_loaded
-            .push("!definitely_not_a_module_abc123".to_string());
+        unit.conditions.push(condition(
+            "KernelModuleLoaded",
+            "!definitely_not_a_module_abc123",
+        ));
         assert!(check_conditions(&unit));
+    }
+
+    #[test]
+    fn test_check_conditions_trigger_requires_one_to_apply() {
+        let mut unit = UnitSection::default();
+        unit.conditions
+            .push(condition("PathExists", "|/definitely/missing-a"));
+        unit.conditions
+            .push(condition("PathExists", "|/definitely/missing-b"));
+        assert!(
+            !check_conditions(&unit),
+            "no triggering condition met → unit skipped"
+        );
+
+        let mut unit = UnitSection::default();
+        unit.conditions.push(condition("PathExists", "|/"));
+        unit.conditions
+            .push(condition("PathExists", "|/definitely/missing-b"));
+        assert!(
+            check_conditions(&unit),
+            "one triggering condition met → unit starts"
+        );
+    }
+
+    #[test]
+    fn test_check_conditions_trigger_still_ands_regular_conditions() {
+        let mut unit = UnitSection::default();
+        unit.conditions.push(condition("PathExists", "|/"));
+        unit.conditions
+            .push(condition("PathExists", "/definitely/missing"));
+        assert!(
+            !check_conditions(&unit),
+            "regular conditions stay ANDed with an applied trigger"
+        );
     }
 
     // =========================================================================
@@ -4659,6 +4727,92 @@ mod tests {
             ("start", "halt.power")
         );
         assert!(!call.invocation_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn start_is_skipped_when_conditions_are_not_met() {
+        let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        {
+            let mut state = alloc.write();
+            let mut cond = make_unit("cond.service");
+            cond.unit.conditions = vec![
+                Condition::from_value("PathExists", "|/definitely/missing-a"),
+                Condition::from_value("PathExists", "|/definitely/missing-b"),
+            ];
+            state.units.insert("cond.service".into(), cond);
+            state.workers.insert(
+                "system-s-1".into(),
+                WorkerEntry {
+                    worker_id: "system-s-1".into(),
+                    unit_types: vec!["service".into()],
+                    supports_unit_define: false,
+                    supports_resource_prepare: false,
+                    ready: true,
+                    envelope_tx: tx,
+                },
+            );
+        }
+
+        enqueue_job(
+            alloc.clone(),
+            "cond.service",
+            JobKind::Start,
+            JobMode::Replace,
+        )
+        .await
+        .expect("enqueue skips, does not fail");
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), rx.recv())
+                .await
+                .is_err(),
+            "a unit with unmet conditions must not be dispatched"
+        );
+    }
+
+    #[tokio::test]
+    async fn dependency_with_unmet_condition_is_not_dispatched() {
+        let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        {
+            let mut state = alloc.write();
+            let mut target = make_unit("demo.target");
+            target.unit.wants.insert("cond.service".to_string());
+            let mut cond = make_unit("cond.service");
+            cond.unit.conditions = vec![Condition::from_value("PathExists", "/definitely/missing")];
+            state.units.insert("demo.target".into(), target);
+            state.units.insert("cond.service".into(), cond);
+            state.workers.insert(
+                "system-fake-1".into(),
+                WorkerEntry {
+                    worker_id: "system-fake-1".into(),
+                    unit_types: vec!["service".into(), "target".into()],
+                    supports_unit_define: false,
+                    supports_resource_prepare: false,
+                    ready: true,
+                    envelope_tx: tx,
+                },
+            );
+        }
+
+        enqueue_job(alloc, "demo.target", JobKind::Start, JobMode::Replace)
+            .await
+            .expect("target transaction starts");
+
+        // The target itself is dispatched; the unmet dependency is skipped.
+        let mut seen = Vec::new();
+        while let Ok(Some(frame)) =
+            tokio::time::timeout(Duration::from_millis(300), rx.recv()).await
+        {
+            let env = Envelope::decode(frame.as_ref()).unwrap();
+            let call = sysa::proto::MethodCall::decode(env.payload.as_slice()).unwrap();
+            seen.push(call.unit_name);
+        }
+        assert!(
+            !seen.is_empty() && seen.iter().all(|unit| unit == "demo.target"),
+            "only the target may be dispatched: {seen:?}"
+        );
     }
 
     #[test]

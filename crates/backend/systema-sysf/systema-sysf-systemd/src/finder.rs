@@ -437,11 +437,35 @@ fn convert_conditions(uf: &UnitFile) -> Vec<Condition> {
     for v in &uf.unit.condition_host {
         conds.push(Condition::from_value("Host", v));
     }
+    for v in &uf.unit.condition_kernel_command_line {
+        conds.push(Condition::from_value("KernelCommandLine", v));
+    }
     for v in &uf.unit.condition_virtualization {
         conds.push(Condition::from_value("Virtualization", v));
     }
+    for v in &uf.unit.condition_security {
+        conds.push(Condition::from_value("Security", v));
+    }
+    for v in &uf.unit.condition_capability {
+        conds.push(Condition::from_value("Capability", v));
+    }
     for v in &uf.unit.condition_ac_power {
         conds.push(Condition::from_value("ACPower", v));
+    }
+    for v in &uf.unit.condition_needs_update {
+        conds.push(Condition::from_value("NeedsUpdate", v));
+    }
+    for v in &uf.unit.condition_first_boot {
+        conds.push(Condition::from_value("FirstBoot", v));
+    }
+    for v in &uf.unit.condition_environment {
+        conds.push(Condition::from_value("Environment", v));
+    }
+    for v in &uf.unit.condition_memory {
+        conds.push(Condition::from_value("Memory", v));
+    }
+    for v in &uf.unit.condition_kernel_module_loaded {
+        conds.push(Condition::from_value("KernelModuleLoaded", v));
     }
     conds
 }
@@ -452,11 +476,23 @@ fn convert_asserts(uf: &UnitFile) -> Vec<Condition> {
     for v in &uf.unit.assert_path_exists {
         conds.push(Condition::from_value("PathExists", v));
     }
+    for v in &uf.unit.assert_path_exists_glob {
+        conds.push(Condition::from_value("PathExistsGlob", v));
+    }
     for v in &uf.unit.assert_file_not_empty {
         conds.push(Condition::from_value("FileNotEmpty", v));
     }
+    for v in &uf.unit.assert_directory_not_empty {
+        conds.push(Condition::from_value("DirectoryNotEmpty", v));
+    }
+    for v in &uf.unit.assert_host {
+        conds.push(Condition::from_value("Host", v));
+    }
     for v in &uf.unit.assert_first_boot {
         conds.push(Condition::from_value("FirstBoot", v));
+    }
+    for v in &uf.unit.assert_memory {
+        conds.push(Condition::from_value("Memory", v));
     }
     conds
 }
