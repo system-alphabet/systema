@@ -397,6 +397,48 @@ impl ServiceController {
         self.event_pub
             .publish_unit_state_update(vec![status], false);
     }
+
+    /// Run `ExecStartPost=` commands once the start phase completed (the main
+    /// process was spawned, or a oneshot's ExecStart exited successfully).
+    /// A failing command fails the start job and the unit, like systemd's
+    /// `service_enter_start_post()`.
+    async fn run_start_post(&self, unit_name: &str, cfg: &UnitConfig) -> Result<()> {
+        let has_commands = cfg
+            .service
+            .as_ref()
+            .is_some_and(|s| !s.exec_start_post.is_empty());
+        if !has_commands {
+            return Ok(());
+        }
+        if let Err(e) =
+            crate::process::run_exec_start_post(self.registry.clone(), unit_name, cfg).await
+        {
+            warn!("{}: ExecStartPost failed: {}", unit_name, e);
+            let timeout = cfg
+                .service
+                .as_ref()
+                .map(|s| s.timeout_stop_secs)
+                .unwrap_or(30);
+            let _ = stop_service(
+                self.registry.clone(),
+                unit_name,
+                timeout,
+                Some(&self.cgroup),
+            )
+            .await;
+            {
+                let mut reg = self.registry.lock();
+                if let Some(inst) = reg.get_mut(unit_name) {
+                    inst.state = ServiceState::Failed;
+                    inst.main_pid = None;
+                    inst.invocation_id = None;
+                }
+            }
+            self.publish_state(unit_name);
+            return Err(e);
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -471,6 +513,7 @@ impl UnitController for ServiceController {
             self.await_notify_start(unit_name, _pid, &cfg).await?;
             self.await_dbus_start(unit_name, _pid, &cfg).await?;
         }
+        self.run_start_post(unit_name, &cfg).await?;
         Ok(())
     }
 
@@ -557,6 +600,7 @@ impl UnitController for ServiceController {
             self.await_notify_start(unit_name, _pid, &cfg).await?;
             self.await_dbus_start(unit_name, _pid, &cfg).await?;
         }
+        self.run_start_post(unit_name, &cfg).await?;
         Ok(())
     }
 
@@ -750,6 +794,33 @@ mod tests {
             !ServiceController::is_oneshot_type(&cfg),
             "simple should not be detected as oneshot"
         );
+    }
+
+    #[tokio::test]
+    async fn start_post_failure_fails_the_unit() {
+        let mut cfg = oneshot_cfg();
+        cfg.service.as_mut().unwrap().exec_start_post = vec!["/bin/false".to_string()];
+        let ctrl = controller();
+        register_unit(&ctrl, "oneshot-test.service");
+        // No live process: the stop path returns early, the unit is marked
+        // failed by the post-command failure itself.
+        {
+            let mut reg = ctrl.registry.lock();
+            let inst = reg.get_mut("oneshot-test.service").unwrap();
+            inst.state = ServiceState::Dead;
+            inst.main_pid = None;
+        }
+        let err = ctrl
+            .run_start_post("oneshot-test.service", &cfg)
+            .await
+            .expect_err("a failing ExecStartPost must fail the start");
+        assert!(
+            err.to_string().contains("ExecStartPost"),
+            "unexpected: {err}"
+        );
+        let reg = ctrl.registry.lock();
+        let inst = reg.get("oneshot-test.service").expect("unit should exist");
+        assert_eq!(inst.state, ServiceState::Failed);
     }
 
     #[tokio::test]

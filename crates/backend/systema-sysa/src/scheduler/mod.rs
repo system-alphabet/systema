@@ -2271,6 +2271,11 @@ fn build_unit_config(
             .first()
             .map(|c| c.raw.clone())
             .unwrap_or_default(),
+        // Every ExecStartPre=/ExecStartPost= line is forwarded in order: the
+        // worker runs the pre commands before spawning ExecStart and the post
+        // commands after its start phase completed.
+        exec_start_pre: svc.exec_start_pre.iter().map(|c| c.raw.clone()).collect(),
+        exec_start_post: svc.exec_start_post.iter().map(|c| c.raw.clone()).collect(),
         exec_stop: svc
             .exec_stop
             .first()

@@ -2666,3 +2666,18 @@ msgstr  ""
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 314
 #~ msgid        "Commit every staging area owned by this UID (default: 0)."
 #~ msgstr       "Commit every staging area owned by this UID (default: 0)."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 671
+#, rust-format
+msgid   "{phase} command for {unit_name} failed: {e}"
+msgstr  "{phase} command for {unit_name} failed: {e}"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 682
+#, rust-format
+msgid   "{phase} command for {unit_name} timed out after {timeout}s"
+msgstr  "{phase} command for {unit_name} timed out after {timeout}s"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 706
+#, rust-format
+msgid   "{phase} command for {unit_name} exited with code {code}"
+msgstr  "{phase} command for {unit_name} exited with code {code}"

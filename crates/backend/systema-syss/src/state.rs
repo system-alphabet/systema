@@ -4,7 +4,7 @@
 //! through the states: DEAD → START_PRE → STARTING → RUNNING → STOP_PRE →
 //! STOPPING → DEAD | FAILED.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -47,6 +47,11 @@ pub struct ServiceInstance {
     /// the parsed `-` prefix on every activation, so a restart cannot
     /// inherit a stale verdict.
     pub ignore_failure: bool,
+    /// PIDs of `ExecStartPre=`/`ExecStartPost=` helper processes the worker
+    /// is currently waiting for.  They are not the unit's main process, but
+    /// the orphan reaper must leave their exit status to the waiter (it
+    /// reaps every child that is absent from the tracked set).
+    pub transient_pids: HashSet<u32>,
     /// Invocation ID (UUID v4) of the current activation, as provided by
     /// System A.  Cleared when the service exits or is stopped.
     pub invocation_id: Option<String>,
@@ -67,6 +72,7 @@ impl ServiceInstance {
             timeout_stop_secs: None,
             remain_after_exit: false,
             ignore_failure: false,
+            transient_pids: HashSet::new(),
             invocation_id: None,
             cgroup_path: None,
         }

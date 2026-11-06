@@ -371,6 +371,13 @@ message ServiceConfig {
     uint32 runtime_directory_mode = 26;
     repeated string configuration_directory = 27;
     uint32 configuration_directory_mode = 28;
+    // `ExecStartPre=` / `ExecStartPost=` command lines in file order, as raw
+    // command strings (modifier prefixes included, so the worker can honor
+    // `-`, `+` and `|`).  Each one runs to completion before (respectively
+    // after) the main ExecStart process, like systemd's start-pre/start-post
+    // phases; a failing command without the `-` prefix fails the start job.
+    repeated string exec_start_pre = 29;
+    repeated string exec_start_post = 30;
 }
 
 // Configuration for `.scope` units, sent to the System E worker.

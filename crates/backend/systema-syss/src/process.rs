@@ -274,16 +274,33 @@ pub async fn start_service(
         expand_argv(&parsed.args, &env_table)
     };
 
-    // Update state to Starting.  The parsed `-` prefix of `ExecStart=` is
-    // recorded here so both exit observers (`await_oneshot_exit()` for
-    // oneshot units and `monitor_service()` for long-running ones) treat a
-    // non-zero exit as a successful activation.
+    // Enter the start-pre phase as `activating` before the first pre command
+    // runs: the registry entry is what makes the helper pids visible to the
+    // orphan reaper, and it also carries the parsed `-` prefix of
+    // `ExecStart=` so both exit observers (`await_oneshot_exit()` for oneshot
+    // units and `monitor_service()` for long-running ones) treat a non-zero
+    // exit as a successful activation.
     {
         let mut reg = registry.lock();
         let inst = reg.entry(unit_name.clone()).or_default();
         inst.state = ServiceState::Starting;
         inst.invocation_id = invocation_id.clone();
         inst.ignore_failure = parsed.flags.ignore_failure;
+    }
+
+    // ExecStartPre= commands run in order before ExecStart; a non-zero exit
+    // (without the `-` prefix) aborts the start, like systemd's
+    // service_enter_start_pre(), and leaves the unit failed(dead).
+    if let Err(e) = run_exec_start_pre(registry.clone(), &unit_name, config).await {
+        {
+            let mut reg = registry.lock();
+            if let Some(inst) = reg.get_mut(&unit_name) {
+                inst.state = ServiceState::Failed;
+                inst.main_pid = None;
+                inst.invocation_id = None;
+            }
+        }
+        return Err(e);
     }
 
     // Build the Command plus the exact argv that will be handed to exec (the
@@ -535,6 +552,280 @@ pub async fn start_service(
     bail!(sysa::l10n::t_(
         "Starting services is not supported on this platform."
     ));
+}
+
+/// Claims a short-lived `ExecStartPre=`/`ExecStartPost=` child for the unit
+/// while the worker waits on it, so the orphan reaper (`reaper::sweep()`)
+/// does not collect its exit status first (which made `Child::wait()` fail
+/// with ECHILD).  Dropping the guard releases the pid back to the reaper.
+#[cfg(unix)]
+struct TransientPid {
+    registry: ServiceRegistry,
+    unit_name: String,
+    pid: u32,
+}
+
+#[cfg(unix)]
+impl TransientPid {
+    fn register(registry: ServiceRegistry, unit_name: &str, pid: u32) -> Self {
+        registry
+            .lock()
+            .entry(unit_name.to_string())
+            .or_default()
+            .transient_pids
+            .insert(pid);
+        TransientPid {
+            registry,
+            unit_name: unit_name.to_string(),
+            pid,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TransientPid {
+    fn drop(&mut self) {
+        let mut reg = self.registry.lock();
+        if let Some(inst) = reg.get_mut(&self.unit_name) {
+            inst.transient_pids.remove(&self.pid);
+        }
+    }
+}
+
+/// Run `ExecStartPre=` / `ExecStartPost=` commands to completion, in order.
+///
+/// The commands share the unit's working directory, environment and
+/// credentials with the main process, but run without a PAM session, a TTY
+/// or socket-activation fds: those belong to the main process's lifetime.
+/// Output appends to the same per-service log.  A non-zero exit fails the
+/// caller unless the command carries the `-` prefix, and every command is
+/// bounded by `TimeoutStartSec=`, as in systemd's start-pre/start-post
+/// phases.
+#[cfg(unix)]
+async fn run_exec_commands(
+    registry: ServiceRegistry,
+    unit_name: &str,
+    config: &UnitConfig,
+    commands: &[String],
+    phase: &str,
+) -> Result<()> {
+    let svc = config.service.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(sysa::l10n::fmt(
+            sysa::l10n::t_("No [Service] config for {unit_name}."),
+            &[("unit_name", unit_name)]
+        ))
+    })?;
+
+    for raw in commands {
+        let parsed = parse_exec_start(raw, unit_name)?;
+
+        // `+` / `!` prefixes opt the command out of the credential switch,
+        // exactly like the main ExecStart path.
+        let wants_credentials = !parsed.flags.privileged && !parsed.flags.no_new_privileges;
+        let creds = if wants_credentials {
+            let user = svc.user.clone();
+            let group = svc.group.clone();
+            tokio::task::spawn_blocking(move || resolve_credentials(&user, &group))
+                .await
+                .context(sysa::l10n::t_("Credential lookup task failed"))??
+        } else {
+            None
+        };
+
+        let identity_env = identity_env(creds.as_ref());
+        let directory_env = prepare_service_directories(svc, creds.as_ref())?;
+        let env_table = build_env_table(&svc.environment, &[], &identity_env, &directory_env);
+        let final_args = if parsed.flags.no_env_expand {
+            parsed.args.clone()
+        } else {
+            expand_argv(&parsed.args, &env_table)
+        };
+
+        let mut cmd = if parsed.flags.via_shell {
+            let joined = build_shell_command_line(&parsed.program, &final_args);
+            let mut c = Command::new(sysa::paths::instance().systema_shell_path);
+            c.arg("-c");
+            c.arg(&joined);
+            c
+        } else {
+            let mut c = Command::new(&parsed.program);
+            c.args(&final_args);
+            c
+        };
+        if !svc.working_directory.is_empty() {
+            cmd.current_dir(&svc.working_directory);
+        }
+        // Pre/post commands get no stdin, like systemd's start-pre phase.
+        cmd.stdin(Stdio::null());
+
+        // Same environment order as the main process: passwd identity,
+        // Environment=, directory-directive vars, then the forced bus env
+        // (root units only).
+        let mut child_envs: Vec<(CString, CString)> = Vec::new();
+        for (key, val) in &identity_env {
+            if let (Ok(k), Ok(v)) = (CString::new(key.as_str()), CString::new(val.as_str())) {
+                child_envs.push((k, v));
+            }
+        }
+        for env_str in &svc.environment {
+            if let Some((key, val)) = env_str.split_once('=') {
+                if let (Ok(k), Ok(v)) = (CString::new(key), CString::new(val)) {
+                    child_envs.push((k, v));
+                }
+            }
+        }
+        for (key, val) in &directory_env {
+            if let (Ok(k), Ok(v)) = (CString::new(key.as_str()), CString::new(val.as_str())) {
+                child_envs.push((k, v));
+            }
+        }
+        if forced_bus_env_applies(&svc.user) {
+            for (key, val) in FORCED_SERVICE_ENV {
+                if let (Ok(k), Ok(v)) = (CString::new(*key), CString::new(*val)) {
+                    child_envs.push((k, v));
+                }
+            }
+        }
+
+        if let Some(mut pre) = build_pre_exec(child_envs, &[], creds, config.cgroup_path.clone()) {
+            unsafe {
+                cmd.pre_exec(move || pre());
+            }
+        }
+
+        ensure_service_log_dir();
+        if let Some(f) = open_service_log(unit_name) {
+            if let Ok(f2) = f.try_clone() {
+                cmd.stdout(Stdio::from(f));
+                cmd.stderr(Stdio::from(f2));
+            } else {
+                cmd.stdout(Stdio::from(f));
+            }
+        }
+
+        info!(
+            "{} for {}: {} {:?}",
+            phase, unit_name, parsed.program, parsed.args
+        );
+        let mut child = cmd.spawn().with_context(|| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("Failed to spawn {program}."),
+                &[("program", &parsed.program)],
+            )
+        })?;
+        // Claim the exit status before the first await: the orphan reaper
+        // reaps untracked children and would otherwise steal it (ECHILD).
+        let _tracked = child
+            .id()
+            .map(|pid| TransientPid::register(registry.clone(), unit_name, pid));
+        let timeout = svc.timeout_start_secs.max(1) as u64;
+        let status =
+            match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await
+            {
+                Ok(Ok(status)) => status,
+                Ok(Err(e)) => bail!(sysa::l10n::fmt(
+                    sysa::l10n::t_("{phase} command for {unit_name} failed: {e}"),
+                    &[
+                        ("phase", phase),
+                        ("unit_name", unit_name),
+                        ("e", &e.to_string()),
+                    ],
+                )),
+                Err(_) => {
+                    let _ = child.kill().await;
+                    bail!(sysa::l10n::fmt(
+                        sysa::l10n::t_(
+                            "{phase} command for {unit_name} timed out after {timeout}s"
+                        ),
+                        &[
+                            ("phase", phase),
+                            ("unit_name", unit_name),
+                            ("timeout", &timeout.to_string()),
+                        ],
+                    ))
+                }
+            };
+        if status.success() {
+            debug!("{} command for {} completed", phase, unit_name);
+            continue;
+        }
+        if parsed.flags.ignore_failure {
+            info!(
+                "{} command for {} exited with code {:?}; ignoring it (Exec prefix '-')",
+                phase,
+                unit_name,
+                status.code()
+            );
+            continue;
+        }
+        bail!(sysa::l10n::fmt(
+            sysa::l10n::t_("{phase} command for {unit_name} exited with code {code}"),
+            &[
+                ("phase", phase),
+                ("unit_name", unit_name),
+                ("code", &format!("{:?}", status.code())),
+            ],
+        ));
+    }
+    Ok(())
+}
+
+/// Run the unit's `ExecStartPre=` commands in order, before the main process
+/// is spawned.  No-op when the unit has none.
+#[cfg(unix)]
+pub async fn run_exec_start_pre(
+    registry: ServiceRegistry,
+    unit_name: &str,
+    config: &UnitConfig,
+) -> Result<()> {
+    let commands = config
+        .service
+        .as_ref()
+        .map(|s| s.exec_start_pre.clone())
+        .unwrap_or_default();
+    if commands.is_empty() {
+        return Ok(());
+    }
+    run_exec_commands(registry, unit_name, config, &commands, "ExecStartPre").await
+}
+
+/// Run the unit's `ExecStartPost=` commands in order, once the start phase
+/// completed.  No-op when the unit has none.
+#[cfg(unix)]
+pub async fn run_exec_start_post(
+    registry: ServiceRegistry,
+    unit_name: &str,
+    config: &UnitConfig,
+) -> Result<()> {
+    let commands = config
+        .service
+        .as_ref()
+        .map(|s| s.exec_start_post.clone())
+        .unwrap_or_default();
+    if commands.is_empty() {
+        return Ok(());
+    }
+    run_exec_commands(registry, unit_name, config, &commands, "ExecStartPost").await
+}
+
+// Services cannot be started on non-Unix targets (`start_service` bails), so
+// the start-pre/start-post phases have nothing to run there.
+#[cfg(not(unix))]
+pub async fn run_exec_start_pre(
+    _registry: ServiceRegistry,
+    _unit_name: &str,
+    _config: &UnitConfig,
+) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub async fn run_exec_start_post(
+    _registry: ServiceRegistry,
+    _unit_name: &str,
+    _config: &UnitConfig,
+) -> Result<()> {
+    Ok(())
 }
 
 /// The main process's process group — but only when the main process is
@@ -2635,6 +2926,100 @@ mod tests {
             panic!("empty family must not fail: {e}");
         });
         assert!(env.is_empty());
+    }
+
+    // --- ExecStartPre= / ExecStartPost= ---
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn exec_start_pre_commands_run_in_order() {
+        let dir = std::env::temp_dir().join(format!(
+            "systema-syss-pre-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = dir.join("first");
+        let second = dir.join("second");
+        let mut cfg = UnitConfig {
+            unit_name: "pre-test.service".to_string(),
+            ..Default::default()
+        };
+        cfg.service = Some(sysa::proto::ServiceConfig {
+            service_type: "oneshot".to_string(),
+            exec_start: "/bin/true".to_string(),
+            exec_start_pre: vec![
+                format!("/bin/sh -c 'echo one >> {}'", first.display()),
+                format!("/bin/sh -c 'echo two >> {}'", second.display()),
+            ],
+            ..Default::default()
+        });
+
+        run_exec_start_pre(crate::state::new_registry(), "pre-test.service", &cfg)
+            .await
+            .expect("both pre commands must run");
+
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "one\n");
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "two\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn exec_start_pre_failure_aborts_unless_ignored() {
+        let mut cfg = UnitConfig {
+            unit_name: "pre-fail.service".to_string(),
+            ..Default::default()
+        };
+        cfg.service = Some(sysa::proto::ServiceConfig {
+            exec_start_pre: vec!["/bin/false".to_string()],
+            ..Default::default()
+        });
+        let err = run_exec_start_pre(crate::state::new_registry(), "pre-fail.service", &cfg)
+            .await
+            .expect_err("a failing ExecStartPre must abort the start");
+        assert!(
+            err.to_string()
+                .contains("ExecStartPre command for pre-fail.service exited with code Some(1)"),
+            "unexpected: {err}"
+        );
+
+        cfg.service.as_mut().unwrap().exec_start_pre = vec!["-/bin/false".to_string()];
+        run_exec_start_pre(crate::state::new_registry(), "pre-fail.service", &cfg)
+            .await
+            .expect("the '-' prefix must ignore the failure");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn transient_pid_guard_claims_and_releases_the_pid() {
+        let registry = crate::state::new_registry();
+        {
+            let mut reg = registry.lock();
+            reg.insert(
+                "pre-guard.service".to_string(),
+                crate::state::ServiceInstance::new(),
+            );
+        }
+
+        let guard = TransientPid::register(registry.clone(), "pre-guard.service", 4242);
+        assert!(registry
+            .lock()
+            .get("pre-guard.service")
+            .unwrap()
+            .transient_pids
+            .contains(&4242));
+
+        drop(guard);
+        assert!(registry
+            .lock()
+            .get("pre-guard.service")
+            .unwrap()
+            .transient_pids
+            .is_empty());
     }
 
     // --- Credential resolution ---

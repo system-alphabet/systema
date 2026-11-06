@@ -149,19 +149,28 @@ async fn sweep(shared: &SharedRegistry) {
     // 3. Snapshot the pids some unit still expects to wait for.
     let tracked: HashSet<u32> = match shared.try_lock() {
         Ok(guard) => match guard.as_ref() {
-            Some(reg) => reg
-                .lock()
-                .values()
-                // A unit in `Stopping` has nobody waiting for the exit
-                // status: `monitor_service` breaks out of its loop the
-                // moment it sees Stopping (ipc/mod.rs) without reaping, and
-                // `stop_service` only polls liveness — it cannot make
-                // progress while the child is a zombie either, because a
-                // zombie still answers kill(pid, 0).  So its pid is fair
-                // game for us.
-                .filter(|inst| inst.state != ServiceState::Stopping)
-                .filter_map(|inst| inst.main_pid)
-                .collect(),
+            Some(reg) => {
+                let reg = reg.lock();
+                let mut tracked = HashSet::new();
+                for inst in reg.values() {
+                    // `ExecStartPre=`/`ExecStartPost=` helpers are awaited by
+                    // the start path, not by the unit's monitor, and their
+                    // pid never becomes `main_pid`.  They are always claimed
+                    // while the waiter exists, so track them unconditionally.
+                    tracked.extend(inst.transient_pids.iter().copied());
+                    // A unit in `Stopping` has nobody waiting for the exit
+                    // status: `monitor_service` breaks out of its loop the
+                    // moment it sees Stopping (ipc/mod.rs) without reaping,
+                    // and `stop_service` only polls liveness — it cannot make
+                    // progress while the child is a zombie either, because a
+                    // zombie still answers kill(pid, 0).  So its pid is fair
+                    // game for us.
+                    if inst.state != ServiceState::Stopping {
+                        tracked.extend(inst.main_pid);
+                    }
+                }
+                tracked
+            }
             // Registry not installed yet: no service has been spawned.
             None => return,
         },
@@ -314,6 +323,9 @@ mod tests {
         // Child C: registered but the unit is already `Stopping` → its
         // monitor has left the scene, nobody waits → must be reaped.
         let c = spawn_exiter(0);
+        // Child D: an ExecStartPre=/ExecStartPost= helper the start path is
+        // waiting for → must survive the sweep while it is claimed.
+        let d = spawn_exiter(0);
         {
             let guard = shared.lock().await;
             let reg = guard.as_ref().unwrap();
@@ -324,11 +336,14 @@ mod tests {
             let inst = reg.entry("stopping.service".to_string()).or_default();
             inst.state = crate::state::ServiceState::Stopping;
             inst.main_pid = Some(c);
+            let inst = reg.entry("pre.service".to_string()).or_default();
+            inst.state = crate::state::ServiceState::Starting;
+            inst.transient_pids.insert(d);
         }
 
         // Wait until all are zombies (exit is async).
         for _ in 0..100 {
-            if is_zombie(a) && is_zombie(b) && is_zombie(c) {
+            if is_zombie(a) && is_zombie(b) && is_zombie(c) && is_zombie(d) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -352,6 +367,10 @@ mod tests {
             "tracked zombie B must NOT be reaped"
         );
         assert!(is_zombie(b), "tracked zombie B must still be a zombie");
+        assert!(
+            kill(Pid::from_raw(d as i32), None).is_ok(),
+            "claimed ExecStartPre/Post helper D must NOT be reaped"
+        );
 
         // Release B: clear the tracking pid so the sweep may collect it.
         // Scoped so the guards are gone before the next await.
@@ -364,6 +383,22 @@ mod tests {
         assert!(
             kill(Pid::from_raw(b as i32), None).is_err(),
             "B must be reaped once untracked"
+        );
+
+        // Release D: once the start path stops waiting, its pid is fair game.
+        {
+            let guard = shared.lock().await;
+            let mut registry = guard.as_ref().unwrap().lock();
+            registry
+                .get_mut("pre.service")
+                .unwrap()
+                .transient_pids
+                .clear();
+        }
+        sweep(&shared).await;
+        assert!(
+            kill(Pid::from_raw(d as i32), None).is_err(),
+            "D must be reaped once its waiter is gone"
         );
     }
 

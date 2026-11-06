@@ -2665,3 +2665,18 @@ msgstr  ""
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 314
 #~ msgid        "Commit every staging area owned by this UID (default: 0)."
 #~ msgstr       "提交此 UID 拥有的每个暂存区（默认：0）。"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 671
+#, rust-format
+msgid   "{phase} command for {unit_name} failed: {e}"
+msgstr  "{phase} 命令（{unit_name}）执行失败：{e}"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 682
+#, rust-format
+msgid   "{phase} command for {unit_name} timed out after {timeout}s"
+msgstr  "{phase} 命令（{unit_name}）在 {timeout}s 后超时"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 706
+#, rust-format
+msgid   "{phase} command for {unit_name} exited with code {code}"
+msgstr  "{phase} 命令（{unit_name}）以代码 {code} 退出"
