@@ -279,26 +279,40 @@ impl ReverseIndex {
     /// already activated them; System A has no such early activation, so
     /// the ordering edge is made explicit here).
     fn after_deps(&self, units: &HashMap<String, UnitFile>, u: &str) -> Vec<String> {
-        let mut out: HashSet<String> = units
+        // Ordering targets the unit itself relies on: declared `After=`,
+        // sockets it Requires=/BindsTo=, and `[Service] Sockets=`.  Only these
+        // carry the socket-activation contract resolved below.
+        let mut needed: HashSet<String> = units
             .get(u)
             .map(|uf| uf.unit.after.iter().cloned().collect())
             .unwrap_or_default();
-        if let Some(v) = self.before.get(u) {
-            out.extend(v.iter().cloned());
-        }
         if let Some(uf) = units.get(u) {
-            for dep in uf.unit.requires.iter().chain(uf.unit.binds_to.iter()) {
-                if dep.ends_with(".socket") {
-                    out.insert(dep.clone());
-                }
-            }
+            needed.extend(
+                uf.unit
+                    .requires
+                    .iter()
+                    .chain(uf.unit.binds_to.iter())
+                    .filter(|dep| dep.ends_with(".socket"))
+                    .cloned(),
+            );
             // Socket units from Sockets= (socket activation) also require
             // ordering: the socket must be bound before the service starts.
             if let Some(svc) = &uf.service {
-                for dep in &svc.sockets {
-                    out.insert(dep.clone());
-                }
+                needed.extend(svc.sockets.iter().cloned());
             }
+        }
+        let mut out: HashSet<String> = needed.clone();
+        // Pure ordering contributed by other units' `Before= u`.  This is how
+        // a socket unit becomes a member of `sockets.target` (the loader
+        // injects the implicit `Before=sockets.target`).  Such an edge is a
+        // synchronization point only: it must not drag the socket's
+        // activated service into the graph.  `basic.target` is ordered
+        // `After=sockets.target` and every service defaults to
+        // `After=basic.target`, so resolving a *membership* edge to the
+        // service closes the ring
+        // `basic.target -> sockets.target -> foo.service -> basic.target`.
+        if let Some(v) = self.before.get(u) {
+            out.extend(v.iter().cloned());
         }
         // A unit that is ordered after a `.socket` must also run after the
         // socket's activated service is *started*.  Real systemd guarantees
@@ -311,7 +325,7 @@ impl ReverseIndex {
         // udevd is not yet bound to the kernel netlink socket).  Resolve each
         // `.socket` ordering target to its `[Socket] Service=` unit (or the
         // "foo.socket" -> "foo.service" convention) and order after it too.
-        for dep in out.clone().iter() {
+        for dep in needed.iter() {
             if !dep.ends_with(".socket") {
                 continue;
             }
@@ -2863,6 +2877,63 @@ mod tests {
         let after = rev.after_deps(&units, "svc.service");
         assert!(after.contains(&"plain.service".to_string()));
         assert_eq!(after.len(), 1, "no extra deps beyond the declared After=");
+    }
+
+    #[test]
+    fn sockets_target_does_not_order_after_member_services() {
+        // A socket unit is an implicit `Before=sockets.target` member.  That
+        // membership edge must not resolve to the socket's activated service:
+        // `basic.target` is ordered `After=sockets.target` while every service
+        // defaults to `After=basic.target`, so a sockets.target -> ssh.service
+        // edge closes the boot ring
+        // `basic.target -> sockets.target -> ssh.service -> basic.target`.
+        let mut ssh_socket = with_socket_service(make_unit("ssh.socket"), "ssh.service");
+        ssh_socket.unit.before.insert("sockets.target".to_string());
+        let units = map(vec![
+            ssh_socket,
+            make_unit("ssh.service"),
+            make_unit("sockets.target"),
+        ]);
+        let rev = ReverseIndex::build(&units);
+        let after = rev.after_deps(&units, "sockets.target");
+        assert!(after.contains(&"ssh.socket".to_string()));
+        assert!(
+            !after.contains(&"ssh.service".to_string()),
+            "a socket membership edge must not pull in the activated service"
+        );
+    }
+
+    #[test]
+    fn boot_target_graph_does_not_cycle_over_socket_services() {
+        // Real boot topology: basic.target is `Wants=/After=sockets.target`,
+        // every service defaults to `After=basic.target`, sockets are implicit
+        // `Before=sockets.target` members, and ssh.socket is `Before=ssh.service`.
+        // Starting basic.target used to fail with
+        // "Transaction order is cyclic: basic.target -> sockets.target -> ssh.service -> basic.target"
+        // whenever an ssh.service start job coexisted with the socket member.
+        let mut ssh_socket = with_socket_service(make_unit("ssh.socket"), "ssh.service");
+        ssh_socket.unit.before.insert("sockets.target".to_string());
+        ssh_socket.unit.before.insert("ssh.service".to_string());
+        let units = map(vec![
+            with_wants(
+                with_after(make_unit("basic.target"), &["sockets.target"]),
+                &["sockets.target"],
+            ),
+            with_wants(make_unit("sockets.target"), &["ssh.socket", "ssh.service"]),
+            ssh_socket,
+            with_after(make_unit("ssh.service"), &["basic.target"]),
+        ]);
+        let s = steps(
+            &units,
+            &HashMap::new(),
+            &HashMap::new(),
+            "basic.target",
+            Start,
+            Replace,
+        );
+        let pos = |n: &str| s.iter().position(|x| x.unit == n).unwrap();
+        assert!(pos("sockets.target") < pos("basic.target"));
+        assert!(pos("ssh.socket") < pos("ssh.service"));
     }
 
     #[test]
