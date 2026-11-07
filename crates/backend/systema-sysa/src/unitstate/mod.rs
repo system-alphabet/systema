@@ -157,7 +157,6 @@ fn job_json(j: &Job) -> Value {
             sysa::l10n::t_("failed: {msg}"),
             &[("msg", &msg.to_string())],
         )),
-        JobStatus::Cancelled => json!("cancelled"),
     };
     json!({
         "id": j.id,

@@ -2177,6 +2177,8 @@ mod tests {
     async fn start_units_creates_jobs() {
         let allocator = test_allocator();
         register_service_worker(&allocator);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        allocator.write().job_event_tx = Some(tx);
 
         let _ = call(
             "manager.start_units",
@@ -2190,9 +2192,14 @@ mod tests {
         )
         .await;
 
-        let state = allocator.read();
-        let has_job = state.jobs.values().any(|j| j.unit_name == "foo.service");
-        assert!(has_job, "a job for foo.service must exist in state");
+        // A job was created for foo.service: it is announced on the
+        // lifecycle channel.  (A job that completes is freed from the table
+        // immediately, so the table itself may already be empty again.)
+        let ev = rx.try_recv().expect("job.new emitted for the enqueued job");
+        assert!(
+            matches!(ev, crate::state::JobLifecycle::New(ref info) if info.unit_name == "foo.service"),
+            "expected a job.new for foo.service, got {ev:?}"
+        );
     }
 
     #[tokio::test]

@@ -308,6 +308,7 @@ mod tests {
             active_state: "active".to_string(),
             sub_state: "running".to_string(),
             main_pid: 12345,
+            recent_start_failed: false,
             invocation_id: "0123456789abcdef0123456789abcdef".to_string(),
             active_enter_timestamp: 1_700_000_000_000_000,
             inactive_enter_timestamp: 0,

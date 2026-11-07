@@ -20,8 +20,8 @@ use tracing::{debug, info, warn};
 
 use crate::state::{
     generate_invocation_id, next_job_id, next_request_id, next_task_id, AllocatorHandle,
-    AllocatorState, Job, JobCompletion, JobKind, JobMode, JobNewInfo, JobResultKind, JobStatus,
-    StartLimitState,
+    AllocatorState, Job, JobCompletion, JobKind, JobLifecycle, JobMode, JobNewInfo, JobResultKind,
+    JobStatus, StartLimitState,
 };
 use crate::unit::types::{
     ExitKind, MountSection, RestartPolicy, StartLimitAction, UnitFile, UnitKind, UnitSection,
@@ -62,8 +62,8 @@ async fn wait_for_predecessors(mut receivers: Vec<tokio::sync::watch::Receiver<b
 }
 
 /// Wait for a step's predecessors, then hand its `method.call` to the worker.
-/// A closed worker channel fails the job (and completes the root job as
-/// failed so the caller sees `JobRemoved`).
+/// A closed worker channel fails the job: the entry is freed and its
+/// completion event closes the job for consumers (`JobRemoved`).
 async fn dispatch_after_predecessors(
     allocator: AllocatorHandle,
     wait_rxs: Vec<tokio::sync::watch::Receiver<bool>>,
@@ -71,23 +71,16 @@ async fn dispatch_after_predecessors(
     payload: bytes::Bytes,
     job_id: u64,
     name: String,
-    is_root: bool,
 ) {
     wait_for_predecessors(wait_rxs).await;
     if worker_envelope_tx.send(payload).await.is_err() {
         warn!("Worker channel closed for unit {}", name);
         let mut state = allocator.write();
-        if let Some(job) = state.jobs.get_mut(&job_id) {
-            job.status = JobStatus::Failed(sysa::l10n::t_("Worker disconnected").to_string());
-        }
-        if is_root {
-            if let Some(ref tx) = state.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id,
-                    unit_name: name,
-                    result: JobResultKind::Failed,
-                });
-            }
+        // Every dispatched step owns a table entry and a `job.new` event, so
+        // every step is closed here — not only the root one.
+        let freed = free_job(&mut state, job_id).is_some();
+        if freed {
+            emit_job_completed(&mut state, job_id, &name, JobResultKind::Failed);
         }
     }
 }
@@ -250,24 +243,8 @@ pub async fn enqueue_job_type(
         JobType::Nop => {
             let job_id = next_job_id();
             let mut st = allocator.write();
-            st.jobs.insert(
-                job_id,
-                Job {
-                    id: job_id,
-                    unit_name: unit_name.to_string(),
-                    kind: JobKind::Nop,
-                    status: JobStatus::Done,
-                    timeout_abort: None,
-                },
-            );
             emit_job_new(&mut st, job_id, unit_name, JobKind::Nop);
-            if let Some(ref tx) = st.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id,
-                    unit_name: unit_name.to_string(),
-                    result: JobResultKind::Done,
-                });
-            }
+            emit_job_completed(&mut st, job_id, unit_name, JobResultKind::Done);
             Ok((job_id, JobKind::Nop))
         }
         JobType::VerifyActive => {
@@ -280,24 +257,8 @@ pub async fn enqueue_job_type(
             };
             let job_id = next_job_id();
             let mut st = allocator.write();
-            st.jobs.insert(
-                job_id,
-                Job {
-                    id: job_id,
-                    unit_name: unit_name.to_string(),
-                    kind: JobKind::Nop,
-                    status: JobStatus::Done,
-                    timeout_abort: None,
-                },
-            );
             emit_job_new(&mut st, job_id, unit_name, JobKind::Nop);
-            if let Some(ref tx) = st.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id,
-                    unit_name: unit_name.to_string(),
-                    result,
-                });
-            }
+            emit_job_completed(&mut st, job_id, unit_name, result);
             Ok((job_id, JobKind::Nop))
         }
         other => {
@@ -915,14 +876,8 @@ async fn enqueue_job_tracked(
             info!("{} already active; start is a no-op (-EALREADY)", unit_name);
             let job_id = next_job_id();
             let mut state = allocator.write();
-            if let Some(ref tx) = state.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id,
-                    unit_name: unit_name.to_string(),
-                    result: JobResultKind::Done,
-                });
-            }
             emit_job_new(&mut state, job_id, unit_name, kind);
+            emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Done);
             return Ok(job_id);
         }
     }
@@ -1003,15 +958,10 @@ async fn enqueue_job_tracked(
                 .get(&jid)
                 .map(|j| j.unit_name.clone())
                 .unwrap_or_default();
-            if let Some(job) = state.jobs.get_mut(&jid) {
-                job.status = JobStatus::Cancelled;
-            }
-            if let Some(ref tx) = state.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id: jid,
-                    unit_name: name,
-                    result: JobResultKind::Cancelled,
-                });
+            // Cancelled is terminal: free the entry (job_free semantics)
+            // with the completion event closing it.
+            if free_job(&mut state, jid).is_some() {
+                emit_job_completed(&mut state, jid, &name, JobResultKind::Cancelled);
             }
         }
     }
@@ -1038,14 +988,8 @@ async fn enqueue_job_tracked(
             );
             let job_id = next_job_id();
             let mut state = allocator.write();
-            if let Some(ref tx) = state.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id,
-                    unit_name: unit_name.to_string(),
-                    result: JobResultKind::Dependency,
-                });
-            }
             emit_job_new(&mut state, job_id, unit_name, kind);
+            emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Dependency);
             return Ok(job_id);
         }
     }
@@ -1262,14 +1206,8 @@ async fn enqueue_job_tracked(
             );
             let job_id = next_job_id();
             let mut state = allocator.write();
-            if let Some(ref tx) = state.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id,
-                    unit_name: unit_name.to_string(),
-                    result: JobResultKind::Dependency,
-                });
-            }
             emit_job_new(&mut state, job_id, unit_name, kind);
+            emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Dependency);
             return Ok(job_id);
         }
     }
@@ -1387,14 +1325,8 @@ async fn enqueue_job_tracked(
                 step_marks.insert(name.clone(), mark_rx);
                 if is_root {
                     let mut state = allocator.write();
-                    if let Some(ref tx) = state.job_completion_tx {
-                        let _ = tx.send(JobCompletion {
-                            job_id,
-                            unit_name: name.clone(),
-                            result: JobResultKind::Skipped,
-                        });
-                    }
-                    emit_job_new(&mut state, job_id, name, step_kind);
+                    emit_job_new(&mut state, job_id, &name, step_kind);
+                    emit_job_completed(&mut state, job_id, &name, JobResultKind::Skipped);
                     return Ok(job_id);
                 }
                 continue;
@@ -1425,14 +1357,8 @@ async fn enqueue_job_tracked(
                 if is_root {
                     {
                         let mut state = allocator.write();
-                        if let Some(ref tx) = state.job_completion_tx {
-                            let _ = tx.send(JobCompletion {
-                                job_id,
-                                unit_name: name.clone(),
-                                result: JobResultKind::Done,
-                            });
-                        }
-                        emit_job_new(&mut state, job_id, name, step_kind);
+                        emit_job_new(&mut state, job_id, &name, step_kind);
+                        emit_job_completed(&mut state, job_id, &name, JobResultKind::Done);
                     }
                     return Ok(job_id);
                 }
@@ -1477,21 +1403,23 @@ async fn enqueue_job_tracked(
                     let mut state = allocator.write();
                     emit_job_new(&mut state, job_id, name, step_kind);
 
-                    // Cancel all jobs already created for this request.
-                    for (jid, _) in &created_job_ids {
-                        if let Some(job) = state.jobs.get_mut(jid) {
-                            job.status = JobStatus::Cancelled;
-                        }
+                    // Abort this request: every job created so far is
+                    // terminal now, so each entry is freed and closed with a
+                    // completion event (the step that could not be dispatched
+                    // fails, the steps already dispatched are cancelled).
+                    let mut closed: Vec<(u64, String, JobResultKind)> = Vec::new();
+                    for (jid, jname) in &created_job_ids {
+                        free_job(&mut state, *jid);
                         state.serial_completion_txs.remove(jid);
+                        let result = if *jid == job_id {
+                            JobResultKind::Failed
+                        } else {
+                            JobResultKind::Cancelled
+                        };
+                        closed.push((*jid, jname.clone(), result));
                     }
-
-                    // Notify the caller that the root job has failed.
-                    if let Some(ref tx) = state.job_completion_tx {
-                        let _ = tx.send(JobCompletion {
-                            job_id: primary_job_id,
-                            unit_name: unit_name.to_string(),
-                            result: JobResultKind::Failed,
-                        });
+                    for (jid, jname, result) in closed {
+                        emit_job_completed(&mut state, jid, &jname, result);
                     }
                 }
                 bail!("{}", err);
@@ -1540,16 +1468,15 @@ async fn enqueue_job_tracked(
                 duplicate_job = true;
                 if is_root {
                     // The caller is waiting on the primary job id; complete
-                    // it immediately — the existing in-flight job is the
-                    // one doing the work (systemd semantics: a second
-                    // StartUnit for a running job merges into it).
-                    if let Some(ref tx) = state.job_completion_tx {
-                        let _ = tx.send(JobCompletion {
-                            job_id: primary_job_id,
-                            unit_name: unit_name.to_string(),
-                            result: JobResultKind::Done,
-                        });
-                    }
+                    // it immediately — the existing in-flight job is
+                    // the one doing the work (systemd semantics: a second
+                    // StartUnit for a running job merges into it).  Nothing
+                    // was dispatched for this id, so announce then close it:
+                    // a client waiting on it sees JobNew + JobRemoved, and
+                    // the mirror never resurrects it.
+                    free_job(&mut state, primary_job_id);
+                    emit_job_new(&mut state, primary_job_id, unit_name, step_kind);
+                    emit_job_completed(&mut state, primary_job_id, unit_name, JobResultKind::Done);
                 }
             } else {
                 if let Some(ref inv_id) = invocation_id {
@@ -1744,7 +1671,6 @@ async fn enqueue_job_tracked(
             buf.freeze(),
             job_id,
             name.clone(),
-            is_root,
         )));
 
         // The step's completion mark lives in the per-transaction registry
@@ -1800,28 +1726,44 @@ pub async fn request_all_worker_syncs(allocator: AllocatorHandle) {
 
 /// Emit a JobNew signal for a newly created job (must hold the write lock).
 fn emit_job_new(state: &mut AllocatorState, job_id: u64, unit_name: &str, _kind: JobKind) {
-    if let Some(ref tx) = state.job_new_tx {
-        let _ = tx.send(JobNewInfo {
-            job_id,
-            unit_name: unit_name.to_string(),
-        });
-    }
+    state.send_job_event(JobLifecycle::New(JobNewInfo {
+        job_id,
+        unit_name: unit_name.to_string(),
+    }));
 }
 
-/// Emit JobNew without holding the write lock (acquires it briefly).
+/// Emit a JobNew signal without holding the write lock (acquires it briefly).
 fn emit_job_new_after_lock(
     allocator: AllocatorHandle,
     job_id: u64,
     unit_name: &str,
     _kind: JobKind,
 ) {
-    let state = allocator.read();
-    if let Some(ref tx) = state.job_new_tx {
-        let _ = tx.send(JobNewInfo {
-            job_id,
-            unit_name: unit_name.to_string(),
-        });
-    }
+    let mut state = allocator.write();
+    emit_job_new(&mut state, job_id, unit_name, JobKind::Start);
+}
+
+/// Emit a `job.completed` signal (job reached a terminal state; must hold
+/// the write lock).
+pub(crate) fn emit_job_completed(
+    state: &mut AllocatorState,
+    job_id: u64,
+    unit_name: &str,
+    result: JobResultKind,
+) {
+    state.send_job_event(JobLifecycle::Completed(JobCompletion {
+        job_id,
+        unit_name: unit_name.to_string(),
+        result,
+    }));
+}
+
+/// Free a finished job's table entry (`job_free()` semantics: the job table
+/// only holds in-flight jobs; a terminal job is gone).  Returns the removed
+/// entry, so callers can close it with a completion event only when it was
+/// really there.
+pub(crate) fn free_job(state: &mut AllocatorState, job_id: u64) -> Option<Job> {
+    state.jobs.remove(&job_id)
 }
 
 /// Update unit runtime state from a task result received from a worker.
@@ -1960,11 +1902,16 @@ pub fn handle_task_result(
             state.invocation_ids.remove(unit_name);
         }
 
-        // Find and update the associated job.
+        // Find and update the associated job.  The task's kind narrows the
+        // lookup: a unit can carry two in-flight jobs (e.g. Start and Stop
+        // racing), and matching only on the unit name would close the wrong
+        // one — leaving the real job Running forever.
         let job_id = state
             .jobs
             .values()
-            .find(|j| j.unit_name == unit_name && matches!(j.status, JobStatus::Running))
+            .find(|j| {
+                j.unit_name == unit_name && j.kind == kind && matches!(j.status, JobStatus::Running)
+            })
             .map(|j| j.id);
 
         if let Some(jid) = job_id {
@@ -1983,32 +1930,42 @@ pub fn handle_task_result(
                     JobStatus::Failed(message.to_string())
                 };
                 // Revert cached state to inactive when a Start/Restart job
-                // directly fails.  This prevents unit_states from showing
-                // "active" for a unit whose own job failed.
-                if !success && matches!(kind, JobKind::Start | JobKind::Restart) {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_micros() as u64)
-                        .unwrap_or(0);
-                    let entry = state.unit_states.entry(unit_name.to_string()).or_default();
-                    if !matches!(entry.active_state.as_str(), "inactive" | "failed") {
-                        entry.active_enter_timestamp = 0;
-                    }
-                    entry.active_state = "inactive".to_string();
-                    entry.sub_state.clear();
-                    entry.invocation_id.clear();
-                    if entry.inactive_enter_timestamp == 0 {
-                        entry.inactive_enter_timestamp = now;
+                // directly fails, and flag the unit so a stale worker push
+                // reporting "active" is rejected later — the failed job is
+                // freed from the table immediately, so the flag (not the job
+                // table) carries the failure forward.  A successful start
+                // clears it.
+                if matches!(kind, JobKind::Start | JobKind::Restart) {
+                    if success {
+                        state
+                            .unit_states
+                            .entry(unit_name.to_string())
+                            .or_default()
+                            .recent_start_failed = false;
+                    } else {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_micros() as u64)
+                            .unwrap_or(0);
+                        let entry = state.unit_states.entry(unit_name.to_string()).or_default();
+                        if !matches!(entry.active_state.as_str(), "inactive" | "failed") {
+                            entry.active_enter_timestamp = 0;
+                        }
+                        entry.active_state = "inactive".to_string();
+                        entry.sub_state.clear();
+                        entry.invocation_id.clear();
+                        if entry.inactive_enter_timestamp == 0 {
+                            entry.inactive_enter_timestamp = now;
+                        }
+                        entry.recent_start_failed = true;
                     }
                 }
             }
-            if let Some(ref tx) = state.job_completion_tx {
-                let _ = tx.send(JobCompletion {
-                    job_id: jid,
-                    unit_name: unit_name.to_string(),
-                    result: result_kind,
-                });
-            }
+            // A terminal job is freed from the table with a completion event
+            // closing it (`job_free()` semantics: the table only holds
+            // in-flight jobs).
+            free_job(&mut state, jid);
+            emit_job_completed(&mut state, jid, unit_name, result_kind);
         }
 
         // --- Failure propagation (systemd job_fail_dependencies()) ---
@@ -2226,7 +2183,8 @@ fn fail_dependents(state: &mut AllocatorState, failed: &str, kind: JobKind) {
                 // just failed, so the unit is not actually active.  This
                 // prevents unit_states from showing "active" for a unit whose
                 // job failed (e.g. poweroff.target whose dependency
-                // systemd-poweroff.service failed).
+                // systemd-poweroff.service failed), and flags the unit so a
+                // later stale worker push cannot resurrect it.
                 {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -2242,14 +2200,12 @@ fn fail_dependents(state: &mut AllocatorState, failed: &str, kind: JobKind) {
                     if entry.inactive_enter_timestamp == 0 {
                         entry.inactive_enter_timestamp = now;
                     }
+                    entry.recent_start_failed = true;
                 }
-                if let Some(ref tx) = state.job_completion_tx {
-                    let _ = tx.send(JobCompletion {
-                        job_id: jid,
-                        unit_name: dep.clone(),
-                        result: JobResultKind::Dependency,
-                    });
-                }
+                // The dependent's job is terminal now: free the entry and
+                // close it with its completion event.
+                free_job(state, jid);
+                emit_job_completed(state, jid, &dep, JobResultKind::Dependency);
                 queue.push_back(dep);
             }
         }
@@ -2503,12 +2459,31 @@ fn mount_config_from_section(m: &MountSection) -> MountConfig {
 // Job timeout helpers
 // ---------------------------------------------------------------------------
 
+/// Fail a still-running job on timeout, then free its entry and close it with
+/// a `job.completed` event (`JobResultKind::Timeout`).  A job that already
+/// reached a terminal state (its result won the race) is left alone: it was
+/// freed by the path that completed it.
+fn timeout_job(state: &mut AllocatorState, job_id: u64, name: &str, message: &str) {
+    let timed_out = state.jobs.get_mut(&job_id).is_some_and(|job| {
+        if matches!(job.status, JobStatus::Running) {
+            job.status = JobStatus::Failed(message.to_string());
+            true
+        } else {
+            false
+        }
+    });
+    if timed_out {
+        free_job(state, job_id);
+        emit_job_completed(state, job_id, name, JobResultKind::Timeout);
+    }
+}
+
 /// Spawn a timeout task for a job, returning an `AbortHandle` that can be used
 /// to cancel the timeout if the job completes normally.
 ///
 /// Start/Restart jobs use `TimeoutStartSec` (start timeout) plus a longer
 /// job-running watchdog.  Stop jobs use `TimeoutStopSec`.  Reload jobs use a
-/// default 60 s timeout.
+/// default 60 s timeout.
 fn spawn_job_timeout(
     allocator: AllocatorHandle,
     task_id: u64,
@@ -2537,20 +2512,12 @@ fn spawn_job_timeout(
                 // Start timeout
                 tokio::time::sleep(Duration::from_secs(start_secs)).await;
                 let mut state = alloc.write();
-                if let Some(job) = state.jobs.get_mut(&job_id) {
-                    if matches!(job.status, JobStatus::Running) {
-                        job.status = JobStatus::Failed(
-                            sysa::l10n::t_("TimeoutStartSec exceeded").to_string(),
-                        );
-                        if let Some(ref tx) = state.job_completion_tx {
-                            let _ = tx.send(JobCompletion {
-                                job_id,
-                                unit_name: name_clone,
-                                result: JobResultKind::Timeout,
-                            });
-                        }
-                    }
-                }
+                timeout_job(
+                    &mut state,
+                    job_id,
+                    &name_clone,
+                    &sysa::l10n::t_("TimeoutStartSec exceeded"),
+                );
                 // Advance the serial chain so a dependent step is not
                 // starved by a timed-out predecessor.
                 if let Some(tx) = state.serial_completion_txs.remove(&task_id) {
@@ -2576,20 +2543,12 @@ fn spawn_job_timeout(
             let handle = tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(stop_secs)).await;
                 let mut state = alloc.write();
-                if let Some(job) = state.jobs.get_mut(&job_id) {
-                    if matches!(job.status, JobStatus::Running) {
-                        job.status = JobStatus::Failed(
-                            sysa::l10n::t_("TimeoutStopSec exceeded").to_string(),
-                        );
-                        if let Some(ref tx) = state.job_completion_tx {
-                            let _ = tx.send(JobCompletion {
-                                job_id,
-                                unit_name: name_clone,
-                                result: JobResultKind::Timeout,
-                            });
-                        }
-                    }
-                }
+                timeout_job(
+                    &mut state,
+                    job_id,
+                    &name_clone,
+                    &sysa::l10n::t_("TimeoutStopSec exceeded"),
+                );
                 // Advance the serial chain so a dependent step is not
                 // starved by a timed-out predecessor.
                 if let Some(tx) = state.serial_completion_txs.remove(&task_id) {
@@ -2607,20 +2566,12 @@ fn spawn_job_timeout(
             let handle = tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(reload_secs)).await;
                 let mut state = alloc.write();
-                if let Some(job) = state.jobs.get_mut(&job_id) {
-                    if matches!(job.status, JobStatus::Running) {
-                        job.status = JobStatus::Failed(
-                            sysa::l10n::t_("Reload timeout exceeded").to_string(),
-                        );
-                        if let Some(ref tx) = state.job_completion_tx {
-                            let _ = tx.send(JobCompletion {
-                                job_id,
-                                unit_name: name_clone,
-                                result: JobResultKind::Timeout,
-                            });
-                        }
-                    }
-                }
+                timeout_job(
+                    &mut state,
+                    job_id,
+                    &name_clone,
+                    &sysa::l10n::t_("Reload timeout exceeded"),
+                );
                 // Advance the serial chain so a dependent step is not
                 // starved by a timed-out predecessor.
                 if let Some(tx) = state.serial_completion_txs.remove(&task_id) {
@@ -3649,6 +3600,7 @@ mod tests {
                 active_state: active_state.to_string(),
                 sub_state: String::new(),
                 main_pid: 0,
+                recent_start_failed: false,
                 invocation_id: String::new(),
                 active_enter_timestamp: 0,
                 inactive_enter_timestamp: 0,
@@ -3789,10 +3741,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_enqueue_job_type_try_restart_of_inactive_unit_is_nop() {
-        // try-restart of an inactive unit collapses to Nop: the job is
-        // recorded and completes as done without touching any worker
-        // (systemd: JOB_NOP finishes immediately with JOB_DONE).
+        // try-restart of an inactive unit collapses to Nop: the job completes
+        // as done without touching any worker (systemd: JOB_NOP finishes
+        // immediately with JOB_DONE).  A terminal job leaves the table right
+        // away, so only its lifecycle events remain.
         let alloc = alloc_with_state("inactive");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        alloc.write().job_event_tx = Some(tx);
         let (job_id, kind) = enqueue_job_type(
             alloc.clone(),
             "demo.service",
@@ -3803,10 +3758,17 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(kind, JobKind::Nop);
+        assert!(matches!(
+            rx.try_recv().expect("job.new emitted"),
+            JobLifecycle::New(info) if info.job_id == job_id && info.unit_name == "demo.service"
+        ));
+        let JobLifecycle::Completed(done) = rx.try_recv().expect("job.completed emitted") else {
+            panic!("expected a completion event");
+        };
+        assert_eq!(done.job_id, job_id);
+        assert_eq!(done.result, JobResultKind::Done);
         let state = alloc.read();
-        let job = state.jobs.get(&job_id).expect("nop job recorded");
-        assert_eq!(job.kind, JobKind::Nop);
-        assert_eq!(job.status, JobStatus::Done);
+        assert!(state.jobs.get(&job_id).is_none(), "terminal job is freed");
         // No worker interaction: nothing was dispatched.
         assert!(state.task_kinds.is_empty());
     }
@@ -3824,10 +3786,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(kind, JobKind::Nop);
-        assert!(matches!(
-            alloc.read().jobs.get(&job_id).unwrap().status,
-            JobStatus::Done
-        ));
+        assert!(alloc.read().jobs.get(&job_id).is_none());
     }
 
     #[tokio::test]
@@ -3844,10 +3803,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(
-            alloc.read().jobs.get(&job_id).unwrap().status,
-            JobStatus::Done
-        );
+        assert!(alloc.read().jobs.get(&job_id).is_none());
     }
 
     #[tokio::test]
@@ -4081,10 +4037,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(
-            alloc.read().jobs.get(&job_id).unwrap().status,
-            JobStatus::Done
-        );
+        // Verify-active completes immediately (active → done, inactive →
+        // skipped); a terminal job is freed from the table.
+        assert!(alloc.read().jobs.get(&job_id).is_none());
 
         let alloc = alloc_with_state("inactive");
         let (job_id, _) = enqueue_job_type(
@@ -4096,10 +4051,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(
-            alloc.read().jobs.get(&job_id).unwrap().status,
-            JobStatus::Done
-        );
+        assert!(alloc.read().jobs.get(&job_id).is_none());
     }
 
     // =========================================================================
@@ -4157,24 +4109,9 @@ mod tests {
 
         fail_dependents(&mut state, "a.service", JobKind::Start);
 
-        assert!(matches!(
-            state
-                .jobs
-                .values()
-                .find(|j| j.unit_name == "b.service")
-                .unwrap()
-                .status,
-            JobStatus::Failed(_)
-        ));
-        assert!(matches!(
-            state
-                .jobs
-                .values()
-                .find(|j| j.unit_name == "c.service")
-                .unwrap()
-                .status,
-            JobStatus::Failed(_)
-        ));
+        // The dependents' jobs completed (result `dependency`) and were freed.
+        assert!(!state.jobs.values().any(|j| j.unit_name == "b.service"));
+        assert!(!state.jobs.values().any(|j| j.unit_name == "c.service"));
         assert!(matches!(
             state
                 .jobs
@@ -4229,15 +4166,8 @@ mod tests {
 
         fail_dependents(&mut state, "a.service", JobKind::Start);
 
-        assert!(matches!(
-            state
-                .jobs
-                .values()
-                .find(|j| j.unit_name == "b.service")
-                .unwrap()
-                .status,
-            JobStatus::Failed(_)
-        ));
+        // BindsTo= propagates the start failure: b's job completed and freed.
+        assert!(!state.jobs.values().any(|j| j.unit_name == "b.service"));
     }
 
     #[test]
@@ -4254,15 +4184,8 @@ mod tests {
 
         fail_dependents(&mut state, "a.service", JobKind::Stop);
 
-        assert!(matches!(
-            state
-                .jobs
-                .values()
-                .find(|j| j.unit_name == "b.service")
-                .unwrap()
-                .status,
-            JobStatus::Failed(_)
-        ));
+        // Conflicts= propagates the stop failure: b's job completed and freed.
+        assert!(!state.jobs.values().any(|j| j.unit_name == "b.service"));
     }
 
     #[test]
@@ -4327,13 +4250,18 @@ mod tests {
         state_with_job(&mut state, "b.service", JobKind::Start);
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        state.job_completion_tx = Some(tx);
+        state.job_event_tx = Some(tx);
 
         fail_dependents(&mut state, "a.service", JobKind::Start);
 
-        let completion = rx.try_recv().expect("completion emitted");
+        let ev = rx.try_recv().expect("completion emitted");
+        let JobLifecycle::Completed(completion) = ev else {
+            panic!("expected a completion event, got {ev:?}");
+        };
         assert_eq!(completion.unit_name, "b.service");
         assert_eq!(completion.result, JobResultKind::Dependency);
+        // The dependent's job is gone from the table once it completes.
+        assert!(!state.jobs.values().any(|j| j.unit_name == "b.service"));
     }
 
     #[test]
@@ -4416,10 +4344,8 @@ mod tests {
         );
 
         let state = alloc.read();
-        assert!(matches!(
-            state.jobs.get(&job_id).unwrap().status,
-            JobStatus::Failed(_)
-        ));
+        // The failed job reached a terminal state and was freed from the table.
+        assert!(state.jobs.get(&job_id).is_none(), "terminal job is freed");
         assert_eq!(
             state.unit_states.get("demo.service").unwrap().active_state,
             "inactive"
@@ -4455,6 +4381,7 @@ mod tests {
                 active_state: "active".to_string(),
                 sub_state: String::new(),
                 main_pid: 0,
+                recent_start_failed: false,
                 invocation_id: String::new(),
                 active_enter_timestamp: 0,
                 inactive_enter_timestamp: 0,
@@ -5469,6 +5396,7 @@ mod tests {
                     active_state: "active".to_string(),
                     sub_state: "exited".to_string(),
                     main_pid: 0,
+                    recent_start_failed: false,
                     invocation_id: String::new(),
                     active_enter_timestamp: 0,
                     inactive_enter_timestamp: 0,

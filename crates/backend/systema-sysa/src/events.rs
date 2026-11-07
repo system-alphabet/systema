@@ -38,60 +38,58 @@ async fn dispatch_control_event(
 pub async fn run(allocator: AllocatorHandle) -> Result<()> {
     info!("Starting control-plane event dispatch");
 
-    // job-completion → job.completed
-    let (completion_tx, mut completion_rx) =
-        tokio::sync::mpsc::unbounded_channel::<crate::state::JobCompletion>();
-    // job-new → job.new
-    let (job_new_tx, mut job_new_rx) =
-        tokio::sync::mpsc::unbounded_channel::<crate::state::JobNewInfo>();
+    // job.new / job.completed — one ordered channel for both lifecycle
+    // events.  A separate channel per event type cannot express the
+    // invariant "a job is never seen completed before its creation":
+    // independent consumers reorder events, and a `job.completed` that
+    // arrives at the mirror before its `job.new` would silently drop (the
+    // completion is a no-op there), then the late `job.new` would resurrect
+    // the finished job as running forever.  Emission sites guarantee
+    // program order (New before Completed) by sending through this single
+    // channel.
+    let (event_tx, mut event_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::state::JobLifecycle>();
     // unit-loaded → unit.new
     let (unit_loaded_tx, mut unit_loaded_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     {
         let mut state = allocator.write();
-        state.job_completion_tx = Some(completion_tx);
-        state.job_new_tx = Some(job_new_tx);
+        state.job_event_tx = Some(event_tx);
         state.unit_loaded_tx = Some(unit_loaded_tx);
     }
 
-    // job.completed
+    // job.new + job.completed (in program order)
     let alloc = allocator.clone();
     tokio::spawn(async move {
-        while let Some(completion) = completion_rx.recv().await {
-            let mut buf = BytesMut::new();
-            let _ = crate::snapshot::job_completion_event(
-                completion.job_id,
-                &completion.unit_name,
-                &completion.result,
-            )
-            .encode(&mut buf);
-            dispatch_control_event(
-                &alloc,
-                sysa::event_bus::EventTopic::JobCompleted,
-                completion.unit_name,
-                bytes::Bytes::from(buf),
-            )
-            .await;
-        }
-    });
-
-    // job.new
-    let alloc = allocator.clone();
-    tokio::spawn(async move {
-        while let Some(info) = job_new_rx.recv().await {
-            let mut buf = BytesMut::new();
-            let _ = sysa::proto::JobEvent {
-                job_id: info.job_id,
-                unit_name: info.unit_name.clone(),
-                result: String::new(),
-            }
-            .encode(&mut buf);
-            dispatch_control_event(
-                &alloc,
-                sysa::event_bus::EventTopic::JobNew,
-                info.unit_name,
-                bytes::Bytes::from(buf),
-            )
-            .await;
+        while let Some(ev) = event_rx.recv().await {
+            let (topic, event) = match ev {
+                crate::state::JobLifecycle::Completed(completion) => {
+                    let mut buf = BytesMut::new();
+                    let _ = crate::snapshot::job_completion_event(
+                        completion.job_id,
+                        &completion.unit_name,
+                        &completion.result,
+                    )
+                    .encode(&mut buf);
+                    (
+                        sysa::event_bus::EventTopic::JobCompleted,
+                        (completion.job_id, completion.unit_name, buf),
+                    )
+                }
+                crate::state::JobLifecycle::New(info) => {
+                    let mut buf = BytesMut::new();
+                    let _ = sysa::proto::JobEvent {
+                        job_id: info.job_id,
+                        unit_name: info.unit_name.clone(),
+                        result: String::new(),
+                    }
+                    .encode(&mut buf);
+                    (
+                        sysa::event_bus::EventTopic::JobNew,
+                        (info.job_id, info.unit_name, buf),
+                    )
+                }
+            };
+            dispatch_control_event(&alloc, topic, event.1, bytes::Bytes::from(event.2)).await;
         }
     });
 

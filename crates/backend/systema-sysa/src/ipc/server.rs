@@ -444,20 +444,21 @@ async fn handle_worker_session(
                                 result.unit_failure,
                             );
                             // After the job is updated, check whether this
-                            // unit's Start/Restart job ended in Failed (e.g.
+                            // unit's Start/Restart job ended in failure (e.g.
                             // via dependency failure in `fail_dependents`).
                             // If so, the unit did NOT successfully start and
                             // the cache must reflect "inactive" regardless of
                             // what the worker reports — the worker's
                             // "active" status is stale (the worker started
                             // the resource but the job-level transaction
-                            // failed).
+                            // failed).  The flag lives on the cached state
+                            // because a terminal job is freed from the table.
                             {
                                 let mut state = alloc_for_recv.write();
                                 if matches!(
                                     kind,
                                     crate::state::JobKind::Start | crate::state::JobKind::Restart
-                                ) && unit_has_failed_start_job(&state, &result.unit_name)
+                                ) && start_job_recently_failed(&state, &result.unit_name)
                                 {
                                     revert_cache_to_inactive(&mut state, &result.unit_name);
                                 } else if !result.result.is_empty() {
@@ -1043,24 +1044,25 @@ async fn handle_worker_session(
         let mut state = allocator.write();
         state.workers.remove(&worker_id);
 
-        use crate::state::{JobCompletion, JobResultKind, JobStatus};
-        let stale: Vec<JobCompletion> = state
+        use crate::scheduler::{emit_job_completed, free_job};
+        use crate::state::JobStatus;
+        let stale: Vec<(u64, String)> = state
             .jobs
-            .values_mut()
+            .values()
             .filter(|j| matches!(j.status, JobStatus::Running))
-            .map(|j| {
-                j.status = JobStatus::Cancelled;
-                JobCompletion {
-                    job_id: j.id,
-                    unit_name: j.unit_name.clone(),
-                    result: JobResultKind::Cancelled,
-                }
-            })
+            .map(|j| (j.id, j.unit_name.clone()))
             .collect();
 
-        if let Some(ref tx) = state.job_completion_tx {
-            for completion in stale {
-                let _ = tx.send(completion);
+        // A cancelled job is terminal: free its entry and close it with a
+        // `job.completed` event so the bridge mirror drops it as well.
+        for (job_id, unit_name) in stale {
+            if free_job(&mut state, job_id).is_some() {
+                emit_job_completed(
+                    &mut state,
+                    job_id,
+                    &unit_name,
+                    crate::state::JobResultKind::Cancelled,
+                );
             }
         }
     }
@@ -1607,21 +1609,20 @@ fn revert_cache_to_inactive(state: &mut crate::state::AllocatorState, unit_name:
     }
 }
 
-/// Whether the unit currently has a terminal-Failed Start/Restart job.
+/// Whether the unit's most recent Start/Restart job failed, as recorded on
+/// the cached state.
 ///
 /// Used to guard the `method.result` cache path: a worker may report a unit
 /// as `active` (e.g. a target worker that already set the target state) even
 /// though the unit's job failed (e.g. via dependency failure).  The stale
 /// worker status must not overwrite the failed-job reality back to `active`.
-fn unit_has_failed_start_job(state: &crate::state::AllocatorState, unit_name: &str) -> bool {
-    state.jobs.values().any(|j| {
-        j.unit_name == unit_name
-            && matches!(
-                j.kind,
-                crate::state::JobKind::Start | crate::state::JobKind::Restart
-            )
-            && matches!(j.status, crate::state::JobStatus::Failed(_))
-    })
+/// The flag lives on the cache because a terminal job is freed from the job
+/// table immediately.
+fn start_job_recently_failed(state: &crate::state::AllocatorState, unit_name: &str) -> bool {
+    state
+        .unit_states
+        .get(unit_name)
+        .is_some_and(|c| c.recent_start_failed)
 }
 
 /// Optimistically update the runtime cache when a task completes, based on
@@ -2008,52 +2009,24 @@ mod tests {
     }
 
     #[test]
-    fn unit_has_failed_start_job_detects_failed_start() {
-        use crate::state::{Job, JobKind, JobStatus};
-
+    fn start_job_recently_failed_uses_cached_flag() {
         let mut state = crate::state::AllocatorState::new();
-        state.jobs.insert(
-            1,
-            Job {
-                id: 1,
-                unit_name: "poweroff.target".to_string(),
-                kind: JobKind::Start,
-                status: JobStatus::Failed(
-                    "dependency failed: systemd-poweroff.service".to_string(),
-                ),
-                timeout_abort: None,
+        state.unit_states.insert(
+            "poweroff.target".to_string(),
+            CachedUnitState {
+                active_state: "inactive".to_string(),
+                recent_start_failed: true,
+                ..Default::default()
             },
         );
 
-        assert!(unit_has_failed_start_job(&state, "poweroff.target"));
-        // A failed Restart job is also a failed start-type job.
-        state.jobs.insert(
-            4,
-            Job {
-                id: 4,
-                unit_name: "reloadable.service".to_string(),
-                kind: JobKind::Restart,
-                status: JobStatus::Failed("boom".to_string()),
-                timeout_abort: None,
-            },
-        );
-        assert!(unit_has_failed_start_job(&state, "reloadable.service"));
-        // Other unit / other kinds / non-terminal jobs are not flagged.
-        assert!(!unit_has_failed_start_job(
+        assert!(start_job_recently_failed(&state, "poweroff.target"));
+        // Units without the flag — and unknown units — are not rejected.
+        assert!(!start_job_recently_failed(
             &state,
             "systemd-poweroff.service"
         ));
-        state.jobs.insert(
-            2,
-            Job {
-                id: 2,
-                unit_name: "other.service".to_string(),
-                kind: JobKind::Start,
-                status: JobStatus::Running,
-                timeout_abort: None,
-            },
-        );
-        assert!(!unit_has_failed_start_job(&state, "other.service"));
+        assert!(!start_job_recently_failed(&state, "other.service"));
     }
 
     /// A worker's `worker.exit` goodbye is recognised (no "Unknown method"
