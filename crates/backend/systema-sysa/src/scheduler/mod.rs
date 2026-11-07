@@ -32,7 +32,9 @@ use sysa::proto::{
 };
 
 use crate::scheduler::job_type::{job_type_collapse, JobType, UnitActiveState};
-use crate::scheduler::transaction::{build_plan, PlanError, PlannerMode};
+use crate::scheduler::transaction::{
+    build_plan, build_plan_multi, PlanError, PlannerMode, TransactionPlan,
+};
 
 /// Map a transaction job type onto the public job kind used for worker
 /// dispatch. `Nop` and `VerifyActive` steps need no worker interaction:
@@ -127,16 +129,15 @@ fn check_mode_constraints(
     Ok(())
 }
 
-/// Enqueue a start job and wait until every step of its plan has been handed
-/// to its worker, i.e. until the step's ordering predecessors completed.
+/// Enqueue one start job and wait until every step of its plan has been
+/// handed to its worker.
 ///
-/// For batch callers that plan many transactions back to back (the boot
-/// control phase): the planner treats every running job as installed, so a
-/// batch that returns before earlier plans dispatch would plan later roots
-/// (default.target) against hundreds of in-flight jobs it cannot delete to
-/// break an ordering cycle.  Bus callers must use [`enqueue_start_with_mode`],
-/// which returns as soon as the job is queued.
-pub async fn enqueue_start_after_dispatch(
+/// Only the batch fallback uses this: when the single boot transaction
+/// cannot be planned, the roots are enqueued one at a time, and each root
+/// must be dispatched before the next one is planned so the planner does not
+/// see hundreds of in-flight jobs it cannot delete to break an ordering
+/// cycle.  The normal paths return as soon as the job is queued.
+async fn enqueue_start_after_dispatch(
     allocator: AllocatorHandle,
     unit_name: &str,
     mode: JobMode,
@@ -1095,83 +1096,13 @@ async fn enqueue_job_tracked(
     // A second `UnitNotFound` after the pre-scan gets one more definition
     // round for the exact missing unit (bounded retry); if it still fails,
     // the plan error is reported as before.
-    let plan = {
-        let missing = {
-            let state = allocator.read();
-            let units: HashMap<String, UnitFile> = state.units.clone();
-            collect_missing_units(&units, unit_name)
-        };
-
-        if !missing.is_empty() {
-            info!(
-                "Pre-plan scan: {} referenced-but-missing unit(s) ({:?}); requesting definitions via unit.define",
-                missing.len(),
-                missing
-            );
-            request_unit_definition(allocator.clone(), &missing).await?;
-        }
-
-        // Build the plan, materialising worker-provided dynamic definitions
-        // one layer at a time: the pre-plan scan above only expands the
-        // dependency closure one level (missing units' own dependencies are
-        // not yet known), so a chain `a -> b -> c` can still hit
-        // `UnitNotFound` for the second layer.  Loop until the plan builds
-        // or no definition source can satisfy the missing unit.
-        let mut attempts: u32 = 0;
-        loop {
-            let (units, states, installed) = {
-                let state = allocator.read();
-                (
-                    state.units.clone(),
-                    state
-                        .unit_states
-                        .iter()
-                        .map(|(n, c)| {
-                            (
-                                n.clone(),
-                                UnitActiveState::from_active_state_str(&c.active_state),
-                            )
-                        })
-                        .collect::<HashMap<String, UnitActiveState>>(),
-                    state
-                        .jobs
-                        .values()
-                        .filter(|j| matches!(j.status, JobStatus::Running))
-                        .map(|j| (j.unit_name.clone(), JobType::from_job_kind(j.kind)))
-                        .collect::<HashMap<String, JobType>>(),
-                )
-            };
-            match build_plan(
-                &units,
-                &states,
-                &installed,
-                unit_name,
-                JobType::from_job_kind(kind),
-                PlannerMode::from_job_mode(mode),
-            ) {
-                Ok(plan) => break plan,
-                Err(PlanError::UnitNotFound(name)) if attempts < UNIT_DEFINE_MAX_ROUNDS => {
-                    // Bounded retry: the pre-scan walk mirrors the planner's
-                    // edge expansion but may miss an edge it only discovers
-                    // later; ask for the exact missing unit once more.
-                    warn!(
-                        "Transaction for {} failed with missing unit {name} after pre-scan; one unit.define retry (round {})",
-                        unit_name,
-                        attempts + 1
-                    );
-                    request_unit_definition(allocator.clone(), std::slice::from_ref(&name)).await?;
-                    attempts += 1;
-                }
-                Err(e) => {
-                    warn!(
-                        "Transaction for {} ({kind:?}, mode={mode:?}) failed: {e}",
-                        unit_name
-                    );
-                    bail!("{}", e);
-                }
-            }
-        }
-    };
+    let plan = build_plan_for_roots(
+        &allocator,
+        &[(unit_name, JobType::from_job_kind(kind))],
+        mode,
+        unit_name,
+    )
+    .await?;
 
     debug!(
         "Plan for {unit_name}: {:?}",
@@ -1228,6 +1159,39 @@ async fn enqueue_job_tracked(
     }
 
     let primary_job_id = next_job_id();
+    let mut root_job_ids = HashMap::new();
+    root_job_ids.insert(unit_name.to_string(), primary_job_id);
+    dispatch_plan(
+        allocator,
+        &plan,
+        &root_job_ids,
+        unit_name,
+        mode,
+        ignore_deps,
+        dispatches,
+    )
+    .await?;
+    Ok(primary_job_id)
+}
+
+/// Create the job records for a built plan and hand every step's
+/// `method.call` to its worker once the step's ordering predecessors
+/// completed.
+///
+/// `root_job_ids` holds the ids already reported to the caller for the
+/// directly requested roots; their plan steps reuse those ids, so a client
+/// waiting on one sees exactly one `job.new`/`job.completed` pair.  Shared by
+/// the single-root enqueue path and [`enqueue_start_batch`], which plans the
+/// whole boot set as one transaction.
+async fn dispatch_plan(
+    allocator: AllocatorHandle,
+    plan: &TransactionPlan,
+    root_job_ids: &HashMap<String, u64>,
+    error_owner: &str,
+    mode: JobMode,
+    ignore_deps: bool,
+    dispatches: &mut Vec<tokio::task::JoinHandle<()>>,
+) -> Result<()> {
     let serial_mode = matches!(mode, JobMode::Replace | JobMode::ReplaceIrreversibly);
 
     // Per-step completion registry for this transaction: a step waits on
@@ -1258,13 +1222,11 @@ async fn enqueue_job_tracked(
             );
             continue;
         };
-        // The primary job ID belongs to the unit that was directly requested.
-        let is_root = name.as_str() == unit_name;
-        let job_id = if is_root {
-            primary_job_id
-        } else {
-            next_job_id()
-        };
+        // A directly requested root reuses the id the caller already
+        // reported; every other step gets a fresh one.
+        let root_job_id = root_job_ids.get(name.as_str()).copied();
+        let is_root = root_job_id.is_some();
+        let job_id = root_job_id.unwrap_or_else(next_job_id);
         created_job_ids.push((job_id, name.clone()));
 
         // Idempotency: skip if there is already an in-flight job of the same kind.
@@ -1282,13 +1244,23 @@ async fn enqueue_job_tracked(
                 })
                 .map(|j| j.id);
 
-            if let Some(existing_jid) = existing_running_job_id {
+            if existing_running_job_id.is_some() {
                 debug!(
                     "Skipping {:?} for {} (existing job running)",
                     step_kind, name
                 );
                 if is_root {
-                    return Ok(existing_jid);
+                    // The in-flight job is the one doing the work (systemd
+                    // merges a second StartUnit into it); close the id the
+                    // caller already reported so it still sees JobNew +
+                    // JobRemoved in order.
+                    let mut state = allocator.write();
+                    emit_job_new(&mut state, job_id, name, step_kind);
+                    emit_job_completed(&mut state, job_id, name, JobResultKind::Done);
+                    let (mark_tx, mark_rx) = tokio::sync::watch::channel(true);
+                    drop(mark_tx);
+                    step_marks.insert(name.clone(), mark_rx);
+                    continue;
                 }
                 // The in-flight job is the one doing the work; dependents
                 // waiting on this step treat it as satisfied.
@@ -1327,7 +1299,6 @@ async fn enqueue_job_tracked(
                     let mut state = allocator.write();
                     emit_job_new(&mut state, job_id, &name, step_kind);
                     emit_job_completed(&mut state, job_id, &name, JobResultKind::Skipped);
-                    return Ok(job_id);
                 }
                 continue;
             }
@@ -1355,12 +1326,9 @@ async fn enqueue_job_tracked(
                 drop(mark_tx);
                 step_marks.insert(name.clone(), mark_rx);
                 if is_root {
-                    {
-                        let mut state = allocator.write();
-                        emit_job_new(&mut state, job_id, &name, step_kind);
-                        emit_job_completed(&mut state, job_id, &name, JobResultKind::Done);
-                    }
-                    return Ok(job_id);
+                    let mut state = allocator.write();
+                    emit_job_new(&mut state, job_id, &name, step_kind);
+                    emit_job_completed(&mut state, job_id, &name, JobResultKind::Done);
                 }
                 continue;
             }
@@ -1395,7 +1363,7 @@ async fn enqueue_job_tracked(
             (None, _) => {
                 let err = l10n::fmt(l10n::t_("No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."), &[
                     ("unit_type", &unit_type),
-                    ("unit_name", unit_name),
+                    ("unit_name", error_owner),
                     ("name", name),
                 ]);
                 warn!("{}", err);
@@ -1409,13 +1377,18 @@ async fn enqueue_job_tracked(
                     // fails, the steps already dispatched are cancelled).
                     let mut closed: Vec<(u64, String, JobResultKind)> = Vec::new();
                     for (jid, jname) in &created_job_ids {
-                        free_job(&mut state, *jid);
-                        state.serial_completion_txs.remove(jid);
                         let result = if *jid == job_id {
+                            // This step never entered the job table; its
+                            // JobNew was emitted above, so close it here.
                             JobResultKind::Failed
-                        } else {
+                        } else if free_job(&mut state, *jid).is_some() {
                             JobResultKind::Cancelled
+                        } else {
+                            // Already completed by the EALREADY / condition /
+                            // duplicate path: nothing is in flight to cancel.
+                            continue;
                         };
+                        state.serial_completion_txs.remove(jid);
                         closed.push((*jid, jname.clone(), result));
                     }
                     for (jid, jname, result) in closed {
@@ -1474,9 +1447,9 @@ async fn enqueue_job_tracked(
                     // was dispatched for this id, so announce then close it:
                     // a client waiting on it sees JobNew + JobRemoved, and
                     // the mirror never resurrects it.
-                    free_job(&mut state, primary_job_id);
-                    emit_job_new(&mut state, primary_job_id, unit_name, step_kind);
-                    emit_job_completed(&mut state, primary_job_id, unit_name, JobResultKind::Done);
+                    free_job(&mut state, job_id);
+                    emit_job_new(&mut state, job_id, name, step_kind);
+                    emit_job_completed(&mut state, job_id, name, JobResultKind::Done);
                 }
             } else {
                 if let Some(ref inv_id) = invocation_id {
@@ -1679,7 +1652,422 @@ async fn enqueue_job_tracked(
         // chain handoff is needed here.
     }
 
-    Ok(primary_job_id)
+    Ok(())
+}
+
+/// Build one transaction for `roots`, materialising missing definitions
+/// (`unit.define`) before planning and retrying one definition layer at a
+/// time.
+///
+/// `label` only names the transaction in diagnostics.  Shared by the
+/// single-root enqueue path and [`enqueue_start_batch`].
+async fn build_plan_for_roots(
+    allocator: &AllocatorHandle,
+    roots: &[(&str, JobType)],
+    mode: JobMode,
+    label: &str,
+) -> Result<TransactionPlan> {
+    let root_names: Vec<&str> = roots.iter().map(|(name, _)| *name).collect();
+
+    // On-demand materialization (unit.define): before planning, walk the
+    // dependency closure and request every referenced-but-missing unit from
+    // the worker that owns its unit type, then commit the definitions through
+    // the same idempotent merge as the finder path.
+    let missing = {
+        let state = allocator.read();
+        if root_names.len() == 1 {
+            // The single-root path keeps its dedicated walk; the multi-root
+            // walk is only needed by the batch transaction.
+            collect_missing_units(&state.units, root_names[0])
+        } else {
+            collect_missing_units_multi(&state.units, &root_names)
+        }
+    };
+    if !missing.is_empty() {
+        info!(
+            "Pre-plan scan: {} referenced-but-missing unit(s) ({:?}); requesting definitions via unit.define",
+            missing.len(),
+            missing
+        );
+        request_unit_definition(allocator.clone(), &missing).await?;
+    }
+
+    // The pre-plan scan only expands the closure one level (a missing unit's
+    // own dependencies are not known yet), so a chain `a -> b -> c` can still
+    // hit `UnitNotFound` for the second layer.  Loop until the plan builds or
+    // no definition source can satisfy the missing unit.
+    let mut attempts: u32 = 0;
+    loop {
+        let (units, states, installed) = {
+            let state = allocator.read();
+            (
+                state.units.clone(),
+                state
+                    .unit_states
+                    .iter()
+                    .map(|(n, c)| {
+                        (
+                            n.clone(),
+                            UnitActiveState::from_active_state_str(&c.active_state),
+                        )
+                    })
+                    .collect::<HashMap<String, UnitActiveState>>(),
+                state
+                    .jobs
+                    .values()
+                    .filter(|j| matches!(j.status, JobStatus::Running))
+                    .map(|j| (j.unit_name.clone(), JobType::from_job_kind(j.kind)))
+                    .collect::<HashMap<String, JobType>>(),
+            )
+        };
+        let planner_mode = PlannerMode::from_job_mode(mode);
+        let plan = match roots {
+            [(root, root_type)] => {
+                build_plan(&units, &states, &installed, root, *root_type, planner_mode)
+            }
+            _ => build_plan_multi(&units, &states, &installed, roots, planner_mode),
+        };
+        match plan {
+            Ok(plan) => return Ok(plan),
+            Err(PlanError::UnitNotFound(name)) if attempts < UNIT_DEFINE_MAX_ROUNDS => {
+                warn!(
+                    "Transaction for {} failed with missing unit {name} after pre-scan; one unit.define retry (round {})",
+                    label,
+                    attempts + 1
+                );
+                request_unit_definition(allocator.clone(), std::slice::from_ref(&name)).await?;
+                attempts += 1;
+            }
+            Err(e) => {
+                warn!("Transaction for {label} (mode={mode:?}) failed: {e}");
+                bail!("{}", e);
+            }
+        }
+    }
+}
+
+/// The pre-plan outcome for one requested batch root.
+enum BatchStart {
+    /// A job was created and completed immediately (active unit or unmet
+    /// asserts); its id is reported to the caller.
+    Completed(u64),
+    /// An in-flight job of the same kind already covers the unit.
+    Merged(u64),
+    /// The unit joins the batch transaction as an anchor.
+    Anchor,
+}
+
+/// Per-name result of [`enqueue_start_batch`], in request order.
+#[derive(Clone)]
+enum BatchOutcome {
+    Job(u64),
+    Failed(String),
+}
+
+impl BatchOutcome {
+    fn into_result(self) -> Result<u64> {
+        match self {
+            BatchOutcome::Job(id) => Ok(id),
+            BatchOutcome::Failed(message) => Err(anyhow::anyhow!(message)),
+        }
+    }
+}
+
+/// Root checks for [`enqueue_start_batch`], mirroring the per-unit checks
+/// [`enqueue_job_tracked`] performs before planning a single root.
+async fn prepare_batch_start(
+    allocator: &AllocatorHandle,
+    unit_name: &str,
+    mode: JobMode,
+) -> Result<BatchStart> {
+    // A name without a definition (and without a registered template) cannot
+    // be an anchor: report it alone instead of failing the whole batch.
+    crate::unit::template::ensure_defined(allocator, unit_name)?;
+
+    // --- Mode/type validation (manager_add_job_full) ---
+    {
+        let state = allocator.read();
+        let allow_isolate = state
+            .units
+            .get(unit_name)
+            .map(|u| u.unit.allow_isolate)
+            .unwrap_or(false);
+        check_mode_constraints(mode, JobKind::Start, unit_name, allow_isolate)?;
+    }
+
+    // --- Already-active short-circuit (systemd unit_start -> -EALREADY) ---
+    {
+        let state = allocator.read();
+        if state
+            .unit_states
+            .get(unit_name)
+            .map(|c| c.active_state == "active")
+            .unwrap_or(false)
+        {
+            let job_id = next_job_id();
+            let mut state = allocator.write();
+            emit_job_new(&mut state, job_id, unit_name, JobKind::Start);
+            emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Done);
+            return Ok(BatchStart::Completed(job_id));
+        }
+    }
+
+    sysa::notify::broadcast(&[("UNIT_STARTING", unit_name)]);
+
+    // --- Non-transient scopes are refused (systemd scope_start) ---
+    {
+        let state = allocator.read();
+        if let Some(unit) = state.units.get(unit_name) {
+            if unit.kind == UnitKind::Scope && !unit.transient {
+                bail!(
+                    "{}",
+                    l10n::fmt(
+                        l10n::t_("Scope {unit_name} is not transient and cannot be started."),
+                        &[("unit_name", unit_name)],
+                    )
+                );
+            }
+        }
+    }
+
+    // --- Every root needs a worker that owns its unit type ---
+    {
+        let state = allocator.read();
+        let unit_type = state
+            .units
+            .get(unit_name)
+            .map(|u| u.kind.worker_type().to_string())
+            .unwrap_or_else(|| {
+                UnitKind::from_extension(unit_name)
+                    .worker_type()
+                    .to_string()
+            });
+        let has_worker = state
+            .workers
+            .values()
+            .any(|w| w.unit_types.contains(&unit_type));
+        if !has_worker {
+            bail!("{}", l10n::fmt(l10n::t_("No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"), &[
+                ("unit_type", &unit_type),
+                ("unit_name", unit_name),
+                ("kind", &format!("{:?}", JobKind::Start)),
+            ]));
+        }
+    }
+
+    let ignore_deps = matches!(
+        mode,
+        JobMode::IgnoreDependencies | JobMode::IgnoreRequirements
+    );
+
+    // --- Assert checks: fail start if asserts not met ---
+    if !ignore_deps {
+        let asserts_met = {
+            let state = allocator.read();
+            state
+                .units
+                .get(unit_name)
+                .map(|u| check_asserts(&u.unit))
+                .unwrap_or(true)
+        };
+        if !asserts_met {
+            warn!(
+                "Assert check failed for {}; unit start prevented",
+                unit_name
+            );
+            let job_id = next_job_id();
+            let mut state = allocator.write();
+            emit_job_new(&mut state, job_id, unit_name, JobKind::Start);
+            emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Dependency);
+            return Ok(BatchStart::Completed(job_id));
+        }
+    }
+
+    // --- Start rate limiting (systemd unit_start -> unit_test_start_limit) ---
+    {
+        let (interval_sec, burst, action) = {
+            let state = allocator.read();
+            state
+                .units
+                .get(unit_name)
+                .map(|u| {
+                    (
+                        u.unit.start_limit_interval_sec,
+                        u.unit.start_limit_burst,
+                        u.unit.start_limit_action.clone(),
+                    )
+                })
+                .unwrap_or((10, 5, StartLimitAction::None))
+        };
+        let rate_ok = {
+            let mut state = allocator.write();
+            let limit_state = state
+                .start_limit_state
+                .entry(unit_name.to_string())
+                .or_insert_with(StartLimitState::new);
+            limit_state.check_rate_limit(Duration::from_secs(interval_sec as u64), burst)
+        };
+        if !rate_ok {
+            warn!(
+                "Start rate limit exceeded for {} (interval={}s burst={}), refusing to start",
+                unit_name, interval_sec, burst
+            );
+            execute_start_limit_action(allocator.clone(), &action, unit_name).await;
+            bail!("{}", l10n::fmt(l10n::t_("Start rate limit exceeded for {unit_name} (interval={interval_sec}s burst={burst})."), &[
+                ("unit_name", unit_name),
+                ("interval_sec", &interval_sec.to_string()),
+                ("burst", &burst.to_string()),
+            ]));
+        }
+    }
+
+    // --- Job conflict detection (systemd job_merge) ---
+    {
+        let state = allocator.read();
+        let existing = state
+            .jobs
+            .values()
+            .find(|j| {
+                j.unit_name == unit_name
+                    && j.kind == JobKind::Start
+                    && matches!(j.status, JobStatus::Running)
+            })
+            .map(|j| j.id);
+        drop(state);
+        if let Some(existing_id) = existing {
+            if mode == JobMode::Fail {
+                bail!("{}", l10n::fmt(l10n::t_("Job already exists for unit {unit_name} (kind={kind}, id={existing_id})."), &[
+                    ("unit_name", unit_name),
+                    ("kind", &format!("{:?}", JobKind::Start)),
+                    ("existing_id", &existing_id.to_string()),
+                ]));
+            }
+            return Ok(BatchStart::Merged(existing_id));
+        }
+    }
+
+    Ok(BatchStart::Anchor)
+}
+
+/// Enqueue one Start transaction whose anchors are every name in `names`
+/// (systemd's `EnqueueUnitJobMany`), returning one result per requested name
+/// in request order.
+///
+/// The boot control phases hand System A the whole enabled set.  Planning
+/// each name as its own transaction loses the ordering edges *between* the
+/// roots: `polkit.service` is pulled in through `ModemManager.service`'s
+/// `Requires=`, but `dbus.socket` is only a dependency of a later anchor, so
+/// the two plans race and polkit exits before the system bus exists.  One
+/// transaction keeps every edge in the same plan, and the planner's wait
+/// relation then orders `polkit.service` after `basic.target` (and therefore
+/// after `dbus.socket`) as it does in systemd.
+///
+/// The function returns as soon as the jobs are created and their dispatch
+/// tasks are spawned: unlike a single-root wait-for-dispatch, the control
+/// phase must not stay blocked until the whole boot graph has been handed
+/// out.  Jobs already covered by an in-flight job are merged, active units
+/// complete immediately (`-EALREADY`).
+pub async fn enqueue_start_batch(
+    allocator: AllocatorHandle,
+    names: &[String],
+    mode: JobMode,
+) -> Vec<(String, Result<u64>)> {
+    let mut outcomes: HashMap<String, BatchOutcome> = HashMap::new();
+    let mut anchors: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for requested in names {
+        let resolved = allocator.read().resolve_unit_name(requested);
+        if !seen.insert(resolved.clone()) {
+            // Alias or duplicate of an earlier name: same unit, same outcome.
+            continue;
+        }
+        match prepare_batch_start(&allocator, &resolved, mode).await {
+            Ok(BatchStart::Completed(id)) | Ok(BatchStart::Merged(id)) => {
+                outcomes.insert(resolved, BatchOutcome::Job(id));
+            }
+            Ok(BatchStart::Anchor) => anchors.push(resolved),
+            Err(e) => {
+                outcomes.insert(resolved, BatchOutcome::Failed(e.to_string()));
+            }
+        }
+    }
+
+    if !anchors.is_empty() {
+        let roots: Vec<(&str, JobType)> = anchors
+            .iter()
+            .map(|name| (name.as_str(), JobType::Start))
+            .collect();
+        match build_plan_for_roots(&allocator, &roots, mode, "manager.start_units").await {
+            Ok(plan) => {
+                let mut root_job_ids = HashMap::with_capacity(anchors.len());
+                for name in &anchors {
+                    let job_id = next_job_id();
+                    root_job_ids.insert(name.clone(), job_id);
+                    outcomes.insert(name.clone(), BatchOutcome::Job(job_id));
+                }
+                let ignore_deps = matches!(
+                    mode,
+                    JobMode::IgnoreDependencies | JobMode::IgnoreRequirements
+                );
+                let error_owner = anchors.first().map(String::as_str).unwrap_or_default();
+                let mut dispatches = Vec::new();
+                if let Err(e) = dispatch_plan(
+                    allocator.clone(),
+                    &plan,
+                    &root_job_ids,
+                    error_owner,
+                    mode,
+                    ignore_deps,
+                    &mut dispatches,
+                )
+                .await
+                {
+                    for name in &anchors {
+                        outcomes.insert(name.clone(), BatchOutcome::Failed(e.to_string()));
+                    }
+                }
+                // Dropping the handles detaches the dispatch tasks; they keep
+                // running on the same runtime after this function returns.
+                drop(dispatches);
+            }
+            Err(e) => {
+                // One broken anchor must not keep the whole boot set down:
+                // fall back to per-root transactions, which isolate the
+                // planning failure to the unit that cannot be planned.
+                warn!(
+                    "manager.start_units: batch transaction failed ({e}); retrying each unit separately"
+                );
+                for name in &anchors {
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(15),
+                        enqueue_start_after_dispatch(allocator.clone(), name, mode),
+                    )
+                    .await;
+                    let outcome = match result {
+                        Ok(Ok(job_id)) => BatchOutcome::Job(job_id),
+                        Ok(Err(e)) => BatchOutcome::Failed(e.to_string()),
+                        Err(_) => BatchOutcome::Failed(l10n::t_("start timed out").to_string()),
+                    };
+                    outcomes.insert(name.clone(), outcome);
+                }
+            }
+        }
+    }
+
+    names
+        .iter()
+        .map(|requested| {
+            let resolved = allocator.read().resolve_unit_name(requested);
+            // Every requested name was either an anchor or got an outcome in
+            // the pre-check loop; a duplicate shares the first outcome.
+            let outcome = outcomes
+                .get(&resolved)
+                .cloned()
+                .unwrap_or_else(|| BatchOutcome::Failed(String::new()));
+            (requested.clone(), outcome.into_result())
+        })
+        .collect()
 }
 
 /// Ask every registered worker for a full state snapshot (`unit.sync_request`).
@@ -3691,20 +4079,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_enqueue_start_after_dispatch_waits_for_predecessors() {
-        // The boot batch must keep its back-pressure: it returns only once
-        // every step of the plan was dispatched, so the next root is planned
-        // against settled state rather than a pile of in-flight jobs.
+    async fn test_enqueue_start_batch_keeps_ordering_between_roots() {
+        // Two roots planned as one transaction: `a.service` is ordered before
+        // `b.service`, so b's method.call must wait for a to complete even
+        // though the batch itself returns as soon as both jobs are queued.
+        // Per-root planning would dispatch b immediately, because b's
+        // `After=` edge alone does not pull a into its own transaction.
         let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
         let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(16);
         {
             let mut state = alloc.write();
+            let mut a = make_unit("a.service");
+            a.unit.before.insert("b.service".to_string());
+            state.units.insert(a.name.clone(), a);
             state
                 .units
-                .insert("a.service".to_string(), make_unit("a.service"));
-            let (bn, mut b) = unit_requires("b.service", &["a.service"]);
-            b.unit.after.insert("a.service".to_string());
-            state.units.insert(bn, b);
+                .insert("b.service".to_string(), make_unit("b.service"));
             state.workers.insert(
                 "test-worker".to_string(),
                 WorkerEntry {
@@ -3718,25 +4108,37 @@ mod tests {
             );
         }
 
-        let batch = tokio::spawn(enqueue_start_after_dispatch(
+        let results = enqueue_start_batch(
             alloc.clone(),
-            "b.service",
+            &["a.service".to_string(), "b.service".to_string()],
             JobMode::Replace,
-        ));
+        )
+        .await;
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|(_, r)| r.is_ok()), "{results:?}");
+
         let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
-            .unwrap()
+            .expect("a.service dispatches immediately")
             .unwrap();
         let first = Envelope::decode(first.as_ref()).unwrap();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(!batch.is_finished(), "must wait for b.service's dispatch");
+        let call = sysa::proto::MethodCall::decode(first.payload.as_slice()).unwrap();
+        assert_eq!(call.unit_name, "a.service");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), rx.recv())
+                .await
+                .is_err(),
+            "b.service must not dispatch before a.service completes"
+        );
 
         fake_worker_complete_call(&alloc, &first);
-        tokio::time::timeout(Duration::from_secs(2), batch)
+        let second = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
-            .expect("returns once every step is dispatched")
-            .unwrap()
-            .expect("enqueue succeeds");
+            .expect("b.service dispatches once a.service is done")
+            .unwrap();
+        let second = Envelope::decode(second.as_ref()).unwrap();
+        let call = sysa::proto::MethodCall::decode(second.payload.as_slice()).unwrap();
+        assert_eq!(call.unit_name, "b.service");
     }
 
     #[tokio::test]

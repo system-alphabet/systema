@@ -1147,48 +1147,35 @@ async fn manager_start_units(allocator: &AllocatorHandle, env: Envelope) -> Resu
         .context(sysa::l10n::t_("bad manager.start_units"))?;
     info!("manager.start_units: {} unit(s)", req.names.len());
 
-    let mut results = Vec::with_capacity(req.names.len());
-    for name in &req.names {
-        info!("manager.start_units: processing '{name}'");
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            crate::scheduler::enqueue_start_after_dispatch(
-                allocator.clone(),
-                name,
-                JobMode::Replace,
-            ),
-        )
-        .await
-        {
-            Ok(Ok(job_id)) => {
-                info!("manager.start_units: enqueued job {job_id} for '{name}'");
-                results.push(UnitStartResult {
-                    name: name.clone(),
-                    success: true,
-                    message: sysa::l10n::fmt(
-                        sysa::l10n::t_("job {job_id}"),
-                        &[("job_id", &job_id.to_string())],
-                    ),
-                });
-            }
-            Ok(Err(e)) => {
-                warn!("manager.start_units: cannot start '{}': {}", name, e);
-                results.push(UnitStartResult {
-                    name: name.clone(),
-                    success: false,
-                    message: e.to_string(),
-                });
-            }
-            Err(_) => {
-                warn!("manager.start_units: timed out starting '{}'", name);
-                results.push(UnitStartResult {
-                    name: name.clone(),
-                    success: false,
-                    message: sysa::l10n::t_("start timed out").to_string(),
-                });
-            }
-        }
-    }
+    // One transaction for the whole batch (systemd `EnqueueUnitJobMany`):
+    // planning each name separately drops the ordering edges between roots,
+    // which is how polkit.service used to start before dbus.socket bound.
+    let results: Vec<UnitStartResult> =
+        crate::scheduler::enqueue_start_batch(allocator.clone(), &req.names, JobMode::Replace)
+            .await
+            .into_iter()
+            .map(|(name, result)| match result {
+                Ok(job_id) => {
+                    info!("manager.start_units: enqueued job {job_id} for '{name}'");
+                    UnitStartResult {
+                        name,
+                        success: true,
+                        message: sysa::l10n::fmt(
+                            sysa::l10n::t_("job {job_id}"),
+                            &[("job_id", &job_id.to_string())],
+                        ),
+                    }
+                }
+                Err(e) => {
+                    warn!("manager.start_units: cannot start '{}': {}", name, e);
+                    UnitStartResult {
+                        name,
+                        success: false,
+                        message: e.to_string(),
+                    }
+                }
+            })
+            .collect();
 
     let success = !results.is_empty() && results.iter().all(|r| r.success);
     make_envelope(
