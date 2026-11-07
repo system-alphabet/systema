@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-10-30 13:49+0800\n"
+        "POT-Creation-Date: 2026-11-07 12:02+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -26,6 +26,222 @@ msgstr  "Cannot open log file {path} ({e}); falling back to stderr"
 #, rust-format
 msgid   "Invalid log level '{level}' ({e}); using warn"
 msgstr  ""
+#
+# File: ../crates/libsysa/src/finder.rs, line: 37
+# File: ../crates/libsysa/src/finder.rs, line: 72
+# File: ../crates/libsysa/src/finder.rs, line: 108
+# File: ../crates/libsysa/src/staging_admin.rs, line: 69
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 44
+#, rust-format
+msgid   "Failed to connect to System A: {e}"
+msgstr  "Failed to connect to System A: {e}"
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 29
+#, rust-format
+msgid   "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
+msgstr  "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 28
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 255
+msgid   "Failed to encode Envelope."
+msgstr  "Failed to encode Envelope."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 32
+msgid   "Failed to send Envelope frame."
+msgstr  "Failed to send Envelope frame."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 43
+msgid   "Frame receive error."
+msgstr  "Frame receive error."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 46
+msgid   "Failed to decode Envelope."
+msgstr  "Failed to decode Envelope."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 63
+msgid   "Failed to encode payload."
+msgstr  "Failed to encode payload."
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 143
+msgid   "peer closed the connection during the IPC version exchange"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 148
+#, rust-format
+msgid   "unexpected reply '{method}' during the IPC version exchange"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 153
+msgid   "unreadable ipc.version.result payload"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 157
+#, rust-format
+msgid   "incompatible IPC version: we speak {mine}, the peer announced {theirs}: {message}"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/ipc.rs, line: 195
+#, rust-format
+msgid   "this build pins IPC version {have}; the peer announced {want}"
+msgstr  ""
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 83
+msgid   "SCM_RIGHTS send task panicked."
+msgstr  "SCM_RIGHTS send task panicked."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 92
+msgid   "SCM_RIGHTS recv task panicked."
+msgstr  "SCM_RIGHTS recv task panicked."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 117
+msgid   "CMSG_FIRSTHDR returned null."
+msgstr  "CMSG_FIRSTHDR returned null."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 135
+#, rust-format
+msgid   "sendmsg (SCM_RIGHTS) failed: {e}."
+msgstr  "sendmsg (SCM_RIGHTS) failed: {e}."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 174
+#, rust-format
+msgid   "recvmsg (SCM_RIGHTS) failed: {e}."
+msgstr  "recvmsg (SCM_RIGHTS) failed: {e}."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 182
+msgid   "fdpass connection closed while waiting for a listener fd."
+msgstr  "fdpass connection closed while waiting for a listener fd."
+#
+# File: ../crates/libsysa/src/ipc.rs, line: 199
+msgid   "recvmsg did not contain SCM_RIGHTS fd."
+msgstr  "recvmsg did not contain SCM_RIGHTS fd."
+#
+# File: ../crates/libsysa/src/finder.rs, line: 51
+# File: ../crates/libsysa/src/finder.rs, line: 87
+msgid   "System A disconnected before sending ack."
+msgstr  "System A disconnected before sending ack."
+#
+# File: ../crates/libsysa/src/finder.rs, line: 56
+# File: ../crates/libsysa/src/finder.rs, line: 92
+#, rust-format
+msgid   "Expected 'finder.ack', got '{method}'"
+msgstr  "Expected 'finder.ack', got '{method}'"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 62
+# File: ../crates/libsysa/src/finder.rs, line: 98
+msgid   "Failed to decode UnitRegistrationAck"
+msgstr  "Failed to decode UnitRegistrationAck"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 123
+msgid   "System A disconnected before sending query result."
+msgstr  "System A disconnected before sending query result."
+#
+# File: ../crates/libsysa/src/finder.rs, line: 129
+#, rust-format
+msgid   "Expected 'staging.query_result', got '{method}'"
+msgstr  "Expected 'staging.query_result', got '{method}'"
+#
+# File: ../crates/libsysa/src/finder.rs, line: 135
+msgid   "Failed to decode StagingQueryResult"
+msgstr  "Failed to decode StagingQueryResult"
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 85
+msgid   "System A disconnected before admin result."
+msgstr  "System A disconnected before admin result."
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 91
+#, rust-format
+msgid   "Expected 'admin.staging.result', got '{method}'"
+msgstr  "Expected 'admin.staging.result', got '{method}'"
+#
+# File: ../crates/libsysa/src/staging_admin.rs, line: 97
+msgid   "Failed to decode AdminStagingResult"
+msgstr  "Failed to decode AdminStagingResult"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
+msgid   "System A disconnected before unit-state EOF."
+msgstr  "System A disconnected before unit-state EOF."
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 69
+msgid   "Failed to decode UnitStateEntry"
+msgstr  "Failed to decode UnitStateEntry"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 76
+msgid   "Failed to decode UnitStateEof"
+msgstr  "Failed to decode UnitStateEof"
+#
+# File: ../crates/libsysa/src/unitstate_admin.rs, line: 85
+#, rust-format
+msgid   "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
+msgstr  "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
+#
+# File: ../crates/libsysa/src/controller.rs, line: 8
+msgid   "failed to decode UnitConfig"
+msgstr  "failed to decode UnitConfig"
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
+#, rust-format
+msgid   "Cannot connect to {path}."
+msgstr  "Cannot connect to {path}."
+#
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 172
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 179
+msgid   "connection to System A is closed"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 184
+#, rust-format
+msgid   "unit.cgroup timed out after {timeout}"
+msgstr  ""
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
+msgid   "System A closed connection before ack."
+msgstr  "System A closed connection before ack."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
+#, rust-format
+msgid   "Registration rejected: {message}."
+msgstr  "Registration rejected: {message}."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
+msgid   "Write to System A socket."
+msgstr  "Write to System A socket."
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
+msgid   "failed to decode ack"
+msgstr  "failed to decode ack"
+#
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 871
+msgid   "failed to decode the cgroup reply"
+msgstr  ""
+#
+# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 150
+msgid   "request id wraparound"
+msgstr  ""
+#
+# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
+#, rust-format
+msgid   "unknown method: {other}"
+msgstr  "unknown method: {other}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 10
+#, rust-format
+msgid   "l10n_debug: mo_dir does not exist: {mo_dir}"
+msgstr  "l10n_debug: mo_dir does not exist: {mo_dir}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 20
+#, rust-format
+msgid   "l10n_debug: Failed to bindtextdomain: {e}"
+msgstr  "l10n_debug: Failed to bindtextdomain: {e}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 30
+#, rust-format
+msgid   "l10n_debug: Failed to bind_textdomain_codeset: {e}"
+msgstr  "l10n_debug: Failed to bind_textdomain_codeset: {e}"
+#
+# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 38
+#, rust-format
+msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
+msgstr  "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
 #
 # File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
 #, rust-format
@@ -278,10 +494,6 @@ msgstr  "bad manager.start_units"
 msgid   "job {job_id}"
 msgstr  "job {job_id}"
 #
-# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 1130
-msgid   "start timed out"
-msgstr  "start timed out"
-#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 1149
 msgid   "bad manager.stop_units"
 msgstr  "bad manager.stop_units"
@@ -299,9 +511,10 @@ msgstr  "bad power units JSON payload"
 msgid   "registered {created} new, {updated} updated .power unit(s)"
 msgstr  "registered {created} new, {updated} updated .power unit(s)"
 #
-# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
-msgid   "Transaction order is cyclic"
-msgstr  "Transaction order is cyclic"
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 158
+#, rust-format
+msgid   "Transaction order is cyclic: {path}"
+msgstr  "Transaction order is cyclic: {path}"
 #
 # File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 155
 msgid   "Transaction contains conflicting jobs"
@@ -435,9 +648,9 @@ msgstr  "No worker registered for unit type '{unit_type}' (unit: {unit_name}). C
 msgid   "resource projection for {unit} unavailable"
 msgstr  ""
 #
-# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
-msgid   "Worker disconnected"
-msgstr  "Worker disconnected"
+# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 1130
+msgid   "start timed out"
+msgstr  "start timed out"
 #
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1882
 #, rust-format
@@ -475,6 +688,20 @@ msgstr  "systema-sysf binary not found in search paths: {paths}"
 #, rust-format
 msgid   "failed: {msg}"
 msgstr  "failed: {msg}"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
+msgid   "Root Slice"
+msgstr  "Root Slice"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
+#, rust-format
+msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+msgstr  "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
+#, rust-format
+msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
+msgstr  "cannot create new unit \"{id}\": missing required field \"unit_type\""
 #
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 49
 msgid   "System A — System Allocator"
@@ -579,20 +806,6 @@ msgstr  "Print version information and exit."
 msgid   "Print full version: build options and compile-time paths."
 msgstr  "Print full version: build options and compile-time paths."
 #
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
-msgid   "Root Slice"
-msgstr  "Root Slice"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
-#, rust-format
-msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-msgstr  "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
-#, rust-format
-msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
-msgstr  "cannot create new unit \"{id}\": missing required field \"unit_type\""
-#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 65
 msgid   "System F — System Finder Worker"
 msgstr  "System F — System Finder Worker"
@@ -643,11 +856,6 @@ msgstr  "Failed to create socket directory {path}."
 #, rust-format
 msgid   "Failed to bind reload socket {path}."
 msgstr  "Failed to bind reload socket {path}."
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/loader.rs, line: 72
-#, rust-format
-msgid   "Scanning {dir} ..."
-msgstr  "Scanning {dir} ..."
 #
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 40
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/parser.rs, line: 55
@@ -747,6 +955,11 @@ msgstr  "Parsing [Scope] section of {name} ..."
 msgid   "Parsing [Device] section of {name} ..."
 msgstr  "Parsing [Device] section of {name} ..."
 #
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/loader.rs, line: 72
+#, rust-format
+msgid   "Scanning {dir} ..."
+msgstr  "Scanning {dir} ..."
+#
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
 msgid   "System F — systemd finder"
 msgstr  "System F — systemd finder"
@@ -755,6 +968,10 @@ msgstr  "System F — systemd finder"
 #, rust-format
 msgid   "Staging failed: {message}."
 msgstr  "Staging failed: {message}."
+#
+# File: ../crates/backend/systema-sysk/src/controller.rs, line: 83
+msgid   "no SocketConfig in UnitConfig"
+msgstr  "no SocketConfig in UnitConfig"
 #
 # File: ../crates/backend/systema-sysk/src/socket.rs, line: 45
 #, rust-format
@@ -960,10 +1177,6 @@ msgstr  "Failed to wait for child for '{unit_name}'."
 msgid   "System K — System Socket Worker"
 msgstr  "System K — System Socket Worker"
 #
-# File: ../crates/backend/systema-sysk/src/controller.rs, line: 83
-msgid   "no SocketConfig in UnitConfig"
-msgstr  "no SocketConfig in UnitConfig"
-#
 # File: ../crates/backend/systema-sysm/systema-sysm.unix/src/mount.rs, line: 59
 msgid   "create_dir_all for mount point failed"
 msgstr  "create_dir_all for mount point failed"
@@ -1032,10 +1245,6 @@ msgstr  "remount command failed to start"
 msgid   "remount failed: {stderr}"
 msgstr  "remount failed: {stderr}"
 #
-# File: ../crates/backend/systema-sysm/systema-sysm.unix/src/main.rs, line: 34
-msgid   "System M — System Mount Worker"
-msgstr  "System M — System Mount Worker"
-#
 # File: ../crates/backend/systema-sysm/systema-sysm.unix/src/mounttable.rs, line: 110
 # File: ../crates/backend/systema-sysm/systema-sysm.unix/src/mounttable.rs, line: 141
 msgid   "getmntinfo failed"
@@ -1085,6 +1294,10 @@ msgstr  "No companion MountConfig for {unit_name}"
 msgid   "Unknown unit type for {unit_name}"
 msgstr  "Unknown unit type for {unit_name}"
 #
+# File: ../crates/backend/systema-sysm/systema-sysm.unix/src/main.rs, line: 34
+msgid   "System M — System Mount Worker"
+msgstr  "System M — System Mount Worker"
+#
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 32
 msgid   "mkdir -p for mount point failed"
 msgstr  "mkdir -p for mount point failed"
@@ -1098,7 +1311,26 @@ msgstr  "chmod for mount point failed"
 msgid   "Mount point {mount_point} remained mounted after umount."
 msgstr  "Mount point {mount_point} remained mounted after umount."
 #
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/main.rs, line: 23
+msgid   "systema-sysm.linux is a Linux-only worker; nothing to do."
+msgstr  "systema-sysm.linux is a Linux-only worker; nothing to do."
+#
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/controller.rs, line: 148
+#, rust-format
+msgid   "No preloaded MountConfig for companion {mount_unit}"
+msgstr  "No preloaded MountConfig for companion {mount_unit}"
+#
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/controller.rs, line: 490
+#, rust-format
+msgid   "Path {path} is already a mount point"
+msgstr  "Path {path} is already a mount point"
+#
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/linux.rs, line: 42
+msgid   "System M — System Mount Worker (Linux)"
+msgstr  "System M — System Mount Worker (Linux)"
+#
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/automount.rs, line: 101
+#, rust-format
 msgid   "Failed to open /dev/autofs (is the autofs kernel module loaded?): {e}"
 msgstr  "Failed to open /dev/autofs (is the autofs kernel module loaded?): {e}"
 #
@@ -1146,24 +1378,6 @@ msgstr  "pipe2 for automount failed"
 msgid   "stat of automount point {path} failed"
 msgstr  "stat of automount point {path} failed"
 #
-# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/main.rs, line: 23
-msgid   "systema-sysm.linux is a Linux-only worker; nothing to do."
-msgstr  "systema-sysm.linux is a Linux-only worker; nothing to do."
-#
-# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/linux.rs, line: 42
-msgid   "System M — System Mount Worker (Linux)"
-msgstr  "System M — System Mount Worker (Linux)"
-#
-# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/controller.rs, line: 148
-#, rust-format
-msgid   "No preloaded MountConfig for companion {mount_unit}"
-msgstr  "No preloaded MountConfig for companion {mount_unit}"
-#
-# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/controller.rs, line: 490
-#, rust-format
-msgid   "Path {path} is already a mount point"
-msgstr  "Path {path} is already a mount point"
-#
 # File: ../crates/backend/systema-syss/src/dbus.rs, line: 51
 #, rust-format
 msgid   "Service process (PID {pid}) exited before acquiring D-Bus name '{bus_name}'."
@@ -1204,6 +1418,54 @@ msgstr  "{unit_name} (PID {pid}) exited before {what}"
 msgid   "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
 msgstr  "{unit_name} timed out waiting for {what} ({timeout_secs}s)"
 #
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 161
+#, rust-format
+msgid   "cannot load libpam: {e}"
+msgstr  "cannot load libpam: {e}"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 164
+msgid   "cannot load libpam"
+msgstr  "cannot load libpam"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 229
+#, rust-format
+msgid   "PAM service name '{pam_name}' contains a NUL byte"
+msgstr  "PAM service name '{pam_name}' contains a NUL byte"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 235
+#, rust-format
+msgid   "PAM user '{username}' contains a NUL byte"
+msgstr  "PAM user '{username}' contains a NUL byte"
+#
+# File: ../crates/backend/systema-syss/src/pam.rs, line: 257
+#, rust-format
+msgid   "PAM tty '{tty}' contains a NUL byte"
+msgstr  "PAM tty '{tty}' contains a NUL byte"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 179
+#, rust-format
+msgid   "oneshot service {unit_name} exited with code {code}"
+msgstr  "oneshot service {unit_name} exited with code {code}"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 200
+#, rust-format
+msgid   "oneshot service {unit_name} error: {e}"
+msgstr  "oneshot service {unit_name} error: {e}"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 212
+#, rust-format
+msgid   "oneshot service {unit_name} timed out after {timeout}s"
+msgstr  "oneshot service {unit_name} timed out after {timeout}s"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 509
+#, rust-format
+msgid   "Reload of {unit_name} failed: service is not running."
+msgstr  "Reload of {unit_name} failed: service is not running."
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 536
+msgid   "Failed to send SIGHUP"
+msgstr  "Failed to send SIGHUP"
+#
 # File: ../crates/backend/systema-syss/src/process.rs, line: 120
 #, rust-format
 msgid   "No [Service] config for {unit_name}."
@@ -1236,6 +1498,21 @@ msgstr  "Failed to get PID for {unit_name}."
 # File: ../crates/backend/systema-syss/src/process.rs, line: 443
 msgid   "Starting services is not supported on this platform."
 msgstr  "Starting services is not supported on this platform."
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 671
+#, rust-format
+msgid   "{phase} command for {unit_name} failed: {e}"
+msgstr  "{phase} command for {unit_name} failed: {e}"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 682
+#, rust-format
+msgid   "{phase} command for {unit_name} timed out after {timeout}s"
+msgstr  "{phase} command for {unit_name} timed out after {timeout}s"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 706
+#, rust-format
+msgid   "{phase} command for {unit_name} exited with code {code}"
+msgstr  "{phase} command for {unit_name} exited with code {code}"
 #
 # File: ../crates/backend/systema-syss/src/process.rs, line: 577
 #, rust-format
@@ -1322,54 +1599,6 @@ msgstr  "D-Bus address to use (default: the system bus)."
 msgid   "invalid --bus-address: {err}"
 msgstr  "invalid --bus-address: {err}"
 #
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 161
-#, rust-format
-msgid   "cannot load libpam: {e}"
-msgstr  "cannot load libpam: {e}"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 164
-msgid   "cannot load libpam"
-msgstr  "cannot load libpam"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 229
-#, rust-format
-msgid   "PAM service name '{pam_name}' contains a NUL byte"
-msgstr  "PAM service name '{pam_name}' contains a NUL byte"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 235
-#, rust-format
-msgid   "PAM user '{username}' contains a NUL byte"
-msgstr  "PAM user '{username}' contains a NUL byte"
-#
-# File: ../crates/backend/systema-syss/src/pam.rs, line: 257
-#, rust-format
-msgid   "PAM tty '{tty}' contains a NUL byte"
-msgstr  "PAM tty '{tty}' contains a NUL byte"
-#
-# File: ../crates/backend/systema-syss/src/controller.rs, line: 179
-#, rust-format
-msgid   "oneshot service {unit_name} exited with code {code}"
-msgstr  "oneshot service {unit_name} exited with code {code}"
-#
-# File: ../crates/backend/systema-syss/src/controller.rs, line: 200
-#, rust-format
-msgid   "oneshot service {unit_name} error: {e}"
-msgstr  "oneshot service {unit_name} error: {e}"
-#
-# File: ../crates/backend/systema-syss/src/controller.rs, line: 212
-#, rust-format
-msgid   "oneshot service {unit_name} timed out after {timeout}s"
-msgstr  "oneshot service {unit_name} timed out after {timeout}s"
-#
-# File: ../crates/backend/systema-syss/src/controller.rs, line: 509
-#, rust-format
-msgid   "Reload of {unit_name} failed: service is not running."
-msgstr  "Reload of {unit_name} failed: service is not running."
-#
-# File: ../crates/backend/systema-syss/src/controller.rs, line: 536
-msgid   "Failed to send SIGHUP"
-msgstr  "Failed to send SIGHUP"
-#
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
 msgstr  "System T — System Target Worker"
@@ -1419,10 +1648,6 @@ msgstr  "invalid date '{tok}'"
 msgid   "invalid time '{tok}'"
 msgstr  "invalid time '{tok}'"
 #
-# File: ../crates/backend/systema-sysc/src/main.rs, line: 42
-msgid   "System C — System Cron/Timer Worker"
-msgstr  "System C — System Cron/Timer Worker"
-#
 # File: ../crates/backend/systema-sysc/src/controller.rs, line: 29
 # File: ../crates/backend/systema-sysc/src/controller.rs, line: 139
 # File: ../crates/backend/systema-sysc/src/controller.rs, line: 167
@@ -1444,6 +1669,10 @@ msgstr  "No TimerConfig for '{unit_name}'"
 # File: ../crates/backend/systema-sysc/src/controller.rs, line: 87
 msgid   "Timer unit has no OnCalendar=/On*Sec= trigger — nothing to schedule"
 msgstr  "Timer unit has no OnCalendar=/On*Sec= trigger — nothing to schedule"
+#
+# File: ../crates/backend/systema-sysc/src/main.rs, line: 42
+msgid   "System C — System Cron/Timer Worker"
+msgstr  "System C — System Cron/Timer Worker"
 #
 # File: ../crates/backend/systema-sysd/src/controller.rs, line: 96
 # File: ../crates/backend/systema-sysd/src/controller.rs, line: 149
@@ -1529,24 +1758,6 @@ msgstr  ""
 msgid   "DelegateSubgroup '{subgroup}' must be a single directory name"
 msgstr  ""
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
-msgid   "resource worker not initialised"
-msgstr  ""
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
-#, rust-format
-msgid   "cannot synthesize definitions for non-slice units: {invalid}"
-msgstr  "cannot synthesize definitions for non-slice units: {invalid}"
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
-#, rust-format
-msgid   "cannot serialise synthesized definitions: {e}"
-msgstr  "cannot serialise synthesized definitions: {e}"
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
-msgid   "System R — System Resource Worker"
-msgstr  "System R — System Resource Worker"
-#
 # File: ../crates/backend/systema-sysr/systema-sysr/src/worker.rs, line: 135
 msgid   "no cgroup backend"
 msgstr  ""
@@ -1555,6 +1766,10 @@ msgstr  ""
 #, rust-format
 msgid   "unit '{unit_name}' has no cgroup directory"
 msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
+msgid   "System R — System Resource Worker"
+msgstr  "System R — System Resource Worker"
 #
 # File: ../crates/backend/systema-sysr/systema-sysr/src/register.rs, line: 47
 #. / Description of the static user container (systemd: "User and Session
@@ -1589,6 +1804,20 @@ msgstr  "Cannot commit slice units with System A"
 msgid   "System A refused the commit: {message}"
 msgstr  "System A refused the commit: {message}"
 #
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
+msgid   "resource worker not initialised"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
+#, rust-format
+msgid   "cannot synthesize definitions for non-slice units: {invalid}"
+msgstr  "cannot synthesize definitions for non-slice units: {invalid}"
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
+#, rust-format
+msgid   "cannot serialise synthesized definitions: {e}"
+msgstr  "cannot serialise synthesized definitions: {e}"
+#
 # File: ../crates/backend/systema-syse/src/cgroup.rs, line: 32
 #, rust-format
 msgid   "cannot read {cgroup_path} cgroup.procs"
@@ -1598,10 +1827,6 @@ msgstr  "cannot read {cgroup_path} cgroup.procs"
 #, rust-format
 msgid   "cannot write {cgroup_path} cgroup.kill"
 msgstr  "cannot write {cgroup_path} cgroup.kill"
-#
-# File: ../crates/backend/systema-syse/src/main.rs, line: 43
-msgid   "System E — System External Process Worker"
-msgstr  "System E — System External Process Worker"
 #
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 183
 #, rust-format
@@ -1621,6 +1846,10 @@ msgstr  "Scope {unit_name} has no cgroup."
 # File: ../crates/backend/systema-syse/src/controller.rs, line: 267
 msgid   "Scopes cannot be reloaded."
 msgstr  "Scopes cannot be reloaded."
+#
+# File: ../crates/backend/systema-syse/src/main.rs, line: 43
+msgid   "System E — System External Process Worker"
+msgstr  "System E — System External Process Worker"
 #
 # File: ../crates/backend/systema-sysi/src/mount_setup.rs, line: 184
 #, rust-format
@@ -1666,66 +1895,6 @@ msgstr  "cgroup2 mount at {path} is not writable, undoing: {err}"
 #, rust-format
 msgid   "unknown worker name '{unknown}'"
 msgstr  "unknown worker name '{unknown}'"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 233
-msgid   "SysAInit — System Alphabet init"
-msgstr  "SysAInit — System Alphabet init"
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 247
-msgid   "Workers to skip (short names or full binary names)."
-msgstr  "Workers to skip (short names or full binary names)."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
-msgid   "Search for the systema-* binaries only in this directory."
-msgstr  "Search for the systema-* binaries only in this directory."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 257
-msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
-msgstr  "Do not abort when an executable is missing; log an ERROR and skip it."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 262
-msgid   "Grace period in seconds before SIGKILL during shutdown."
-msgstr  "Grace period in seconds before SIGKILL during shutdown."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 267
-msgid   "Time to wait for System A / a worker to report ready before aborting."
-msgstr  "Time to wait for System A / a worker to report ready before aborting."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 281
-# File: ../crates/backend/systema-sysu/src/main.rs, line: 146
-msgid   "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
-msgstr  "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 278
-msgid   "Power control policy: auto (only when PID 1), always, never."
-msgstr  "Power control policy: auto (only when PID 1), always, never."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 283
-msgid   "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
-msgstr  "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 289
-msgid   "Extra flags for this worker only (overrides --worker-flags)."
-msgstr  "Extra flags for this worker only (overrides --worker-flags)."
-#
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 350
-#, rust-format
-msgid   "{count} required executable(s) missing; aborting (use --no-strict to continue)"
-msgstr  "{count} required executable(s) missing; aborting (use --no-strict to continue)"
-#
-# File: ../crates/backend/systema-sysi/src/power.rs, line: 131
-#, rust-format
-msgid   "unknown power action: {s}"
-msgstr  "unknown power action: {s}"
-#
-# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 32
-msgid   "System Init is not accepting power transitions."
-msgstr  "System Init is not accepting power transitions."
-#
-# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 59
-#, rust-format
-msgid   "Power transition already pending for invocation {id}."
-msgstr  "Power transition already pending for invocation {id}."
 #
 # File: ../crates/backend/systema-sysi/src/supervise.rs, line: 177
 # File: ../crates/backend/systema-sysu/src/supervise.rs, line: 173
@@ -1781,6 +1950,11 @@ msgstr  "manager.list_units failed: {message}"
 msgid   "unknown powerctl policy: {s} (expected auto, always, never)"
 msgstr  "unknown powerctl policy: {s} (expected auto, always, never)"
 #
+# File: ../crates/backend/systema-sysi/src/power.rs, line: 131
+#, rust-format
+msgid   "unknown power action: {s}"
+msgstr  "unknown power action: {s}"
+#
 # File: ../crates/backend/systema-sysi/src/power.rs, line: 141
 msgid   "System Power Off"
 msgstr  "System Power Off"
@@ -1820,14 +1994,65 @@ msgstr  "reboot(2) for power action '{action}' failed: {err} (are we running as 
 msgid   "power action '{action}' not supported: no power backend available"
 msgstr  "power action '{action}' not supported: no power backend available"
 #
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 233
+msgid   "SysAInit — System Alphabet init"
+msgstr  "SysAInit — System Alphabet init"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 247
+msgid   "Workers to skip (short names or full binary names)."
+msgstr  "Workers to skip (short names or full binary names)."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
+msgid   "Search for the systema-* binaries only in this directory."
+msgstr  "Search for the systema-* binaries only in this directory."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 257
+msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
+msgstr  "Do not abort when an executable is missing; log an ERROR and skip it."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 262
+msgid   "Grace period in seconds before SIGKILL during shutdown."
+msgstr  "Grace period in seconds before SIGKILL during shutdown."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 267
+msgid   "Time to wait for System A / a worker to report ready before aborting."
+msgstr  "Time to wait for System A / a worker to report ready before aborting."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 281
+# File: ../crates/backend/systema-sysu/src/main.rs, line: 146
+msgid   "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
+msgstr  "Path of this process's log file; child processes receive <dir>/<binary>.log; \"-\" writes to stderr only."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 278
+msgid   "Power control policy: auto (only when PID 1), always, never."
+msgstr  "Power control policy: auto (only when PID 1), always, never."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 283
+msgid   "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
+msgstr  "Extra flags for every worker; --<name>-flags / SYSTEMA_SYS*_FLAGS take precedence."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 289
+msgid   "Extra flags for this worker only (overrides --worker-flags)."
+msgstr  "Extra flags for this worker only (overrides --worker-flags)."
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 350
+#, rust-format
+msgid   "{count} required executable(s) missing; aborting (use --no-strict to continue)"
+msgstr  "{count} required executable(s) missing; aborting (use --no-strict to continue)"
+#
+# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 32
+msgid   "System Init is not accepting power transitions."
+msgstr  "System Init is not accepting power transitions."
+#
+# File: ../crates/backend/systema-sysi/src/power_worker.rs, line: 59
+#, rust-format
+msgid   "Power transition already pending for invocation {id}."
+msgstr  "Power transition already pending for invocation {id}."
+#
 # File: ../crates/backend/systema-sysn/src/backend/kqueue.rs, line: 65
 #, rust-format
 msgid   "kqueue() failed: {error}"
 msgstr  "kqueue() failed: {error}"
-#
-# File: ../crates/backend/systema-sysn/src/main.rs, line: 46
-msgid   "System N — System Notify Worker"
-msgstr  "System N — System Notify Worker"
 #
 # File: ../crates/backend/systema-sysn/src/engine.rs, line: 105
 #, rust-format
@@ -1877,6 +2102,10 @@ msgstr  "Failed to arm watches: {e}"
 #, rust-format
 msgid   "Cannot arm path unit '{unit_name}': {err}"
 msgstr  "Cannot arm path unit '{unit_name}': {err}"
+#
+# File: ../crates/backend/systema-sysn/src/main.rs, line: 46
+msgid   "System N — System Notify Worker"
+msgstr  "System N — System Notify Worker"
 #
 # File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 72
 #, rust-format
@@ -2015,6 +2244,11 @@ msgstr  "control session ended — reconnect required"
 msgid   "System Wrapper — systemd D-Bus bridge"
 msgstr  "System Wrapper — systemd D-Bus bridge"
 #
+# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
+#, rust-format
+msgid   "systema-sysu reaper error: {e}"
+msgstr  "systema-sysu reaper error: {e}"
+#
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 113
 msgid   "System U — per-user instance launcher"
 msgstr  "System U — per-user instance launcher"
@@ -2101,11 +2335,6 @@ msgstr  "Per-user instance (pid {pid}) did not stop within {secs}s."
 #, rust-format
 msgid   "setsid failed: {e}."
 msgstr  "setsid failed: {e}."
-#
-# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
-#, rust-format
-msgid   "systema-sysu reaper error: {e}"
-msgstr  "systema-sysu reaper error: {e}"
 #
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 89
 msgid   "Failed to parse units JSON."
@@ -2246,225 +2475,20 @@ msgstr  "Unit name; tried as an exact match first, otherwise treated as a regula
 msgid   "failed to spawn pager '{pager}': {error}"
 msgstr  "failed to spawn pager '{pager}': {error}"
 #
-# File: ../crates/libsysa/src/ipc.rs, line: 29
-#, rust-format
-msgid   "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
-msgstr  "Failed to connect to System A: {e}. System-domain operations need root: re-run with sudo, or pass --user to manage the per-user instance."
-#
-# File: ../crates/libsysa/src/finder.rs, line: 37
-# File: ../crates/libsysa/src/finder.rs, line: 72
-# File: ../crates/libsysa/src/finder.rs, line: 108
-# File: ../crates/libsysa/src/staging_admin.rs, line: 69
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 44
-#, rust-format
-msgid   "Failed to connect to System A: {e}"
-msgstr  "Failed to connect to System A: {e}"
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 28
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 255
-msgid   "Failed to encode Envelope."
-msgstr  "Failed to encode Envelope."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 32
-msgid   "Failed to send Envelope frame."
-msgstr  "Failed to send Envelope frame."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 43
-msgid   "Frame receive error."
-msgstr  "Frame receive error."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 46
-msgid   "Failed to decode Envelope."
-msgstr  "Failed to decode Envelope."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 63
-msgid   "Failed to encode payload."
-msgstr  "Failed to encode payload."
-#
-# File: ../crates/libsysa-ipc/src/ipc.rs, line: 143
-msgid   "peer closed the connection during the IPC version exchange"
-msgstr  ""
-#
-# File: ../crates/libsysa-ipc/src/ipc.rs, line: 148
-#, rust-format
-msgid   "unexpected reply '{method}' during the IPC version exchange"
-msgstr  ""
-#
-# File: ../crates/libsysa-ipc/src/ipc.rs, line: 153
-msgid   "unreadable ipc.version.result payload"
-msgstr  ""
-#
-# File: ../crates/libsysa-ipc/src/ipc.rs, line: 157
-#, rust-format
-msgid   "incompatible IPC version: we speak {mine}, the peer announced {theirs}: {message}"
-msgstr  ""
-#
-# File: ../crates/libsysa-ipc/src/ipc.rs, line: 195
-#, rust-format
-msgid   "this build pins IPC version {have}; the peer announced {want}"
-msgstr  ""
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 83
-msgid   "SCM_RIGHTS send task panicked."
-msgstr  "SCM_RIGHTS send task panicked."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 92
-msgid   "SCM_RIGHTS recv task panicked."
-msgstr  "SCM_RIGHTS recv task panicked."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 117
-msgid   "CMSG_FIRSTHDR returned null."
-msgstr  "CMSG_FIRSTHDR returned null."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 135
-#, rust-format
-msgid   "sendmsg (SCM_RIGHTS) failed: {e}."
-msgstr  "sendmsg (SCM_RIGHTS) failed: {e}."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 174
-#, rust-format
-msgid   "recvmsg (SCM_RIGHTS) failed: {e}."
-msgstr  "recvmsg (SCM_RIGHTS) failed: {e}."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 182
-msgid   "fdpass connection closed while waiting for a listener fd."
-msgstr  "fdpass connection closed while waiting for a listener fd."
-#
-# File: ../crates/libsysa/src/ipc.rs, line: 199
-msgid   "recvmsg did not contain SCM_RIGHTS fd."
-msgstr  "recvmsg did not contain SCM_RIGHTS fd."
-#
-# File: ../crates/libsysa/src/finder.rs, line: 51
-# File: ../crates/libsysa/src/finder.rs, line: 87
-msgid   "System A disconnected before sending ack."
-msgstr  "System A disconnected before sending ack."
-#
-# File: ../crates/libsysa/src/finder.rs, line: 56
-# File: ../crates/libsysa/src/finder.rs, line: 92
-#, rust-format
-msgid   "Expected 'finder.ack', got '{method}'"
-msgstr  "Expected 'finder.ack', got '{method}'"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 62
-# File: ../crates/libsysa/src/finder.rs, line: 98
-msgid   "Failed to decode UnitRegistrationAck"
-msgstr  "Failed to decode UnitRegistrationAck"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 123
-msgid   "System A disconnected before sending query result."
-msgstr  "System A disconnected before sending query result."
-#
-# File: ../crates/libsysa/src/finder.rs, line: 129
-#, rust-format
-msgid   "Expected 'staging.query_result', got '{method}'"
-msgstr  "Expected 'staging.query_result', got '{method}'"
-#
-# File: ../crates/libsysa/src/finder.rs, line: 135
-msgid   "Failed to decode StagingQueryResult"
-msgstr  "Failed to decode StagingQueryResult"
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 85
-msgid   "System A disconnected before admin result."
-msgstr  "System A disconnected before admin result."
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 91
-#, rust-format
-msgid   "Expected 'admin.staging.result', got '{method}'"
-msgstr  "Expected 'admin.staging.result', got '{method}'"
-#
-# File: ../crates/libsysa/src/staging_admin.rs, line: 97
-msgid   "Failed to decode AdminStagingResult"
-msgstr  "Failed to decode AdminStagingResult"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 62
-msgid   "System A disconnected before unit-state EOF."
-msgstr  "System A disconnected before unit-state EOF."
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 69
-msgid   "Failed to decode UnitStateEntry"
-msgstr  "Failed to decode UnitStateEntry"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 76
-msgid   "Failed to decode UnitStateEof"
-msgstr  "Failed to decode UnitStateEof"
-#
-# File: ../crates/libsysa/src/unitstate_admin.rs, line: 85
-#, rust-format
-msgid   "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
-msgstr  "Expected 'admin.unitstate.entry'/'admin.unitstate.eof', got '{other}'"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 10
-#, rust-format
-msgid   "l10n_debug: mo_dir does not exist: {mo_dir}"
-msgstr  "l10n_debug: mo_dir does not exist: {mo_dir}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 20
-#, rust-format
-msgid   "l10n_debug: Failed to bindtextdomain: {e}"
-msgstr  "l10n_debug: Failed to bindtextdomain: {e}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 30
-#, rust-format
-msgid   "l10n_debug: Failed to bind_textdomain_codeset: {e}"
-msgstr  "l10n_debug: Failed to bind_textdomain_codeset: {e}"
-#
-# File: ../crates/libsysa/src/l10n/l10n_debug.rs, line: 38
-#, rust-format
-msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
-msgstr  "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
-#
-# File: ../crates/libsysa/src/controller.rs, line: 8
-msgid   "failed to decode UnitConfig"
-msgstr  "failed to decode UnitConfig"
-#
-# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 150
-msgid   "request id wraparound"
-msgstr  ""
-#
-# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 172
-# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 179
-msgid   "connection to System A is closed"
-msgstr  ""
-#
-# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 184
-#, rust-format
-msgid   "unit.cgroup timed out after {timeout}"
-msgstr  ""
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 535
-#, rust-format
-msgid   "Cannot connect to {path}."
-msgstr  "Cannot connect to {path}."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 553
-msgid   "System A closed connection before ack."
-msgstr  "System A closed connection before ack."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 558
-#, rust-format
-msgid   "Registration rejected: {message}."
-msgstr  "Registration rejected: {message}."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 588
-msgid   "Write to System A socket."
-msgstr  "Write to System A socket."
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 731
-msgid   "failed to decode ack"
-msgstr  "failed to decode ack"
-#
-# File: ../crates/libsysa-ipc/src/worker_ipc.rs, line: 871
-msgid   "failed to decode the cgroup reply"
-msgstr  ""
-#
-# File: ../crates/libsysa/src/worker_ipc.rs, line: 816
-#, rust-format
-msgid   "unknown method: {other}"
-msgstr  "unknown method: {other}"
-#
 # File: ../crates/splash/systema-sysh-console/src/main.rs, line: 90
 msgid   "System H — boot-log console frontend"
 msgstr  ""
+#
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
+#~ msgid        "Transaction order is cyclic"
+#~ msgstr       "Transaction order is cyclic"
+#
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
+#~ msgid        "Worker disconnected"
+#~ msgstr       "Worker disconnected"
+#
 #
 #
 #
@@ -2477,9 +2501,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "failed to load unit"
+#
 #
 #
 #
@@ -2492,6 +2518,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2500,10 +2527,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "Unit {name} is a template and cannot be loaded directly"
+#
 #
 #
 #
@@ -2518,10 +2547,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "Unable to resolve dependency cycles after removing {count} edges."
+#
 #
 #
 #
@@ -2539,10 +2570,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') failed: {r}"
+#
 #
 #
 #
@@ -2562,10 +2595,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "Invalid log level '{level}' ({e}); using info"
+#
 #
 #
 #
@@ -2587,9 +2622,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 #
@@ -2615,10 +2652,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2647,6 +2686,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
@@ -2663,21 +2703,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 314
 #~ msgid        "Commit every staging area owned by this UID (default: 0)."
 #~ msgstr       "Commit every staging area owned by this UID (default: 0)."
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 671
-#, rust-format
-msgid   "{phase} command for {unit_name} failed: {e}"
-msgstr  "{phase} command for {unit_name} failed: {e}"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 682
-#, rust-format
-msgid   "{phase} command for {unit_name} timed out after {timeout}s"
-msgstr  "{phase} command for {unit_name} timed out after {timeout}s"
-#
-# File: ../crates/backend/systema-syss/src/process.rs, line: 706
-#, rust-format
-msgid   "{phase} command for {unit_name} exited with code {code}"
-msgstr  "{phase} command for {unit_name} exited with code {code}"

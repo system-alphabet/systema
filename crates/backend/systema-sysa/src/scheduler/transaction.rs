@@ -132,8 +132,9 @@ impl PlannerMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
     /// `BUS_ERROR_TRANSACTION_ORDER_IS_CYCLIC`: ordering graph contains an
-    /// unfixable cycle.
-    Cyclic,
+    /// unfixable cycle. Carries the ring as unit names, starting and ending
+    /// with the same unit (e.g. `["a.service", "b.service", "a.service"]`).
+    Cyclic(Vec<String>),
     /// `BUS_ERROR_TRANSACTION_JOBS_CONFLICTING`: conflicting jobs for the
     /// same unit that could not be resolved.
     Conflicting,
@@ -147,7 +148,17 @@ pub enum PlanError {
 impl std::fmt::Display for PlanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlanError::Cyclic => write!(f, "{}", sysa::l10n::t_("Transaction order is cyclic")),
+            PlanError::Cyclic(cycle) => {
+                let path = cycle.join(" -> ");
+                write!(
+                    f,
+                    "{}",
+                    sysa::l10n::fmt(
+                        sysa::l10n::t_("Transaction order is cyclic: {path}"),
+                        &[("path", &path)]
+                    )
+                )
+            }
             PlanError::Conflicting => {
                 write!(
                     f,
@@ -998,6 +1009,14 @@ impl Transaction {
         }
     }
 
+    /// Unit name of an ordering-graph vertex.
+    fn job_unit(&self, j: &JobId) -> String {
+        match j {
+            JobId::Tr(i) => self.get(*i).unit.clone(),
+            JobId::Inst(u) => u.clone(),
+        }
+    }
+
     /// Resolve an ordering-dependency target to a transaction job or an
     /// installed job.
     fn resolve_job(&self, unit: &str, installed: &HashMap<String, JobType>) -> Option<JobId> {
@@ -1053,7 +1072,9 @@ impl Transaction {
                     return Ok(false);
                 }
                 // We are on the path again: ordering cycle. Walk back along
-                // the markers and find the first non-mattering job to delete.
+                // the markers to name the cycle, and find the first
+                // non-mattering job to delete on the way.
+                let mut walk: Vec<JobId> = Vec::new();
                 let mut delete: Option<JobId> = None;
                 let mut k = from;
                 while let Some(kk) = k {
@@ -1064,6 +1085,7 @@ impl Transaction {
                             }
                         }
                     }
+                    walk.push(kk.clone());
                     if kk == j {
                         break;
                     }
@@ -1074,13 +1096,21 @@ impl Transaction {
                         _ => None,
                     };
                 }
+                // `walk` runs from the cycle entry point back to `j`;
+                // reverse it and close the loop to read `j -> … -> from -> j`.
+                let mut cycle: Vec<String> =
+                    walk.iter().rev().map(|id| self.job_unit(id)).collect();
+                cycle.push(self.job_unit(&j));
                 if let Some(JobId::Tr(i)) = delete {
                     let unit = self.get(i).unit.clone();
-                    warn!("Deleting {unit} to break ordering cycle");
+                    warn!(
+                        "Deleting {unit} to break ordering cycle: {}",
+                        cycle.join(" -> ")
+                    );
                     self.delete_unit(&unit);
                     return Ok(true);
                 }
-                return Err(PlanError::Cyclic);
+                return Err(PlanError::Cyclic(cycle));
             }
         }
 
@@ -1457,7 +1487,12 @@ impl Transaction {
             }
         }
         if order.len() != n {
-            return Err(PlanError::Cyclic);
+            // The residual graph (vertices Kahn never released) contains at
+            // least one cycle; name it so the failure is diagnosable.
+            let residual: Vec<usize> = (0..n).filter(|&i| indeg[i] > 0).collect();
+            return Err(PlanError::Cyclic(find_wait_cycle(
+                &steps, &waits, &residual,
+            )));
         }
 
         let ordered: Vec<PlanStep> = order
@@ -1474,6 +1509,64 @@ impl Transaction {
             .collect();
         Ok(TransactionPlan { steps: ordered })
     }
+}
+
+/// Name one cycle in the wait relation, in the shape [`PlanError::Cyclic`]
+/// expects: unit names with the start repeated at the end.
+///
+/// `waits[i]` lists the steps step `i` must wait for; only `nodes` (the
+/// residual graph left over after Kahn's algorithm) are traversed. The DFS is
+/// iterative so a pathological plan cannot overflow the stack.
+fn find_wait_cycle(steps: &[PlanStep], waits: &[Vec<usize>], nodes: &[usize]) -> Vec<String> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Color {
+        White,
+        Grey,
+        Black,
+    }
+
+    let mut color = vec![Color::White; steps.len()];
+    let mut next_edge = vec![0usize; steps.len()];
+    let mut path: Vec<usize> = Vec::new();
+
+    for &start in nodes {
+        if color[start] != Color::White {
+            continue;
+        }
+        color[start] = Color::Grey;
+        path.push(start);
+        while let Some(&v) = path.last() {
+            let mut descended = false;
+            while next_edge[v] < waits[v].len() {
+                let w = waits[v][next_edge[v]];
+                next_edge[v] += 1;
+                match color[w] {
+                    Color::Grey => {
+                        let pos = path.iter().position(|&x| x == w).expect("grey on path");
+                        let mut cycle: Vec<String> =
+                            path[pos..].iter().map(|&x| steps[x].unit.clone()).collect();
+                        cycle.push(steps[w].unit.clone());
+                        return cycle;
+                    }
+                    Color::White => {
+                        color[w] = Color::Grey;
+                        path.push(w);
+                        descended = true;
+                        break;
+                    }
+                    Color::Black => {}
+                }
+            }
+            if !descended {
+                color[v] = Color::Black;
+                path.pop();
+            }
+        }
+    }
+
+    // Unreachable when `nodes` really is cyclic; return a diagnosable list
+    // instead of panicking if the caller ever passes a cyclic-looking slice.
+    nodes.iter().map(|&i| steps[i].unit.clone()).collect()
 }
 
 enum MergeOutcome {
@@ -2934,7 +3027,7 @@ mod tests {
             Replace,
         )
         .unwrap_err();
-        assert_eq!(err, PlanError::Cyclic);
+        assert_cycle(err, &["b.service", "c.service"]);
     }
 
     #[test]
@@ -2957,7 +3050,7 @@ mod tests {
             Replace,
         )
         .unwrap_err();
-        assert_eq!(err, PlanError::Cyclic);
+        assert_cycle(err, &["a.service", "b.service"]);
     }
 
     #[test]
@@ -3012,9 +3105,65 @@ mod tests {
         );
     }
 
+    /// A cyclic plan must name the units on the cycle, starting and ending
+    /// with the same one.
+    fn assert_cycle(err: PlanError, units: &[&str]) {
+        match err {
+            PlanError::Cyclic(cycle) => {
+                assert!(cycle.len() >= 2, "cycle too short: {cycle:?}");
+                assert_eq!(
+                    cycle.first(),
+                    cycle.last(),
+                    "cycle is not closed: {cycle:?}"
+                );
+                for u in units {
+                    assert!(
+                        cycle.contains(&u.to_string()),
+                        "cycle {cycle:?} does not mention {u}"
+                    );
+                }
+            }
+            other => panic!("expected Cyclic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn find_wait_cycle_names_the_cycle() {
+        let steps: Vec<PlanStep> = ["a.service", "b.service", "c.service"]
+            .iter()
+            .map(|unit| PlanStep {
+                unit: unit.to_string(),
+                job_type: JobType::Start,
+                anchor: false,
+                matters_to_anchor: true,
+                ignore_order: false,
+                wait_for: Vec::new(),
+            })
+            .collect();
+        // a waits for b, b waits for c, c waits for a.
+        let waits = vec![vec![1], vec![2], vec![0]];
+        assert_eq!(
+            find_wait_cycle(&steps, &waits, &[0, 1, 2]),
+            vec![
+                "a.service".to_string(),
+                "b.service".to_string(),
+                "c.service".to_string(),
+                "a.service".to_string()
+            ]
+        );
+    }
+
     #[test]
     fn plan_error_display() {
-        assert_eq!(PlanError::Cyclic.to_string(), "Transaction order is cyclic");
+        assert_eq!(
+            PlanError::Cyclic(vec![
+                "a.service".to_string(),
+                "b.service".to_string(),
+                "a.service".to_string()
+            ])
+            .to_string(),
+            "Transaction order is cyclic: a.service -> b.service -> a.service"
+        );
         assert_eq!(
             PlanError::Conflicting.to_string(),
             "Transaction contains conflicting jobs"
