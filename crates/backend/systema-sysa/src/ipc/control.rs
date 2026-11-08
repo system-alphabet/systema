@@ -81,9 +81,19 @@ pub async fn run_control_listener(allocator: AllocatorHandle) -> Result<()> {
 
 /// Relays selected event-bus topics to a control session as pre-encoded
 /// envelopes.  One instance per control session; pushed onto the session's
-/// outbound mpsc channel (bounded → slow clients are dropped, never wedged).
+/// outbound channel.
+///
+/// The channel is *unbounded*: lifecycle events carry state (a `job.new` that
+/// is seen without its `job.completed` leave the bridge mirror listing a
+/// finished job forever), so they must never be dropped.  Dropping was the
+/// old behavior when a bounded ring filled during boot bursts — the event
+/// consumer and the session writer are separate tasks on the single-threaded
+/// runtime, so a producer burst can outrun the writer for a few hundred
+/// events.  Delivery is best-effort only after the session is gone: the
+/// receiver is dropped with the writer task, `send` fails, and the bridge
+/// reconnects and re-seeds its mirror anyway.
 struct ControlForwarder {
-    tx: mpsc::Sender<bytes::Bytes>,
+    tx: mpsc::UnboundedSender<bytes::Bytes>,
 }
 
 #[async_trait::async_trait]
@@ -113,18 +123,12 @@ impl EventSubscriber for ControlForwarder {
         if env.encode(&mut buf).is_err() {
             return;
         }
-        if self.tx.try_send(buf.freeze()).is_err() {
-            // Session read end closed or slow — drop the event.
-            debug_drop(event.topic.clone());
+        if self.tx.send(buf.freeze()).is_err() {
+            // The session's writer task is gone (client closed); the session
+            // cleanup unsubscribes this forwarder right after this point.
+            debug!("Control forwarder: session already gone, event dropped");
         }
     }
-}
-
-fn debug_drop(topic: EventTopic) {
-    warn!(
-        "Control forwarder dropped event for {:?} (slow/closed session)",
-        topic
-    );
 }
 
 /// Serve one control session until the peer disconnects.
@@ -247,8 +251,11 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
         );
     }
 
-    // Subscribe to control events before serving requests.
-    let (out_tx, out_rx) = mpsc::channel::<bytes::Bytes>(256);
+    // Subscribe to control events before serving requests.  The channel is
+    // unbounded so a boot burst can never drop a lifecycle event (see
+    // `ControlForwarder`); the writer task applies the only backpressure,
+    // and a dead peer drops the receiver, failing sends immediately.
+    let (out_tx, out_rx) = mpsc::unbounded_channel::<bytes::Bytes>();
     let forwarder = Arc::new(ControlForwarder { tx: out_tx.clone() });
     let bus = allocator.read().event_bus.clone();
     let sub_id = {
@@ -286,7 +293,7 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
                 match dispatch(&allocator, env).await {
                     Ok(Some(mut reply)) => {
                         reply.request_id = request_id;
-                        if out_tx.send(encode_envelope(&reply)).await.is_err() {
+                        if out_tx.send(encode_envelope(&reply)).is_err() {
                             break;
                         }
                     }
@@ -304,7 +311,7 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
                             },
                         );
                         if let Ok(err) = err {
-                            if out_tx.send(encode_envelope(&err)).await.is_err() {
+                            if out_tx.send(encode_envelope(&err)).is_err() {
                                 break;
                             }
                         }
