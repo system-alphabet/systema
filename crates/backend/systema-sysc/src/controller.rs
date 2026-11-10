@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::engine::{publish_timer, send_fired, status_of, EngineShared};
 use crate::schedule::{
@@ -116,6 +116,18 @@ impl UnitController for TimerController {
         }
 
         publish_timer(&self.shared, unit_name);
+
+        // A timer with no trigger cannot be scheduled, so it is reported
+        // `failed` (systemd's `timer_verify()` refuses such a unit).  This
+        // path returns success, so System A prints no "Task failed" line for
+        // it — without this warning the unit would just flip to failed with
+        // nothing in the log explaining why.
+        if !has_trigger {
+            warn!(
+                "Timer unit {unit_name} carries no OnCalendar=/On*Sec= trigger; \
+                 refusing to schedule it (unit reported failed)"
+            );
+        }
 
         if let Some(missed) = missed {
             info!("Persistent timer '{unit_name}' catching up on missed elapse at epoch {missed}");

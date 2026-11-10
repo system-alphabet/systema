@@ -1618,13 +1618,59 @@ fn transient_unit_from_properties(
         uf.service = Some(transient_service_from_props(props));
     }
     if uf.kind == UnitKind::Timer {
-        uf.timer = Some(transient_timer_from_props(props));
+        let timer = transient_timer_from_props(props);
+        // A transient timer without any trigger cannot be scheduled; its
+        // worker refuses it (systemd's `timer_verify()` does the same).  Warn
+        // here, at the property-mapping boundary, because this is where a
+        // directive the bag does not carry gets lost — the worker's own
+        // warning only says the unit arrived empty.
+        if !timer_has_trigger(&timer) {
+            warn!(
+                "Transient timer {name} maps to no OnCalendar=/On*Sec= trigger \
+                 (received property keys: {keys:?}); the unit will fail to start",
+                keys = property_keys(props)
+            );
+        }
+        uf.timer = Some(timer);
     }
     if uf.kind == UnitKind::Path {
-        uf.path = Some(transient_path_from_props(props));
+        let path = transient_path_from_props(props);
+        if !path_has_condition(&path) {
+            warn!(
+                "Transient path {name} maps to no PathExists=/PathChanged=/DirectoryNotEmpty= \
+                 condition (received property keys: {keys:?}); the unit will fail to start",
+                keys = property_keys(props)
+            );
+        }
+        uf.path = Some(path);
     }
 
     uf
+}
+
+/// Whether a transient `[Timer]` section carries any scheduling trigger.
+fn timer_has_trigger(t: &TimerSection) -> bool {
+    !t.on_calendar.is_empty()
+        || t.on_active_sec.is_some()
+        || t.on_boot_sec.is_some()
+        || t.on_startup_sec.is_some()
+        || t.on_unit_active_sec.is_some()
+        || t.on_unit_inactive_sec.is_some()
+}
+
+/// Whether a transient `[Path]` section carries any watch condition.
+fn path_has_condition(p: &PathSection) -> bool {
+    !p.path_exists.is_empty()
+        || !p.path_exists_glob.is_empty()
+        || !p.path_changed.is_empty()
+        || !p.path_modified.is_empty()
+        || !p.directory_not_empty.is_empty()
+}
+
+/// The property keys of a transient request, in arrival order (for
+/// diagnostics only).
+fn property_keys(props: &[TransientProperty]) -> Vec<&str> {
+    props.iter().map(|p| p.key.as_str()).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1659,12 +1705,18 @@ fn transient_service_from_props(props: &[TransientProperty]) -> ServiceSection {
 }
 
 /// Assemble the `[Timer]` section of a transient timer from its
-/// `systemd-run` property bag.  On the bus, `On*Sec=`/`AccuracySec=`/
-/// `RandomizedDelaySec=` carry microsecond counts; this model stores them
-/// in whole seconds (ceil, so a sub-second entry still fires on time).
+/// `systemd-run` property bag.  On the bus `On*Sec=`/`AccuracyUSec=`/
+/// `RandomizedDelayUSec=` carry microsecond counts (`t`); this model stores
+/// them in whole seconds (ceil, so a sub-second entry still fires on time).
+/// The `…Sec` spellings are the obsolete-but-still-accepted D-Bus names and
+/// are read as a fallback.
 fn transient_timer_from_props(props: &[TransientProperty]) -> TimerSection {
-    let usecs =
-        |key: &str| -> Option<u32> { prop_u64(props, key).map(|v| secs_from_usecs_value(v)) };
+    let usecs = |key: &str| -> Option<u32> { prop_u64(props, key).map(secs_from_usecs_value) };
+    // `AccuracyUSec`/`RandomizedDelayUSec` are the current D-Bus property
+    // names; `AccuracySec`/`RandomizedDelaySec` are their obsolete spellings.
+    let accuracy = prop_u64(props, "AccuracyUSec").or_else(|| prop_u64(props, "AccuracySec"));
+    let randomized =
+        prop_u64(props, "RandomizedDelayUSec").or_else(|| prop_u64(props, "RandomizedDelaySec"));
     TimerSection {
         on_active_sec: usecs("OnActiveSec"),
         on_boot_sec: usecs("OnBootSec"),
@@ -1672,12 +1724,8 @@ fn transient_timer_from_props(props: &[TransientProperty]) -> TimerSection {
         on_unit_active_sec: usecs("OnUnitActiveSec"),
         on_unit_inactive_sec: usecs("OnUnitInactiveSec"),
         on_calendar: prop_strings(props, "OnCalendar"),
-        accuracy_sec: prop_u64(props, "AccuracySec")
-            .map(|v| secs_from_usecs_value(v))
-            .unwrap_or_default(),
-        randomized_delay_sec: prop_u64(props, "RandomizedDelaySec")
-            .map(|v| secs_from_usecs_value(v))
-            .unwrap_or_default(),
+        accuracy_sec: accuracy.map(secs_from_usecs_value).unwrap_or_default(),
+        randomized_delay_sec: randomized.map(secs_from_usecs_value).unwrap_or_default(),
         unit: prop_string(props, "Unit").unwrap_or_default(),
         persistent: prop_bool(props, "Persistent").unwrap_or(false),
         wake_system: prop_bool(props, "WakeSystem").unwrap_or(false),
@@ -2604,6 +2652,41 @@ mod tests {
         assert_eq!(t.on_calendar, vec!["*-*-* 02:00:00".to_string()]);
         assert!(t.persistent);
         assert!(!t.remain_after_elapse);
+    }
+
+    #[test]
+    fn transient_units_without_trigger_are_detected() {
+        // `lastoreAutoCheck.timer` / `watchOsVersion.path`: when the property
+        // bag carries no trigger directive at all, the mapped section is
+        // empty, so the unit can never be scheduled or armed.  The assembly
+        // step warns about this and the owning worker refuses the unit.
+        let timer = transient_unit_from_properties(
+            "lastoreAutoCheck.timer",
+            &bag(&[("Persistent", Value::B(false))]),
+            None,
+        );
+        assert!(!timer_has_trigger(
+            timer.timer.as_ref().expect("timer section")
+        ));
+
+        let path = transient_unit_from_properties(
+            "watchOsVersion.path",
+            &bag(&[("MakeDirectory", Value::B(true))]),
+            None,
+        );
+        assert!(!path_has_condition(
+            path.path.as_ref().expect("path section")
+        ));
+
+        // A single trigger directive is enough for the unit to be schedulable.
+        let timer = transient_unit_from_properties(
+            "ok.timer",
+            &bag(&[("OnBootSec", Value::U(90_000_000))]),
+            None,
+        );
+        assert!(timer_has_trigger(
+            timer.timer.as_ref().expect("timer section")
+        ));
     }
 
     #[test]

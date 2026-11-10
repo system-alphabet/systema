@@ -245,6 +245,35 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                             }
                         }
                     }
+                    "(ss)" => {
+                        // Container-valued trigger properties: systemd's
+                        // transient `Paths` is `a(ss)` (path type + path) and
+                        // `TimersCalendar` is `a(ss)` ("OnCalendar" + spec).
+                        // One property holds every directive there, while the
+                        // control plane models each directive as its own key,
+                        // so each pair is flattened into `key = value`.
+                        // Dropping them (the previous behavior) left a
+                        // transient timer/path with an empty configuration,
+                        // which its worker reports as a failure with no log.
+                        if let zvariant::Value::Structure(st) = item {
+                            if let Some((k, v)) = struct_string_pair(st) {
+                                push_prop_entry(out, &k, sysa::proto::manager_value::Value::S(v));
+                            }
+                        }
+                    }
+                    "(st)" => {
+                        // `TimersMonotonic` (`a(st)`: timer base + usec) — the
+                        // modern spelling of the `OnBootSec=`-style triggers.
+                        if let zvariant::Value::Structure(st) = item {
+                            if let Some((k, usec)) = struct_usec_pair(st) {
+                                push_prop_entry(
+                                    out,
+                                    &k,
+                                    sysa::proto::manager_value::Value::U(usec),
+                                );
+                            }
+                        }
+                    }
                     "(sasb)" => {
                         // `ExecStart=` (and friends) — one command element per
                         // struct: (argv[0], argv, ignore_failure).
@@ -264,6 +293,32 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
             }
         }
         _ => push_scalar_entry(out, key, value),
+    }
+}
+
+/// Decode one `(ss)` struct element into `(key, value)` — the element shape of
+/// `Paths` (path type + path) and `TimersCalendar` ("OnCalendar" + spec).
+fn struct_string_pair(st: &zvariant::Structure) -> Option<(String, String)> {
+    let fields = st.fields();
+    if fields.len() != 2 {
+        return None;
+    }
+    match (&fields[0], &fields[1]) {
+        (zvariant::Value::Str(k), zvariant::Value::Str(v)) => Some((k.to_string(), v.to_string())),
+        _ => None,
+    }
+}
+
+/// Decode one `(st)` struct element into `(key, usec)` — the element shape of
+/// `TimersMonotonic` (timer base + microsecond count).
+fn struct_usec_pair(st: &zvariant::Structure) -> Option<(String, u64)> {
+    let fields = st.fields();
+    if fields.len() != 2 {
+        return None;
+    }
+    match (&fields[0], &fields[1]) {
+        (zvariant::Value::Str(k), zvariant::Value::U64(usec)) => Some((k.to_string(), *usec)),
+        _ => None,
     }
 }
 
@@ -1633,6 +1688,53 @@ mod tests {
             .properties
             .iter()
             .any(|p| p.key == "DefaultDependencies"));
+    }
+
+    /// `TimersMonotonic` (`a(st)`) and `Paths` / `TimersCalendar` (`a(ss)`)
+    /// carry trigger directives as container properties.  They must be
+    /// flattened into the per-directive keys the control plane reads, or a
+    /// transient timer/path reaches System A with an empty configuration and
+    /// its worker reports the unit failed (`lastoreAutoCheck.timer`).
+    #[test]
+    fn properties_to_bag_flattens_container_trigger_properties() {
+        use zvariant::Value;
+
+        let monotonic_struct = zvariant::StructureBuilder::new()
+            .add_field("OnBootSec")
+            .add_field(90_000_000u64)
+            .build();
+        let mut monotonic = zvariant::Array::new(zvariant::Signature::from_str_unchecked("(st)"));
+        monotonic
+            .append(Value::Structure(monotonic_struct))
+            .expect("(st) element");
+        let monotonic = OwnedValue::try_from(Value::Array(monotonic)).unwrap();
+
+        let paths_struct = zvariant::StructureBuilder::new()
+            .add_field("PathModified")
+            .add_field("/var/lib/lastore/status.json")
+            .build();
+        let mut paths = zvariant::Array::new(zvariant::Signature::from_str_unchecked("(ss)"));
+        paths
+            .append(Value::Structure(paths_struct))
+            .expect("(ss) element");
+        let paths = OwnedValue::try_from(Value::Array(paths)).unwrap();
+
+        let bag = properties_to_bag(&[
+            ("TimersMonotonic".to_string(), monotonic),
+            ("Paths".to_string(), paths),
+        ])
+        .expect("bag");
+
+        assert!(bag.properties.iter().any(|p| p.key == "OnBootSec"
+            && matches!(
+                p.value.as_ref().and_then(|v| v.value.as_ref()),
+                Some(sysa::proto::manager_value::Value::U(90_000_000))
+            )));
+        assert!(bag.properties.iter().any(|p| p.key == "PathModified"
+            && matches!(
+                p.value.as_ref().and_then(|v| v.value.as_ref()),
+                Some(sysa::proto::manager_value::Value::S(path)) if path == "/var/lib/lastore/status.json"
+            )));
     }
 
     /// Open a pidfd naming `pid`.  Needs Linux 5.3+.

@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
 use sysa::proto::PathConfig;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::engine::{arm_unit, publish_path, recheck_level, status_of, EngineShared};
 use crate::spec::{PathSpec, PathSpecKind};
@@ -134,6 +134,18 @@ impl UnitController for PathController {
         }
 
         publish_path(&self.shared, unit_name);
+
+        // A path unit with no watch condition cannot be armed, so it is
+        // reported `failed` (systemd's `path_verify()` refuses such a unit).
+        // This path returns success, so System A prints no "Task failed" line
+        // for it — without this warning the unit would just flip to failed
+        // with nothing in the log explaining why.
+        if !has_condition {
+            warn!(
+                "Path unit {unit_name} carries no PathExists=/PathChanged=/DirectoryNotEmpty= \
+                 condition; refusing to arm it (unit reported failed)"
+            );
+        }
 
         if has_condition {
             let failed = {
