@@ -420,20 +420,17 @@ pub async fn automount_enter_waiting(
         libc::fcntl(pipe_fds[0], libc::F_SETFL, flags | libc::O_NONBLOCK);
     }
 
-    // Create mount point directory.
-    let dir_mode = if config.directory_mode.is_empty() {
-        "0755"
-    } else {
-        &config.directory_mode
-    };
-    let _ = std::process::Command::new("mkdir")
-        .arg("-p")
-        .arg(&where_)
-        .status();
-    let _ = std::process::Command::new("chmod")
-        .arg(dir_mode)
-        .arg(&where_)
-        .status();
+    // Create the mount point directory when it does not exist yet.  An
+    // existing path keeps its mode: the sentinel may live under `/proc` or
+    // `/sys` (e.g. `proc-sys-fs-binfmt_misc.automount`), where `chmod` fails
+    // with EPERM.  A failed attempt is not fatal — the autofs mount below
+    // reports the real problem.
+    if let Err(e) = crate::linux::mount::ensure_mount_point(&where_, &config.directory_mode) {
+        debug!(
+            "Automount mount point for {} is not usable yet: {e}",
+            where_
+        );
+    }
 
     // Mount autofs.  Besides creating the sentinel this is what makes the
     // kernel issue `request_module("fs-autofs")`, loading a modular autofs

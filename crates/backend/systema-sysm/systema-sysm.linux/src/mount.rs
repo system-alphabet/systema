@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -9,34 +10,57 @@ use tracing::{error, info, warn};
 use crate::linux::mountinfo;
 use crate::linux::state::{MountInstance, MountRegistry, MountState};
 
+/// Create the mount point directory when it does not exist yet, applying
+/// `directory_mode` to it.
+///
+/// An existing path is left completely untouched: systemd's mount/automount
+/// setup only creates the directory (`mkdir_p_label()`), it never changes the
+/// mode of a directory it did not create.  The automount sentinel for
+/// `proc-sys-fs-binfmt_misc.automount` lives under `/proc`, where `chmod(2)`
+/// fails with EPERM.
+///
+/// The failures here only ever reach a log (this worker's own warnings, or
+/// System A's "Task failed" line for the start job), so they are plain English
+/// rather than localized text; the cause is folded in because the log line
+/// prints only the error's outermost message.
+pub(crate) fn ensure_mount_point(path: &str, directory_mode: &str) -> Result<()> {
+    let directory = Path::new(path);
+    if directory.exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(directory)
+        .map_err(|e| anyhow::anyhow!("creating mount point {path}: {e}"))?;
+    let mode = if directory_mode.is_empty() {
+        0o755
+    } else {
+        parse_mode(directory_mode)
+    };
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(mode))
+        .map_err(|e| anyhow::anyhow!("setting permissions on mount point {path}: {e}"))?;
+    Ok(())
+}
+
+/// `DirectoryMode=` as an octal mode (`"0755"` or `"0o755"`), defaulting to
+/// `0755` when it cannot be parsed.
+fn parse_mode(directory_mode: &str) -> u32 {
+    let digits = directory_mode.trim();
+    let digits = digits
+        .strip_prefix("0o")
+        .or_else(|| digits.strip_prefix("0O"))
+        .unwrap_or(digits);
+    u32::from_str_radix(digits, 8).unwrap_or(0o755) & 0o7777
+}
+
 pub async fn do_mount(
     registry: MountRegistry,
     unit_name: &str,
     config: &MountConfig,
 ) -> Result<()> {
     let mount_point = config.r#where.clone();
-    let mount_point_path = Path::new(&mount_point);
 
     // Create mount point directory if needed.
-    let dir_mode = if config.directory_mode.is_empty() {
-        "0755"
-    } else {
-        &config.directory_mode
-    };
-    if !mount_point_path.exists() {
-        Command::new("mkdir")
-            .arg("-p")
-            .arg(&mount_point)
-            .status()
-            .await
-            .context(sysa::l10n::t_("mkdir -p for mount point failed"))?;
-        Command::new("chmod")
-            .arg(dir_mode)
-            .arg(&mount_point)
-            .status()
-            .await
-            .context(sysa::l10n::t_("chmod for mount point failed"))?;
-    }
+    ensure_mount_point(&mount_point, &config.directory_mode)?;
 
     {
         let mut reg = registry.lock();
@@ -361,6 +385,43 @@ pub async fn do_remount(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_mode_parsing_accepts_octal_and_prefix() {
+        assert_eq!(parse_mode("0755"), 0o755);
+        assert_eq!(parse_mode("0o700"), 0o700);
+        assert_eq!(parse_mode("1777"), 0o1777);
+        // Unparseable or empty input falls back to the systemd default.
+        assert_eq!(parse_mode("nonsense"), 0o755);
+        assert_eq!(parse_mode(""), 0o755);
+    }
+
+    #[test]
+    fn ensure_mount_point_leaves_an_existing_path_alone() {
+        // The binfmt_misc automount sentinel lives under /proc, where chmod(2)
+        // fails with EPERM; an existing directory must never be touched (the
+        // old code shelled out to `chmod`, leaking that error to stderr).
+        let dir = std::env::temp_dir().join(format!("systema-mp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let before = std::fs::metadata(&dir).expect("stat").permissions().mode() & 0o7777;
+
+        ensure_mount_point(&dir.to_string_lossy(), "0700").expect("existing path is fine");
+
+        let after = std::fs::metadata(&dir).expect("stat").permissions().mode() & 0o7777;
+        assert_eq!(before, after, "an existing mount point keeps its mode");
+
+        // A missing directory is created with the requested mode.
+        let nested = dir.join("a/b");
+        ensure_mount_point(&nested.to_string_lossy(), "0700").expect("creates the chain");
+        let mode = std::fs::metadata(&nested)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(mode, 0o700);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[tokio::test]
     async fn stopping_an_already_unmounted_mount_is_idempotent() {
