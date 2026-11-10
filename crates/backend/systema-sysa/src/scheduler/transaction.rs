@@ -706,9 +706,15 @@ impl Transaction {
                 )?;
             }
             // Conflicts= with a missing unit is a no-op: a non-existent
-            // unit can never be active, so there is nothing to stop.
+            // unit can never be active, so there is nothing to stop.  This is
+            // routine, not a fault: `plymouth-switch-root-initramfs.service`
+            // (an initrd unit the Finder loads anyway) declares
+            // `Conflicts=dracut-shutdown.service`, which does not exist on
+            // initramfs-tools systems, so every boot transaction that pulls
+            // the plymouth unit in would otherwise log a warning.  systemd
+            // tolerates the missing unit here as well.
             for dep in &section.conflicts {
-                if let Err(e) = self.add_job_and_dependencies(
+                match self.add_job_and_dependencies(
                     units,
                     states,
                     installed,
@@ -718,7 +724,11 @@ impl Transaction {
                     Some(job),
                     MATTERS | CONFLICTS | (flags & IGNORE_ORDER),
                 ) {
-                    warn!("Cannot add conflict stop job for {dep}: {e}");
+                    Ok(()) => {}
+                    Err(PlanError::UnitNotFound(_)) => {
+                        debug!("Skipping conflict stop job for {dep}: unit is not loaded");
+                    }
+                    Err(e) => warn!("Cannot add conflict stop job for {dep}: {e}"),
                 }
             }
             // Inverse Conflicts= (`UNIT_ATOM_CONFLICTED_BY`): every unit
@@ -2008,6 +2018,29 @@ mod tests {
         let a = s.iter().find(|x| x.unit == "a.service").unwrap();
         assert_eq!(a.job_type, Stop);
         assert!(a.matters_to_anchor);
+    }
+
+    #[test]
+    fn conflicts_with_missing_unit_is_a_silent_no_op() {
+        // `plymouth-switch-root-initramfs.service` declares
+        // `Conflicts=dracut-shutdown.service`, but dracut is not installed on
+        // initramfs-tools systems.  A conflict target that is not loaded can
+        // never be active, so the transaction must build without error and
+        // without a job for the missing unit (systemd tolerates it too); the
+        // planner used to log a WARN on every boot for this.
+        let units = map(vec![with_conflicts(
+            make_unit("plymouth-switch-root-initramfs.service"),
+            &["dracut-shutdown.service"],
+        )]);
+        let s = steps(
+            &units,
+            &HashMap::new(),
+            &HashMap::new(),
+            "plymouth-switch-root-initramfs.service",
+            Start,
+            Replace,
+        );
+        assert_eq!(names(&s), vec!["plymouth-switch-root-initramfs.service"]);
     }
 
     #[test]
