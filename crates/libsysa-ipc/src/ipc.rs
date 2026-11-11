@@ -1,4 +1,5 @@
 use std::os::unix::io::AsRawFd;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bytes::{Bytes, BytesMut};
@@ -73,6 +74,40 @@ pub async fn recv_envelope(framed: &mut EnvelopeFramed) -> Result<Option<Envelop
             Ok(Some(envelope))
         }
     }
+}
+
+/// Upper bound for draining a one-shot control session after its terminal
+/// reply.  A healthy server sees our FIN, stops pushing and closes within one
+/// round trip; the bound only protects against a wedged peer.
+pub const CONTROL_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Finish a one-shot control session without turning the close into an RST on
+/// the peer.
+///
+/// A control session is also an event stream: the server keeps pushing
+/// `job.*`/`unit.*` envelopes after the `{method}.result` the caller came
+/// for.  Closing the socket with those frames still queued makes Linux set
+/// `ECONNRESET` on the peer (`unix_release_sock()` marks the peer errored
+/// when the closing socket's receive queue is non-empty).  Half-close the
+/// write side first — the server then reads EOF, stops pushing and closes —
+/// and drain the frames that were already in flight before dropping.
+pub async fn finish_control_session(framed: &mut EnvelopeFramed, drain_timeout: Duration) {
+    use tokio::io::AsyncWriteExt;
+
+    // `send_envelope` flushes before returning, so the write buffer is empty
+    // here: the FIN cannot truncate a request frame.
+    if let Err(e) = framed.get_mut().shutdown().await {
+        debug!("control session shutdown failed: {e}");
+        return;
+    }
+    let drain = async {
+        while let Some(frame) = framed.next().await {
+            if frame.is_err() {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(drain_timeout, drain).await;
 }
 
 /// Build an `Envelope` for a method call or event.
@@ -394,6 +429,37 @@ mod tests {
             libc::close(fd);
             libc::close(received);
         }
+    }
+}
+
+#[cfg(test)]
+mod control_close_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn finish_control_session_half_closes_and_drains() {
+        let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
+        let mut client = frame_stream(client_stream);
+
+        let server = tokio::spawn(async move {
+            let mut framed = frame_stream(server_stream);
+            for method in ["job.new", "unit.changed"] {
+                let env = make_envelope(0, "system-a", "", method, ()).unwrap();
+                send_envelope(&mut framed, &env).await.unwrap();
+            }
+            // The client must send FIN (EOF here) before dropping the socket,
+            // so its receive queue is empty when it closes.
+            let eof = recv_envelope(&mut framed).await.unwrap();
+            assert!(eof.is_none(), "client must half-close before dropping");
+        });
+
+        finish_control_session(&mut client, Duration::from_millis(500)).await;
+        drop(client);
+
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("server task must finish")
+            .expect("server task must not panic");
     }
 }
 

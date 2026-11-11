@@ -211,7 +211,11 @@ where
             .await?
             .ok_or_else(|| anyhow::anyhow!(sysa::l10n::t_("System A closed the connection")))?;
         if reply.method == format!("{method}.result") {
-            return Ok(Res::decode(reply.payload.as_slice())?);
+            let decoded = Res::decode(reply.payload.as_slice())?;
+            // One-shot session: FIN before dropping so the server is not left
+            // with queued events at close (which it would see as ECONNRESET).
+            sysa::ipc::finish_control_session(&mut framed, sysa::ipc::CONTROL_DRAIN_TIMEOUT).await;
+            return Ok(decoded);
         }
         // Otherwise it is a pushed event envelope; keep waiting.
     }

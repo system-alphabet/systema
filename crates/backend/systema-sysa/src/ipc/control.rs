@@ -15,6 +15,7 @@
 //! `job.new`, `job.completed`).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
@@ -131,6 +132,19 @@ impl EventSubscriber for ControlForwarder {
     }
 }
 
+/// Whether a read error means the peer simply went away (normal session
+/// teardown) instead of a protocol/transport fault.
+///
+/// `UnexpectedEof` is deliberately excluded: a length-delimited frame cut in
+/// half means the peer died mid-frame, which is worth a warning.
+fn peer_disconnected(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        e.kind(),
+        ConnectionReset | ConnectionAborted | BrokenPipe | NotConnected
+    )
+}
+
 /// Serve one control session until the peer disconnects.
 async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) -> Result<()> {
     let (client_pid, client_uid) = super::server::peer_cred(&stream).unwrap_or((0, 0));
@@ -157,6 +171,10 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
         let env = match reader.next().await {
             None => {
                 info!("Control client (PID {client_pid}) disconnected before the first envelope");
+                return Ok(());
+            }
+            Some(Err(e)) if peer_disconnected(&e) => {
+                debug!("Control client (PID {client_pid}) detached before the first envelope: {e}");
                 return Ok(());
             }
             Some(Err(e)) => anyhow::bail!(sysa::l10n::fmt(
@@ -278,7 +296,11 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
         match reader.next().await {
             None => break,
             Some(Err(e)) => {
-                warn!("Control session read error: {e}");
+                if peer_disconnected(&e) {
+                    debug!("Control session from PID {client_pid} closed by peer: {e}");
+                } else {
+                    warn!("Control session read error: {e}");
+                }
                 break;
             }
             Some(Ok(bytes)) => {
@@ -324,7 +346,19 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
     let mut bus = bus.write().await;
     bus.unsubscribe(sub_id);
     drop(bus);
-    writer_task.abort();
+    // Stop the event source first, then let the writer flush what is already
+    // queued: the peer sees a complete frame stream followed by FIN instead
+    // of a frame truncated by abort().  A peer that stops reading is cut off
+    // after the drain bound.
+    drop(forwarder);
+    drop(out_tx);
+    let mut writer_task = writer_task;
+    if tokio::time::timeout(Duration::from_secs(1), &mut writer_task)
+        .await
+        .is_err()
+    {
+        writer_task.abort();
+    }
     info!("Control session from PID {client_pid} closed");
     Ok(())
 }
@@ -2002,6 +2036,62 @@ mod tests {
             "foo.service must appear in list: {:?}",
             names
         );
+    }
+
+    /// A one-shot session must be able to finish with a half-close (FIN) and
+    /// a drain, so the server sees EOF instead of ECONNRESET.
+    #[tokio::test]
+    async fn half_closed_session_ends_cleanly() {
+        let alloc = test_allocator();
+        let (server, client) = UnixStream::pair().unwrap();
+        let session = tokio::spawn(async move { handle_control_session(server, alloc).await });
+        let mut client = sysa::ipc::frame_stream(client);
+        do_hello(&mut client).await;
+
+        sysa::ipc::send_envelope(
+            &mut client,
+            &req_env(
+                "manager.list_units",
+                ListUnitsRequest {
+                    enabled_only: false,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+        loop {
+            let reply = sysa::ipc::recv_envelope(&mut client)
+                .await
+                .unwrap()
+                .expect("session must not close before the reply");
+            if reply.method == "manager.list_units.result" {
+                break;
+            }
+        }
+
+        sysa::ipc::finish_control_session(&mut client, sysa::ipc::CONTROL_DRAIN_TIMEOUT).await;
+        drop(client);
+
+        tokio::time::timeout(Duration::from_secs(2), session)
+            .await
+            .expect("session must end after the client half-closes")
+            .expect("session task must not panic")
+            .expect("session must close without an error");
+    }
+
+    #[test]
+    fn peer_disconnect_errors_are_not_transport_faults() {
+        use std::io::{Error, ErrorKind};
+        for kind in [
+            ErrorKind::ConnectionReset,
+            ErrorKind::ConnectionAborted,
+            ErrorKind::BrokenPipe,
+            ErrorKind::NotConnected,
+        ] {
+            assert!(peer_disconnected(&Error::from(kind)), "{kind:?}");
+        }
+        assert!(!peer_disconnected(&Error::from(ErrorKind::UnexpectedEof)));
+        assert!(!peer_disconnected(&Error::from(ErrorKind::InvalidData)));
     }
 
     #[tokio::test]
