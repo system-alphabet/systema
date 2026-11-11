@@ -2154,6 +2154,18 @@ pub(crate) fn free_job(state: &mut AllocatorState, job_id: u64) -> Option<Job> {
     state.jobs.remove(&job_id)
 }
 
+/// The `SubState` a unit reports once it is `failed`.
+///
+/// Mirrors systemd's per-type state tables: every type that has a `FAILED`
+/// state reports `failed`, while targets and devices have none and report
+/// `dead` (`systemctl show -p SubState` on a failed target prints `dead`).
+fn failed_sub_state(kind: Option<UnitKind>) -> &'static str {
+    match kind {
+        Some(UnitKind::Target) | Some(UnitKind::Device) | None => "dead",
+        _ => "failed",
+    }
+}
+
 /// Update unit runtime state from a task result received from a worker.
 /// Compute which units should receive a propagated `Start` because
 /// `unit_name` (a dependency they `BindsTo`) just started successfully.
@@ -2335,12 +2347,17 @@ pub fn handle_task_result(
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_micros() as u64)
                             .unwrap_or(0);
+                        let sub_state =
+                            failed_sub_state(state.units.get(unit_name).map(|u| u.kind.clone()));
                         let entry = state.unit_states.entry(unit_name.to_string()).or_default();
                         if !matches!(entry.active_state.as_str(), "inactive" | "failed") {
                             entry.active_enter_timestamp = 0;
                         }
-                        entry.active_state = "inactive".to_string();
-                        entry.sub_state.clear();
+                        // A failed start leaves the unit `failed`, not
+                        // `inactive` (systemd UNIT_FAILED): the start job did
+                        // not complete, and `systemctl is-active` must say so.
+                        entry.active_state = "failed".to_string();
+                        entry.sub_state = sub_state.to_string();
                         entry.invocation_id.clear();
                         if entry.inactive_enter_timestamp == 0 {
                             entry.inactive_enter_timestamp = now;
@@ -2578,12 +2595,15 @@ fn fail_dependents(state: &mut AllocatorState, failed: &str, kind: JobKind) {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_micros() as u64)
                         .unwrap_or(0);
+                    let sub_state = failed_sub_state(state.units.get(&dep).map(|u| u.kind.clone()));
                     let entry = state.unit_states.entry(dep.clone()).or_default();
                     if !matches!(entry.active_state.as_str(), "inactive" | "failed") {
                         entry.active_enter_timestamp = 0;
                     }
-                    entry.active_state = "inactive".to_string();
-                    entry.sub_state.clear();
+                    // The dependent's start job failed, so the unit is
+                    // `failed` (not `inactive`), as in systemd.
+                    entry.active_state = "failed".to_string();
+                    entry.sub_state = sub_state.to_string();
                     entry.invocation_id.clear();
                     if entry.inactive_enter_timestamp == 0 {
                         entry.inactive_enter_timestamp = now;
@@ -4667,12 +4687,12 @@ mod tests {
     }
 
     #[test]
-    fn test_fail_dependents_reverts_dependent_cache_to_inactive() {
+    fn test_fail_dependents_reverts_dependent_cache_to_failed() {
         // Regression test: poweroff.target Requires=systemd-poweroff.service;
         // when the service's Start fails, fail_dependents fails the target's
-        // job AND must revert its cached state to inactive, otherwise
-        // systemctl sees a failed job while `unit_states` still claims the
-        // unit is "active".
+        // job AND must revert its cached state to failed, otherwise systemctl
+        // sees a failed job while `unit_states` still claims the unit is
+        // "active".
         let mut state = AllocatorState::new();
         state.units.insert(
             "systemd-poweroff.service".to_string(),
@@ -4693,14 +4713,19 @@ mod tests {
         fail_dependents(&mut state, "systemd-poweroff.service", JobKind::Start);
 
         let target_cache = state.unit_states.get("poweroff.target").unwrap();
-        assert_eq!(target_cache.active_state, "inactive");
+        // The dependent never started, so it is `failed` (systemd
+        // UNIT_FAILED), not `inactive`.
+        assert_eq!(target_cache.active_state, "failed");
+        assert_eq!(target_cache.sub_state, "dead");
         assert!(target_cache.invocation_id.is_empty());
     }
 
     #[tokio::test]
-    async fn test_handle_task_result_start_failure_reverts_cache_to_inactive() {
+    async fn test_handle_task_result_start_failure_reverts_cache_to_failed() {
         // A unit whose own Start job fails directly must not stay "active"
-        // in the cache (systemd: a failed start leaves the unit inactive).
+        // in the cache; systemd leaves a unit whose start failed in the
+        // `failed` state, and `recent_start_failed` keeps a later stale
+        // "active" push from resurrecting it.
         let alloc = alloc_with_state("inactive");
         {
             let mut state = alloc.write();
@@ -4748,9 +4773,22 @@ mod tests {
         let state = alloc.read();
         // The failed job reached a terminal state and was freed from the table.
         assert!(state.jobs.get(&job_id).is_none(), "terminal job is freed");
+        // The unit is `failed`, matching systemd: the start job did not
+        // complete, so `is-active` must not report it active or inactive.
         assert_eq!(
             state.unit_states.get("demo.service").unwrap().active_state,
-            "inactive"
+            "failed"
+        );
+        assert_eq!(
+            state.unit_states.get("demo.service").unwrap().sub_state,
+            "failed"
+        );
+        assert!(
+            state
+                .unit_states
+                .get("demo.service")
+                .unwrap()
+                .recent_start_failed
         );
         assert!(state
             .unit_states

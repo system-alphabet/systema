@@ -460,7 +460,7 @@ async fn handle_worker_session(
                                     crate::state::JobKind::Start | crate::state::JobKind::Restart
                                 ) && start_job_recently_failed(&state, &result.unit_name)
                                 {
-                                    revert_cache_to_inactive(&mut state, &result.unit_name);
+                                    revert_cache_to_failed(&mut state, &result.unit_name);
                                 } else if !result.result.is_empty() {
                                     if let Some(unit_status) =
                                         UnitStatus::decode_from(&result.result)
@@ -1589,20 +1589,26 @@ fn apply_state_to_cache(entry: &mut CachedUnitState, status: &UnitStatus) {
     }
 }
 
-/// Revert a unit's cached runtime state to `inactive`.
+/// Revert a unit's cached runtime state to `failed`.
 ///
-/// Called when a Start/Restart job ends in `Failed` (either directly or via
-/// dependency failure) so that the cache reflects the reality that the unit
-/// did not successfully start.  This prevents the `unit_states` entry from
-/// remaining `active` after a failed Start job.
-fn revert_cache_to_inactive(state: &mut crate::state::AllocatorState, unit_name: &str) {
+/// Called when a Start/Restart job ended in `Failed` (either directly or via
+/// dependency failure) and a worker still reports the unit as `active`: the
+/// unit did not start, so the cache must say `failed` (systemd `UNIT_FAILED`)
+/// instead of keeping or restoring `active`.
+fn revert_cache_to_failed(state: &mut crate::state::AllocatorState, unit_name: &str) {
     let now = now_usec();
+    let sub_state = match state.units.get(unit_name).map(|u| u.kind.clone()) {
+        Some(crate::unit::types::UnitKind::Target)
+        | Some(crate::unit::types::UnitKind::Device)
+        | None => "dead",
+        _ => "failed",
+    };
     let entry = state.unit_states.entry(unit_name.to_string()).or_default();
     if !matches!(entry.active_state.as_str(), "inactive" | "failed") {
         entry.active_enter_timestamp = 0;
     }
-    entry.active_state = "inactive".to_string();
-    entry.sub_state.clear();
+    entry.active_state = "failed".to_string();
+    entry.sub_state = sub_state.to_string();
     entry.invocation_id.clear();
     if entry.inactive_enter_timestamp == 0 {
         entry.inactive_enter_timestamp = now;
@@ -1941,7 +1947,7 @@ mod tests {
     }
 
     #[test]
-    fn revert_cache_to_inactive_clears_active_entry() {
+    fn revert_cache_to_failed_marks_the_unit_failed() {
         let mut state = crate::state::AllocatorState::new();
         let entry = state
             .unit_states
@@ -1953,33 +1959,37 @@ mod tests {
         entry.active_enter_timestamp = 123;
         entry.inactive_enter_timestamp = 0;
 
-        revert_cache_to_inactive(&mut state, "poweroff.target");
+        revert_cache_to_failed(&mut state, "poweroff.target");
 
         let entry = state.unit_states.get("poweroff.target").unwrap();
-        assert_eq!(entry.active_state, "inactive");
-        assert_eq!(entry.sub_state, "");
+        assert_eq!(entry.active_state, "failed");
+        // Targets have no `failed` state in systemd; they report `dead`.
+        assert_eq!(entry.sub_state, "dead");
         assert_eq!(entry.invocation_id, "");
         assert_eq!(entry.active_enter_timestamp, 0);
         assert_ne!(entry.inactive_enter_timestamp, 0);
     }
 
     #[test]
-    fn revert_cache_to_inactive_preserves_failed_state_but_sets_inactive() {
-        // A failed start should leave the unit inactive (not "failed" cached
-        // state from the worker).
+    fn revert_cache_to_failed_keeps_a_service_failed() {
+        // A worker push that still claims `active` after the start job failed
+        // must not resurrect the unit: the cache stays `failed`.
         let mut state = crate::state::AllocatorState::new();
+        state.units.insert(
+            "foo.service".to_string(),
+            crate::unit::types::UnitFile::new("foo.service"),
+        );
         let entry = state
             .unit_states
             .entry("foo.service".to_string())
             .or_default();
-        entry.active_state = "failed".to_string();
+        entry.active_state = "active".to_string();
 
-        revert_cache_to_inactive(&mut state, "foo.service");
+        revert_cache_to_failed(&mut state, "foo.service");
 
-        assert_eq!(
-            state.unit_states.get("foo.service").unwrap().active_state,
-            "inactive"
-        );
+        let entry = state.unit_states.get("foo.service").unwrap();
+        assert_eq!(entry.active_state, "failed");
+        assert_eq!(entry.sub_state, "failed");
     }
 
     #[test]

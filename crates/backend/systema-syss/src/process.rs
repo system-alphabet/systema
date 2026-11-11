@@ -516,21 +516,27 @@ pub async fn start_service(
         });
     }
 
-    // Update state.  A `Type=oneshot` service must NOT be reported as
-    // "running"/active right after spawn: unlike systemd it would only
-    // become UNIT_ACTIVE after ExecStart has exited (SERVICE_EXITED with
-    // RemainAfterExit=true).  systemd keeps oneshot units in
-    // SERVICE_START/SERVICE_START_POST (i.e. UNIT_ACTIVATING) while the
-    // control process is still running (src/core/service.c:73-103).  The
-    // oneshot start path therefore stays in `Starting` here and lets
-    // `await_oneshot_exit` (in controller.rs) move it to Running/Dead/Failed
-    // once ExecStart actually exits.  Other service types are "Running" as
-    // soon as the main process is spawned.
-    let is_oneshot = svc.service_type.as_str() == "oneshot";
+    // Update state.  A service that has to report readiness must NOT be
+    // reported as "running"/active right after spawn: systemd keeps it in
+    // SERVICE_START/SERVICE_START_POST (i.e. UNIT_ACTIVATING) until the
+    // readiness signal arrives (src/core/service.c:73-103), and a unit that
+    // never reports readiness ends up failed, not active.
+    //
+    //   oneshot          → active once ExecStart exited (RemainAfterExit=)
+    //   notify(-reload)  → active once READY=1 arrived
+    //   dbus             → active once BusName= is owned
+    //
+    // The controllers' waiters (`await_oneshot_exit`, `await_notify_start`,
+    // `await_dbus_start`) move the unit from `Starting` to `Running` — or to
+    // `Failed` when readiness never arrives.
+    let waits_for_readiness = matches!(
+        svc.service_type.as_str(),
+        "oneshot" | "notify" | "notify-reload" | "dbus"
+    );
     {
         let mut reg = registry.lock();
         if let Some(inst) = reg.get_mut(&unit_name) {
-            inst.state = if is_oneshot {
+            inst.state = if waits_for_readiness {
                 ServiceState::Starting
             } else {
                 ServiceState::Running

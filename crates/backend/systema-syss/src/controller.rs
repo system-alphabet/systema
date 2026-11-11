@@ -54,12 +54,15 @@ impl ServiceController {
     /// Wait for the service's readiness notification (Type=notify(-reload)).
     /// On failure the service is stopped and the unit is marked failed.
     async fn await_notify_start(&self, unit_name: &str, pid: u32, cfg: &UnitConfig) -> Result<()> {
-        let Some(notify) = self.notify.as_ref() else {
-            return Ok(());
-        };
         if !Self::is_notify_type(cfg) {
             return Ok(());
         }
+        let Some(notify) = self.notify.as_ref() else {
+            // No sd_notify listener on this platform: there is nothing to
+            // wait for, so the unit becomes active as soon as it was spawned.
+            self.mark_ready(unit_name);
+            return Ok(());
+        };
         let timeout = cfg
             .service
             .as_ref()
@@ -69,15 +72,49 @@ impl ServiceController {
         match notify.wait_ready(unit_name, pid, timeout).await {
             Ok(()) => {
                 info!("{} (PID {}): reported READY=1", unit_name, pid);
+                self.mark_ready(unit_name);
                 Ok(())
             }
             Err(e) => {
                 warn!("{} (PID {}): notify start failed: {}", unit_name, pid, e);
                 let _ =
                     stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
+                self.mark_failed(unit_name);
                 self.publish_state(unit_name);
                 Err(anyhow!("{}", e))
             }
+        }
+    }
+
+    /// Move a service that was waiting for its readiness signal
+    /// (`Type=notify` / `Type=dbus`) from `activating` to `active`.
+    fn mark_ready(&self, unit_name: &str) {
+        let changed = {
+            let mut reg = self.registry.lock();
+            match reg.get_mut(unit_name) {
+                Some(inst) if inst.state == ServiceState::Starting => {
+                    inst.state = ServiceState::Running;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.publish_state(unit_name);
+        }
+    }
+
+    /// Mark a service `failed` after its start aborted before readiness.
+    ///
+    /// `stop_service` leaves the entry `Dead`, but systemd reports a unit
+    /// whose start job failed as `failed` (`UNIT_FAILED`) — the boot console
+    /// and `systemctl is-active` must not claim it came up.
+    fn mark_failed(&self, unit_name: &str) {
+        let mut reg = self.registry.lock();
+        if let Some(inst) = reg.get_mut(unit_name) {
+            inst.state = ServiceState::Failed;
+            inst.main_pid = None;
+            inst.invocation_id = None;
         }
     }
 
@@ -290,6 +327,7 @@ impl ServiceController {
                     "{} (PID {}): acquired D-Bus name {}",
                     unit_name, pid, bus_name
                 );
+                self.mark_ready(unit_name);
                 Ok(())
             }
             Err(e) => {
@@ -302,6 +340,7 @@ impl ServiceController {
                         unit_name, pid, stop_err
                     );
                 }
+                self.mark_failed(unit_name);
                 self.publish_state(unit_name);
                 Err(anyhow!("{}", e))
             }
