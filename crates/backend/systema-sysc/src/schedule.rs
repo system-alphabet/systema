@@ -608,7 +608,12 @@ fn parse_time(tok: &str) -> Result<(CalendarPart, CalendarPart, CalendarPart), S
 /// - `OnUnitActiveSec=` / `OnUnitInactiveSec=` repeat from the previous
 ///   elapse (v1: anchored to this worker's own trigger time).
 /// - `OnCalendar=` specs repeat forever.
+///
+/// `unit_name` only labels diagnostics: an unparseable `OnCalendar=` is
+/// dropped from the schedule, and the warning has to name the timer that
+/// carries it.
 pub fn compute_next_elapse(
+    unit_name: &str,
     cfg: &TimerConfig,
     last_elapse: Option<u64>,
     now: u64,
@@ -651,7 +656,11 @@ pub fn compute_next_elapse(
                 }
             }
             Err(e) => {
-                tracing::warn!(spec = %spec_str, "Ignored invalid OnCalendar= directive: {e}");
+                tracing::warn!(
+                    unit = %unit_name,
+                    spec = %spec_str,
+                    "Ignored invalid OnCalendar= directive: {e}"
+                );
             }
         }
     }
@@ -825,7 +834,7 @@ mod tests {
     fn monotonic_takes_earliest() {
         let cfg = tcfg(Some(100), Some(50), vec![]);
         // boot at 0, activated at 0: on_boot fires at 100s, on_active at 50s.
-        let (elapse, reason) = compute_next_elapse(&cfg, None, 0, 0, 0, 0).unwrap();
+        let (elapse, reason) = compute_next_elapse("test.timer", &cfg, None, 0, 0, 0, 0).unwrap();
         assert_eq!(elapse, 50); // on_active wins (sooner)
         assert_eq!(reason, "OnActiveSec");
     }
@@ -834,10 +843,10 @@ mod tests {
     fn monotonic_overdue_clamped_to_now() {
         let cfg = tcfg(None, Some(10), vec![]);
         // activated 4000s before "now": the elapse is overdue → clamp to now.
-        let (elapse, _) = compute_next_elapse(&cfg, None, 5000, 0, 0, 1000).unwrap();
+        let (elapse, _) = compute_next_elapse("test.timer", &cfg, None, 5000, 0, 0, 1000).unwrap();
         assert!(elapse >= 5000);
         // activated in the future: elapse is still scheduled.
-        let (future, _) = compute_next_elapse(&cfg, None, 5000, 0, 0, 6000).unwrap();
+        let (future, _) = compute_next_elapse("test.timer", &cfg, None, 5000, 0, 0, 6000).unwrap();
         assert_eq!(future, 6010);
     }
 
@@ -845,9 +854,9 @@ mod tests {
     fn repeating_unit_active() {
         let mut cfg = tcfg(None, None, vec![]);
         cfg.on_unit_active_sec = Some(300);
-        let first = compute_next_elapse(&cfg, None, 1000, 0, 0, 1000).unwrap();
+        let first = compute_next_elapse("test.timer", &cfg, None, 1000, 0, 0, 1000).unwrap();
         assert_eq!(first.0, 1300);
-        let second = compute_next_elapse(&cfg, Some(1300), 1350, 0, 0, 1000).unwrap();
+        let second = compute_next_elapse("test.timer", &cfg, Some(1300), 1350, 0, 0, 1000).unwrap();
         assert_eq!(second.0, 1600);
     }
 
@@ -861,11 +870,12 @@ mod tests {
         let mut cfg = tcfg(Some(900), None, vec![]);
         cfg.on_unit_active_sec = Some(86400);
         // boot at 0, activated at 0, now = 900 (first fire of OnBootSec).
-        let (first, reason) = compute_next_elapse(&cfg, None, 900, 0, 0, 0).unwrap();
+        let (first, reason) = compute_next_elapse("test.timer", &cfg, None, 900, 0, 0, 0).unwrap();
         assert_eq!(first, 900);
         assert_eq!(reason, "OnBootSec");
         // Next computation happens right after that fire: must be +1d, not now.
-        let (second, reason) = compute_next_elapse(&cfg, Some(900), 901, 0, 0, 0).unwrap();
+        let (second, reason) =
+            compute_next_elapse("test.timer", &cfg, Some(900), 901, 0, 0, 0).unwrap();
         assert_eq!(second, 900 + 86400);
         assert_eq!(reason, "OnUnitActiveSec");
     }
@@ -874,15 +884,60 @@ mod tests {
     fn pure_one_shot_becomes_elapsed() {
         let cfg = tcfg(Some(900), None, vec![]);
         // First elapse is scheduled...
-        assert_eq!(compute_next_elapse(&cfg, None, 0, 0, 0, 0).unwrap().0, 900);
+        assert_eq!(
+            compute_next_elapse("test.timer", &cfg, None, 0, 0, 0, 0)
+                .unwrap()
+                .0,
+            900
+        );
         // ...but once fired there is nothing left to schedule.
-        assert!(compute_next_elapse(&cfg, Some(900), 901, 0, 0, 0).is_none());
+        assert!(compute_next_elapse("test.timer", &cfg, Some(900), 901, 0, 0, 0).is_none());
     }
 
     #[test]
     fn no_trigger_means_none() {
         let cfg = tcfg(None, None, vec![]);
-        assert!(compute_next_elapse(&cfg, None, 1000, 0, 0, 1000).is_none());
+        assert!(compute_next_elapse("test.timer", &cfg, None, 1000, 0, 0, 1000).is_none());
+    }
+
+    #[test]
+    fn invalid_on_calendar_warns_with_the_unit_name() {
+        // The schedule drops an unparseable OnCalendar= spec; the warning has
+        // to name the timer that carries it, otherwise a boot log like
+        // "invalid value '0/30' in component spec=*:0/30" cannot be traced
+        // back to a unit.
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let sink = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || Capture(sink.clone()))
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let cfg = tcfg(None, None, vec!["*:0/30".to_string()]);
+        assert!(compute_next_elapse("lastoreAutoCheck.timer", &cfg, None, 0, 0, 0, 0).is_none());
+
+        let logged = String::from_utf8(buf.lock().unwrap().clone()).expect("utf-8 log");
+        assert!(
+            logged.contains("lastoreAutoCheck.timer"),
+            "warning must name the timer: {logged}"
+        );
+        assert!(
+            logged.contains("*:0/30"),
+            "warning must quote the offending spec: {logged}"
+        );
     }
 
     #[test]

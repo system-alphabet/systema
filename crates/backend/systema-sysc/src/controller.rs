@@ -100,6 +100,7 @@ impl UnitController for TimerController {
 
         if has_trigger {
             inst.next_elapse = compute_next_elapse(
+                unit_name,
                 &inst.config,
                 inst.last_elapse,
                 epoch_now(),
@@ -187,6 +188,7 @@ impl UnitController for TimerController {
             if inst.state == TimerState::Waiting {
                 let now = epoch_now();
                 inst.next_elapse = compute_next_elapse(
+                    unit_name,
                     &inst.config,
                     inst.last_elapse,
                     now,

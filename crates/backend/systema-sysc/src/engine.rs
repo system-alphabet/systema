@@ -80,6 +80,7 @@ fn fire(shared: &Arc<EngineShared>, unit_name: &str, elapse: u64) {
 
         let now = epoch_now();
         inst.next_elapse = compute_next_elapse(
+            unit_name,
             &inst.config,
             inst.last_elapse,
             now,
