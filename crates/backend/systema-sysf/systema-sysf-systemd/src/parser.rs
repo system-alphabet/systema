@@ -1042,25 +1042,82 @@ fn get_i32(config: &Ini, section: &str, key: &str, default: i32) -> i32 {
         .unwrap_or(default)
 }
 
-/// Parse a systemd time value like "90s", "1min", "30" (bare = seconds).
+/// Parse a systemd time span into whole seconds.
+///
+/// `systemd.time(7)` accepts far more than `Xs`/`Xmin`/`Xh`: `m` is a synonym
+/// for minutes, `d`/`w`/`M`/`y` cover days and beyond, and components may be
+/// combined (`"1h 30min"`) or fractional (`"1.5h"`).  Only the long spellings
+/// used to be recognized, so `OnBootSec=5m` / `OnActiveSec=10m` — the form
+/// shipping in real unit files, e.g. `coredump-reporter.timer` — parsed to
+/// `None` and left the whole `[Timer]` section trigger-less.
+///
+/// Sub-second values round up, because the callers store whole seconds and
+/// `0` is their "unset, use the default" spelling.
 fn parse_time_secs(s: &str) -> Option<u32> {
-    let s = s.trim();
-    if s == "infinity" {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed == "infinity" {
         return Some(u32::MAX);
     }
-    if let Some(v) = s.strip_suffix("ms") {
-        return v.trim().parse::<u32>().ok().map(|ms| ms / 1000);
+
+    let mut total = 0f64;
+    for token in trimmed.split_whitespace() {
+        total += parse_time_component(token)?;
     }
-    if let Some(v) = s.strip_suffix("min") {
-        return v.trim().parse::<u32>().ok().map(|m| m * 60);
+    let secs = total.ceil();
+    if secs >= u32::MAX as f64 {
+        return Some(u32::MAX);
     }
-    if let Some(v) = s.strip_suffix('s') {
-        return v.trim().parse::<u32>().ok();
+    Some(secs as u32)
+}
+
+/// One component of a time span (`"30min"`, `"1.5h"`, `"500ms"`, `"45"`), in
+/// seconds.  Suffixes are matched longest-first so `min` wins over `m` and
+/// `ms` over `m`.
+fn parse_time_component(token: &str) -> Option<f64> {
+    const UNITS: &[(&str, f64)] = &[
+        ("usec", 1e-6),
+        ("us", 1e-6),
+        ("msec", 1e-3),
+        ("ms", 1e-3),
+        ("seconds", 1.0),
+        ("second", 1.0),
+        ("sec", 1.0),
+        ("s", 1.0),
+        ("minutes", 60.0),
+        ("minute", 60.0),
+        ("min", 60.0),
+        ("m", 60.0),
+        ("hours", 3600.0),
+        ("hour", 3600.0),
+        ("hr", 3600.0),
+        ("h", 3600.0),
+        ("days", 86_400.0),
+        ("day", 86_400.0),
+        ("d", 86_400.0),
+        ("weeks", 604_800.0),
+        ("week", 604_800.0),
+        ("w", 604_800.0),
+        ("months", 2_629_800.0),
+        ("month", 2_629_800.0),
+        ("M", 2_629_800.0),
+        ("years", 31_557_600.0),
+        ("year", 31_557_600.0),
+        ("y", 31_557_600.0),
+    ];
+    for (suffix, factor) in UNITS {
+        if let Some(number) = token.strip_suffix(suffix) {
+            // Keep looking when the remainder is not a number: `"30minutes"`
+            // also matches `s`, and only the long spelling parses.
+            if let Ok(value) = number.trim().parse::<f64>() {
+                return Some(value * factor);
+            }
+        }
     }
-    if let Some(v) = s.strip_suffix('h') {
-        return v.trim().parse::<u32>().ok().map(|h| h * 3600);
-    }
-    s.parse::<u32>().ok()
+    // A bare number is seconds (systemd's default unit for these settings).
+    token.parse::<f64>().ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -2170,6 +2227,49 @@ WantedBy=timers.target
         assert_eq!(tmr.on_boot_sec, Some(600));
         assert_eq!(tmr.on_unit_active_sec, Some(3600));
         assert_eq!(tmr.on_active_sec, None);
+    }
+
+    /// `m`/`d` suffixes are the short forms real unit files use.  They used to
+    /// parse to `None`, which left the whole timer trigger-less and made
+    /// System C refuse it (`coredump-reporter.timer`,
+    /// `deepin-appstore-checkappupgrade.timer`).
+    #[test]
+    fn test_parse_timer_short_time_suffixes() {
+        // /usr/lib/systemd/system/coredump-reporter.timer
+        let coredump =
+            "[Timer]\nUnit=coredump-reporter.service\nOnUnitActiveSec=15m\nOnBootSec=5m\n";
+        let unit = parse_unit("coredump-reporter.timer", coredump).unwrap();
+        let tmr = unit.timer.unwrap();
+        assert_eq!(tmr.on_boot_sec, Some(300));
+        assert_eq!(tmr.on_unit_active_sec, Some(900));
+        assert_eq!(tmr.unit, "coredump-reporter.service");
+
+        // /usr/lib/systemd/system/deepin-appstore-checkappupgrade.timer
+        let appstore = "[Timer]\nOnActiveSec=10m\nOnUnitInactiveSec=1d\n\
+                        Persistent=true\nRandomizedDelaySec=1h\n";
+        let unit = parse_unit("deepin-appstore-checkappupgrade.timer", appstore).unwrap();
+        let tmr = unit.timer.unwrap();
+        assert_eq!(tmr.on_active_sec, Some(600));
+        assert_eq!(tmr.on_unit_inactive_sec, Some(86_400));
+        assert_eq!(tmr.randomized_delay_sec, 3600);
+        assert!(tmr.persistent);
+    }
+
+    #[test]
+    fn time_spans_follow_systemd_suffixes() {
+        assert_eq!(parse_time_secs("5m"), Some(300));
+        assert_eq!(parse_time_secs("90s"), Some(90));
+        assert_eq!(parse_time_secs("1h"), Some(3600));
+        assert_eq!(parse_time_secs("1d"), Some(86_400));
+        assert_eq!(parse_time_secs("1w"), Some(604_800));
+        assert_eq!(parse_time_secs("1h 30min"), Some(5_400));
+        assert_eq!(parse_time_secs("1.5h"), Some(5_400));
+        assert_eq!(parse_time_secs("30minutes"), Some(1_800));
+        // Sub-second values round up: 0 means "unset" for the callers.
+        assert_eq!(parse_time_secs("500ms"), Some(1));
+        assert_eq!(parse_time_secs("45"), Some(45));
+        assert_eq!(parse_time_secs("infinity"), Some(u32::MAX));
+        assert_eq!(parse_time_secs("nonsense"), None);
     }
 
     // -----------------------------------------------------------------------
