@@ -819,6 +819,18 @@ pub struct UnitFile {
     /// by the parser — `[Install] WantedBy=` only describes how to enable a
     /// unit, it does not mean it is enabled.
     pub enabled: bool,
+    /// Full `systemctl is-enabled` state of this file, as decided by the
+    /// loader's scan: `"enabled"`, `"enabled-runtime"`, `"linked"`,
+    /// `"linked-runtime"`, `"static"`, `"indirect"` or `"disabled"`.
+    ///
+    /// [`Self::enabled`] only answers "is there enablement evidence at all";
+    /// this carries the distinctions systemd's `UnitFileState` makes (which
+    /// search-path directory holds the link, whether the unit file itself is
+    /// a link, whether `[Install]` is actionable).  Filled by the loader,
+    /// never by the parser.  `None` means "not classified" (transient units
+    /// and on-demand definitions), and consumers fall back to deriving the
+    /// state.
+    pub file_state: Option<String>,
     /// Present only for service units.
     pub service: Option<ServiceSection>,
     /// Present only for mount units.
@@ -853,6 +865,7 @@ impl UnitFile {
             install: InstallSection::default(),
             alias_links: Vec::new(),
             enabled: false,
+            file_state: None,
             service: None,
             mount: None,
             automount: None,

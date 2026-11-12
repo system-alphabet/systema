@@ -171,6 +171,7 @@ fn power_unit_ir(unit_name: &str) -> Option<UnitIR> {
         wanted_by: None,
         required_by: None,
         enabled: None,
+        unit_file_state: None,
         template: None,
     })
 }

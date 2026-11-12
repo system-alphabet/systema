@@ -432,6 +432,20 @@ pub struct UnitIR {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 
+    /// Full systemd `UnitFileState` for this unit, as reported by the Finder:
+    /// `"enabled"`, `"enabled-runtime"`, `"linked"`, `"linked-runtime"`,
+    /// `"static"`, `"indirect"` or `"disabled"`.
+    ///
+    /// [`Self::enabled`] is only the coarse "belongs to some target's boot
+    /// set" verdict.  The finer distinctions (`/run` links, unit-file links,
+    /// installable-but-unlinked, `Also=`-only) are filesystem facts that only
+    /// the Finder can observe, so it reports the state explicitly and System
+    /// A stores it verbatim.  `None` when the producer does not report it, in
+    /// which case System A derives the state from [`Self::enabled`] and the
+    /// install information it already has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_file_state: Option<String>,
+
     /// Template metadata: set on a template definition (`getty@.service`) or
     /// on an instance of one.  `None` for ordinary units.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1031,11 +1031,13 @@ impl ManagerInterface {
         if let Some(snap) = mirror.get(base) {
             return Ok(snap.unit_file_state.clone());
         }
-        // Not in memory — try to find it on disk without loading.
-        for dir in sysa::paths::instance().unit_search_paths.iter() {
-            if std::path::Path::new(dir).join(base).exists() {
-                return Ok("static".to_string());
-            }
+        // Not in the mirror — decide the state from the filesystem layout
+        // alone.  This is where masked units (skipped by the Finder), aliases
+        // (no unit object of their own) and generator output are answered.
+        if let Some(state) =
+            crate::file_state::detect(base, &sysa::paths::instance().unit_search_paths)
+        {
+            return Ok(state.to_string());
         }
         Err(zbus::fdo::Error::Failed(sysa::l10n::fmt(
             sysa::l10n::t_("Unit file {base} not found."),

@@ -66,9 +66,41 @@ fn merge_unit_ir(map: &mut HashMap<String, UnitIR>, file: &UnitFile) {
         if file.enabled {
             existing.enabled = Some(true);
         }
+        merge_file_state(&mut existing.unit_file_state, file.file_state.as_deref());
         return;
     }
     map.insert(file.name.clone(), convert_unit_file(file));
+}
+
+/// Combine two copies of the same unit file into one `UnitFileState`.
+///
+/// The copies carry different evidence: the winning definition (first in
+/// search-path order) reports `linked`/`linked-runtime` when the file itself
+/// is a link, and `static`/`indirect`/`disabled` otherwise; enablement copies
+/// (the same file reached through a `<target>.wants/` directory) report
+/// `enabled`/`enabled-runtime`.  A unit-file link describes the definition and
+/// wins over enablement, exactly like `unit_file_lookup_state()`'s early
+/// `linked` return; enablement is not shadowed by a lower-priority duplicate
+/// definition, so it upgrades the definition state.
+fn merge_file_state(current: &mut Option<String>, incoming: Option<&str>) {
+    let Some(incoming) = incoming else {
+        return;
+    };
+    fn rank(state: &str) -> u8 {
+        match state {
+            "linked" | "linked-runtime" => 4,
+            "enabled" => 3,
+            "enabled-runtime" => 2,
+            // `static` / `indirect` / `disabled`: the winning definition's
+            // state; a shadowed duplicate must not overwrite it.
+            _ => 1,
+        }
+    }
+    match current {
+        Some(existing) if rank(incoming) > rank(existing) => *current = Some(incoming.to_string()),
+        None => *current = Some(incoming.to_string()),
+        _ => {}
+    }
 }
 
 fn convert_unit_file(uf: &UnitFile) -> UnitIR {
@@ -93,6 +125,7 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         // The loader saw the search paths; this is its verdict on the file
         // set, not a re-derivation from `[Install]`.
         enabled: Some(uf.enabled),
+        unit_file_state: uf.file_state.clone(),
         // Aliases travel as `alias_of` records (see `emit_alias_records`): the
         // finder is the component that knows whether a name is backing a real
         // file and which search-path directory wins.
@@ -209,6 +242,7 @@ fn alias_record(alias: &str, canonical: &str) -> UnitIR {
         wanted_by: None,
         required_by: None,
         enabled: None,
+        unit_file_state: None,
         aliases: Vec::new(),
         alias_of: Some(canonical.to_string()),
         resource_control: None,
@@ -589,6 +623,47 @@ mod tests {
             map["foo.service"].description.as_deref(),
             Some("desc of foo.service")
         );
+    }
+
+    #[test]
+    fn unit_file_state_is_carried_into_the_ir() {
+        let mut uf = unit_file("foo.service", &[]);
+        uf.file_state = Some("enabled-runtime".to_string());
+        assert_eq!(
+            convert_unit_file(&uf).unit_file_state.as_deref(),
+            Some("enabled-runtime")
+        );
+    }
+
+    #[test]
+    fn merged_file_state_prefers_linked_then_enablement_then_definition() {
+        fn with_state(name: &str, state: &str) -> UnitFile {
+            let mut uf = unit_file(name, &[]);
+            uf.file_state = Some(state.to_string());
+            uf
+        }
+
+        // A `.wants/` copy upgrades the plain definition to enabled.
+        let map = build(&[
+            with_state("a.service", "disabled"),
+            with_state("a.service", "enabled"),
+        ]);
+        assert_eq!(map["a.service"].unit_file_state.as_deref(), Some("enabled"));
+
+        // A unit-file link describes the winning definition, so it wins over
+        // enablement evidence found in a lower-priority copy.
+        let map = build(&[
+            with_state("b.service", "linked"),
+            with_state("b.service", "enabled"),
+        ]);
+        assert_eq!(map["b.service"].unit_file_state.as_deref(), Some("linked"));
+
+        // Shadowed duplicate definitions do not replace the winning one.
+        let map = build(&[
+            with_state("c.service", "static"),
+            with_state("c.service", "disabled"),
+        ]);
+        assert_eq!(map["c.service"].unit_file_state.as_deref(), Some("static"));
     }
 
     #[test]

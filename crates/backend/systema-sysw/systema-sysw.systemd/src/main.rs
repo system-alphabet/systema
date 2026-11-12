@@ -8,6 +8,7 @@
 
 mod bridge;
 mod dbus;
+mod file_state;
 mod mirror;
 
 use anyhow::Result;

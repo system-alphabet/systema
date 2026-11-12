@@ -88,24 +88,31 @@ fn exec_reload_line(unit: &crate::unit::types::UnitFile) -> String {
         .unwrap_or_default()
 }
 
-/// systemd's `UnitFileState`: transient overrides everything, then the
-/// enablement the Finder reported, then whether the unit carries install
-/// information at all (`static` = nothing `systemctl enable` could act on,
-/// `disabled` = installable but not enabled).
+/// systemd's `UnitFileState`: transient overrides everything, then the state
+/// the Finder reported (it alone can see which search-path directory holds
+/// the enablement link), then a derivation from the local model
+/// (`enabled` when the coarse flag is set; otherwise `static` when nothing
+/// `enable` could act on, `indirect` when `[Install]` only carries `Also=`,
+/// `disabled` when it is installable but unlinked).
 fn unit_file_state(unit: &crate::unit::types::UnitFile) -> String {
     if unit.transient {
         return "transient".to_string();
     }
+    if let Some(state) = &unit.file_state {
+        return state.clone();
+    }
     if unit.enabled {
         return "enabled".to_string();
     }
-    if unit.install.wanted_by.is_empty()
-        && unit.install.required_by.is_empty()
-        && unit.install.alias.is_empty()
+    if !unit.install.wanted_by.is_empty()
+        || !unit.install.required_by.is_empty()
+        || !unit.install.alias.is_empty()
     {
-        "static".to_string()
-    } else {
         "disabled".to_string()
+    } else if !unit.install.also.is_empty() {
+        "indirect".to_string()
+    } else {
+        "static".to_string()
     }
 }
 
@@ -514,6 +521,42 @@ mod tests {
         assert_eq!(
             unit_snapshot(&state, "sshd.service").unit_file_state,
             "static"
+        );
+
+        // Indirect = `[Install]` only carries `Also=`.
+        state.units.clear();
+        let mut indirect = service_unit();
+        indirect.install.wanted_by.clear();
+        indirect.install.required_by.clear();
+        indirect.install.alias.clear();
+        indirect.install.also.insert("other.service".to_string());
+        state.units.insert(indirect.name.clone(), indirect);
+        assert_eq!(
+            unit_snapshot(&state, "sshd.service").unit_file_state,
+            "indirect"
+        );
+    }
+
+    #[test]
+    fn unit_file_state_prefers_the_finders_verdict() {
+        // Distinctions the local model cannot reconstruct (runtime links,
+        // unit-file links) travel with the unit from the Finder.
+        let mut state = AllocatorState::new();
+        let mut unit = service_unit();
+        unit.file_state = Some("enabled-runtime".to_string());
+        state.units.insert(unit.name.clone(), unit);
+        assert_eq!(
+            unit_snapshot(&state, "sshd.service").unit_file_state,
+            "enabled-runtime"
+        );
+
+        let mut unit = service_unit();
+        unit.file_state = Some("linked".to_string());
+        unit.enabled = true;
+        state.units.insert(unit.name.clone(), unit);
+        assert_eq!(
+            unit_snapshot(&state, "sshd.service").unit_file_state,
+            "linked"
         );
     }
 }

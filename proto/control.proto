@@ -365,7 +365,9 @@ message UnitSnapshot {
     string controller = 20;
     // ID of the running job for this unit (0 = none).
     uint64 running_job_id = 21;
-    // "transient" / "enabled" / "static" / "not-found".
+    // systemd `UnitFileState`: "enabled", "enabled-runtime", "linked",
+    // "linked-runtime", "alias", "masked", "masked-runtime", "static",
+    // "indirect", "disabled", "generated", "transient" or "not-found".
     string unit_file_state = 22;
     // Resource-control limits ([Service]/[Slice]/[Scope] rc projection).
     ResourceConfig resource = 23;

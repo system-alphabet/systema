@@ -1012,6 +1012,11 @@ fn apply_ir_patch(ir: &UnitIR, uf: &mut UnitFile) {
     if let Some(enabled) = ir.enabled {
         uf.enabled = enabled;
     }
+    // The Finder also reports the full `systemctl is-enabled` state; only it
+    // can see which search-path directory holds an enablement link.
+    if let Some(state) = &ir.unit_file_state {
+        uf.file_state = Some(state.clone());
+    }
     if !ir.aliases.is_empty() {
         uf.install.alias.clear();
         uf.install.alias.extend(ir.aliases.iter().cloned());
@@ -1463,6 +1468,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             enabled: None,
+            unit_file_state: None,
             aliases: Vec::new(),
             alias_of: None,
             resource_control: None,
@@ -1827,6 +1833,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             enabled: None,
+            unit_file_state: None,
             aliases: Vec::new(),
             alias_of: None,
             resource_control: None,
@@ -1865,6 +1872,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             enabled: None,
+            unit_file_state: None,
             aliases: vec!["display-manager.service".to_string()],
             alias_of: None,
             resource_control: None,
@@ -1931,6 +1939,7 @@ mod tests {
             wanted_by: None,
             required_by: None,
             enabled: None,
+            unit_file_state: None,
             resource_control: None,
             template: None,
         }

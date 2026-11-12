@@ -93,6 +93,54 @@ fn is_primary_enablement_link(path: &Path) -> bool {
     target.parent() != Some(link_dir.as_path())
 }
 
+/// Whether `dir` is a runtime (non-persistent) unit directory.
+///
+/// systemd distinguishes `enabled` from `enabled-runtime` (and `linked` from
+/// `linked-runtime`) by whether the enablement symlink lives under `/run`, so
+/// the loader tracks that bit while it walks each search path.
+fn is_runtime_dir(dir: &str) -> bool {
+    dir == "/run" || dir.starts_with("/run/")
+}
+
+/// systemd's `UnitFileState` for one discovered unit file.
+///
+/// Mirrors `unit_file_lookup_state()`'s order: a unit-file link ("linked")
+/// describes the definition itself and wins over enablement evidence; then a
+/// `<unit>.wants/`/`.requires/` link makes the unit enabled; without any link
+/// the state follows the `[Install]` section (`disabled` when it names
+/// something `enable` could act on, `indirect` when it only carries `Also=`,
+/// `static` otherwise).
+fn classify_file_state(
+    path: &Path,
+    in_dep_dir: bool,
+    runtime: bool,
+    unit: &UnitFile,
+) -> &'static str {
+    // Membership links come first: a `<target>.wants/` link points at the
+    // same-named file, which `is_primary_enablement_link()` would also call a
+    // link, yet systemd reports enablement for it, not "linked".
+    if in_dep_dir {
+        return if runtime {
+            "enabled-runtime"
+        } else {
+            "enabled"
+        };
+    }
+    if is_primary_enablement_link(path) {
+        return if runtime { "linked-runtime" } else { "linked" };
+    }
+    let installable = !unit.install.wanted_by.is_empty()
+        || !unit.install.required_by.is_empty()
+        || !unit.install.alias.is_empty();
+    if installable {
+        "disabled"
+    } else if !unit.install.also.is_empty() {
+        "indirect"
+    } else {
+        "static"
+    }
+}
+
 /// Discover and parse all systemd unit files from standard search paths.
 ///
 /// Every returned unit carries the loader's enablement verdict: a unit pulled
@@ -110,13 +158,20 @@ pub fn discover_all() -> Result<Vec<UnitFile>> {
     for dir in &dirs {
         let path = Path::new(dir);
         if path.exists() {
-            load_units_from_dir_recursive(path, &dirs, &mut units, &mut implicit, None)
-                .with_context(|| {
-                    sysa::l10n::fmt(
-                        sysa::l10n::t_("Scanning {dir} ..."),
-                        &[("dir", &dir.to_string())],
-                    )
-                })?;
+            load_units_from_dir_recursive(
+                path,
+                &dirs,
+                &mut units,
+                &mut implicit,
+                None,
+                is_runtime_dir(dir),
+            )
+            .with_context(|| {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("Scanning {dir} ..."),
+                    &[("dir", &dir.to_string())],
+                )
+            })?;
         }
     }
     // Instance drop-in directories carry the per-instance specialization that
@@ -199,6 +254,8 @@ fn find_exact_in(dirs: &[String], name: &str) -> Result<Option<UnitFile>> {
             // [`discover_all`], which walks those directories.
             .map(|mut unit| {
                 unit.enabled |= is_primary_enablement_link(&path);
+                unit.file_state =
+                    Some(classify_file_state(&path, false, is_runtime_dir(dir), &unit).to_string());
                 unit
             });
             match parsed {
@@ -311,16 +368,53 @@ fn dep_dir_target(name: &str) -> Option<(String, DirDepKind)> {
         })
 }
 
+/// Map an enablement directory's owner name to the canonical unit that should
+/// receive its edges.
+///
+/// A `<unit>.wants/` or `<unit>.requires/` directory may be named after an
+/// alias.  With `default.target -> graphical.target`, for example,
+/// `default.target.wants/ddm.service` belongs to `graphical.target`; the
+/// symlink is parsed under its canonical name, so the directory key no longer
+/// matches any unit.  Only materialised symlink aliases (`alias_links`) are
+/// used here: a bare `[Install] Alias=` declaration can be contested and is
+/// resolved by the Finder, while a symlink is filesystem evidence.
+fn implicit_owner_aliases(units: &[UnitFile]) -> HashMap<String, String> {
+    let names: HashSet<&str> = units.iter().map(|unit| unit.name.as_str()).collect();
+    let mut aliases = HashMap::new();
+    for unit in units {
+        for alias in &unit.alias_links {
+            if names.contains(alias.as_str()) {
+                continue;
+            }
+            aliases
+                .entry(alias.clone())
+                .or_insert_with(|| unit.name.clone());
+        }
+    }
+    aliases
+}
+
 /// Fold the implicit dependency directories discovered during the scan into
-/// the owning units' `Wants=`/`Requires=` sets.
+/// the owning units' `Wants=`/`Requires=` sets, resolving alias-named owners
+/// to their canonical unit.
 fn apply_implicit_deps(
     units: &mut [UnitFile],
     implicit: &HashMap<String, (HashSet<String>, HashSet<String>)>,
 ) {
+    let aliases = implicit_owner_aliases(units);
     for unit in units {
-        if let Some((wants, requires)) = implicit.get(&unit.name) {
-            unit.unit.wants.extend(wants.iter().cloned());
-            unit.unit.requires.extend(requires.iter().cloned());
+        let name = unit.name.clone();
+        let mut owners = vec![name.as_str()];
+        for (alias, canonical) in &aliases {
+            if canonical == &name {
+                owners.push(alias.as_str());
+            }
+        }
+        for owner in owners {
+            if let Some((wants, requires)) = implicit.get(owner) {
+                unit.unit.wants.extend(wants.iter().cloned());
+                unit.unit.requires.extend(requires.iter().cloned());
+            }
         }
     }
 }
@@ -331,9 +425,10 @@ fn load_units_from_dir_recursive(
     units: &mut Vec<UnitFile>,
     implicit: &mut HashMap<String, (HashSet<String>, HashSet<String>)>,
     ctx: Option<(String, DirDepKind)>,
+    runtime: bool,
 ) -> Result<usize> {
     let mut count = 0usize;
-    count += load_units_from_dir(dir, dirs, units, implicit, ctx.as_ref())?;
+    count += load_units_from_dir(dir, dirs, units, implicit, ctx.as_ref(), runtime)?;
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -347,7 +442,9 @@ fn load_units_from_dir_recursive(
                 // dependency edge from `unit` to everything inside them;
                 // nested subdirectories inherit that implication.
                 let child_ctx = dep_dir_target(dir_name).or_else(|| ctx.clone());
-                count += load_units_from_dir_recursive(&path, dirs, units, implicit, child_ctx)?;
+                count += load_units_from_dir_recursive(
+                    &path, dirs, units, implicit, child_ctx, runtime,
+                )?;
             }
         }
     }
@@ -361,6 +458,7 @@ fn load_units_from_dir(
     units: &mut Vec<UnitFile>,
     implicit: &mut HashMap<String, (HashSet<String>, HashSet<String>)>,
     ctx: Option<&(String, DirDepKind)>,
+    runtime: bool,
 ) -> Result<usize> {
     let mut count = 0usize;
 
@@ -423,6 +521,8 @@ fn load_units_from_dir(
                 {
                     unit.enabled = true;
                 }
+                unit.file_state =
+                    Some(classify_file_state(&path, ctx.is_some(), runtime, &unit).to_string());
                 if let Some((target, kind)) = ctx {
                     let slot = implicit.entry(target.clone()).or_default();
                     match kind {
@@ -593,6 +693,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
         assert!(units.iter().any(|u| u.name == "poweroff.power"));
@@ -649,6 +750,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
         apply_implicit_deps(&mut units, &implicit);
@@ -685,6 +787,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
         apply_implicit_deps(&mut units, &implicit);
@@ -692,6 +795,62 @@ mod tests {
         let target = units.iter().find(|u| u.name == "target.service").unwrap();
         assert!(target.unit.requires.contains("dep.service"));
         assert!(!target.unit.wants.contains("dep.service"));
+    }
+
+    #[test]
+    fn alias_named_wants_and_requires_dirs_fold_into_canonical_target() {
+        let dir = temp_dir("wantsaliasowner");
+        let unit_dir = dir.join("system");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::write(
+            unit_dir.join("graphical.target"),
+            "[Unit]\nDescription=Graphical target\n",
+        )
+        .unwrap();
+        fs::write(
+            unit_dir.join("ddm.service"),
+            "[Unit]\nDescription=Display manager\n[Service]\nExecStart=/usr/bin/ddm\n",
+        )
+        .unwrap();
+        fs::write(
+            unit_dir.join("required.service"),
+            "[Unit]\nDescription=Required service\n[Service]\nExecStart=/bin/true\n",
+        )
+        .unwrap();
+        // The standard `systemctl set-default` layout: default.target is a
+        // symlink alias, and units enabled with WantedBy=default.target live
+        // in default.target.wants/.
+        std::os::unix::fs::symlink("graphical.target", unit_dir.join("default.target")).unwrap();
+        fs::create_dir_all(unit_dir.join("default.target.wants")).unwrap();
+        std::os::unix::fs::symlink(
+            unit_dir.join("ddm.service"),
+            unit_dir.join("default.target.wants/ddm.service"),
+        )
+        .unwrap();
+        fs::create_dir_all(unit_dir.join("default.target.requires")).unwrap();
+        std::os::unix::fs::symlink(
+            unit_dir.join("required.service"),
+            unit_dir.join("default.target.requires/required.service"),
+        )
+        .unwrap();
+
+        let dirs = vec![unit_dir.to_string_lossy().into_owned()];
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None, false)
+            .unwrap();
+        apply_implicit_deps(&mut units, &implicit);
+
+        // The symlink is parsed as graphical.target; default.target is only
+        // an alias.  Its dependency directories must still land on the
+        // canonical unit.
+        assert!(!units.iter().any(|u| u.name == "default.target"));
+        let graphical = units
+            .iter()
+            .find(|u| u.name == "graphical.target")
+            .expect("graphical.target discovered");
+        assert!(graphical.unit.wants.contains("ddm.service"));
+        assert!(graphical.unit.requires.contains("required.service"));
     }
 
     #[test]
@@ -716,6 +875,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
 
@@ -766,6 +926,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
         apply_implicit_deps(&mut units, &implicit);
@@ -794,6 +955,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
 
@@ -818,6 +980,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
 
@@ -850,7 +1013,7 @@ mod tests {
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
         let dirs = vec![dir.to_string_lossy().into_owned()];
-        load_units_from_dir_recursive(&dir, &dirs, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&dir, &dirs, &mut units, &mut implicit, None, false).unwrap();
         discover_instance_specializations_in(&dirs, &mut units);
 
         let instance = units
@@ -894,7 +1057,8 @@ mod tests {
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
         let dirs = vec![unit_dir.to_string_lossy().into_owned()];
-        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None, false)
+            .unwrap();
         discover_instance_specializations_in(&dirs, &mut units);
 
         let instance = units
@@ -959,6 +1123,7 @@ mod tests {
             &mut units,
             &mut implicit,
             None,
+            false,
         )
         .unwrap();
         apply_implicit_deps(&mut units, &implicit);
@@ -1011,7 +1176,8 @@ mod tests {
         let dirs = vec![unit_dir.to_string_lossy().into_owned()];
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None, false)
+            .unwrap();
 
         // The plain definition in the search directory is not enablement ...
         assert!(units.iter().any(|u| u.name == "foo.service" && !u.enabled));
@@ -1049,8 +1215,15 @@ mod tests {
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
         for dir in &dirs {
-            load_units_from_dir_recursive(Path::new(dir), &dirs, &mut units, &mut implicit, None)
-                .unwrap();
+            load_units_from_dir_recursive(
+                Path::new(dir),
+                &dirs,
+                &mut units,
+                &mut implicit,
+                None,
+                false,
+            )
+            .unwrap();
         }
 
         assert_eq!(units.len(), 2);
@@ -1072,7 +1245,7 @@ mod tests {
         let dirs = vec![dir.to_string_lossy().into_owned()];
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&dir, &dirs, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&dir, &dirs, &mut units, &mut implicit, None, false).unwrap();
 
         assert!(units.iter().all(|u| !u.enabled));
         assert!(units.iter().any(|u| u.name == "lightdm.service"));
@@ -1099,13 +1272,101 @@ mod tests {
         let dirs = vec![unit_dir.to_string_lossy().into_owned()];
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None, false)
+            .unwrap();
 
         // A template is a definition, never a boot-set member.
         assert!(units
             .iter()
             .filter(|u| u.name == "getty@.service")
             .all(|u| !u.enabled));
+    }
+
+    // The loader also reports the full `systemctl is-enabled` state, not just
+    // the coarse enablement flag: install information alone decides
+    // static/indirect/disabled, and the directory holding the link decides
+    // enabled vs enabled-runtime.
+    fn scan(dir: &Path, runtime: bool) -> Vec<UnitFile> {
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let mut units = Vec::new();
+        let mut implicit = HashMap::new();
+        load_units_from_dir_recursive(dir, &dirs, &mut units, &mut implicit, None, runtime)
+            .unwrap();
+        units
+    }
+
+    fn has_state(units: &[UnitFile], name: &str, state: &str) -> bool {
+        units
+            .iter()
+            .any(|u| u.name == name && u.file_state.as_deref() == Some(state))
+    }
+
+    #[test]
+    fn file_state_follows_install_information() {
+        let dir = temp_dir("file-state-install");
+        fs::write(
+            dir.join("disabled.service"),
+            "[Unit]\nDescription=D\n[Install]\nWantedBy=multi-user.target\n",
+        )
+        .unwrap();
+        fs::write(dir.join("static.service"), "[Unit]\nDescription=S\n").unwrap();
+        fs::write(
+            dir.join("indirect.service"),
+            "[Unit]\nDescription=I\n[Install]\nAlso=static.service\n",
+        )
+        .unwrap();
+
+        let units = scan(&dir, false);
+
+        assert!(has_state(&units, "disabled.service", "disabled"));
+        assert!(has_state(&units, "static.service", "static"));
+        assert!(has_state(&units, "indirect.service", "indirect"));
+    }
+
+    #[test]
+    fn file_state_distinguishes_runtime_enablement() {
+        let dir = temp_dir("file-state-runtime");
+        fs::write(dir.join("foo.target"), "[Unit]\n").unwrap();
+        fs::write(
+            dir.join("bar.service"),
+            "[Unit]\nDescription=Bar\n[Service]\nExecStart=/bin/true\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("foo.target.wants")).unwrap();
+        std::os::unix::fs::symlink(
+            dir.join("bar.service"),
+            dir.join("foo.target.wants/bar.service"),
+        )
+        .unwrap();
+
+        assert!(has_state(&scan(&dir, false), "bar.service", "enabled"));
+        assert!(has_state(
+            &scan(&dir, true),
+            "bar.service",
+            "enabled-runtime"
+        ));
+    }
+
+    #[test]
+    fn file_state_reports_unit_file_links_as_linked() {
+        let root = temp_dir("file-state-linked");
+        let etc = root.join("etc");
+        let lib = root.join("lib");
+        fs::create_dir_all(&etc).unwrap();
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(
+            lib.join("foo.service"),
+            "[Unit]\nDescription=Foo\n[Service]\nExecStart=/bin/true\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("../lib/foo.service", etc.join("foo.service")).unwrap();
+
+        assert!(has_state(&scan(&etc, false), "foo.service", "linked"));
+        assert!(has_state(
+            &scan(&etc, true),
+            "foo.service",
+            "linked-runtime"
+        ));
     }
 
     // Incident regression: an instance pulled in only by an enablement link is
@@ -1142,7 +1403,8 @@ mod tests {
         let dirs = vec![unit_dir.to_string_lossy().into_owned()];
         let mut units = Vec::new();
         let mut implicit = HashMap::new();
-        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None).unwrap();
+        load_units_from_dir_recursive(&unit_dir, &dirs, &mut units, &mut implicit, None, false)
+            .unwrap();
 
         let instance = units
             .iter()
