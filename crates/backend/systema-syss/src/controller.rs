@@ -1,6 +1,6 @@
 use crate::dbus::DbusWaiter;
 use crate::notify::NotifyManager;
-use crate::process::{start_service, stop_service};
+use crate::process::{start_service, start_timeout_secs, stop_service};
 use crate::state::{ServiceRegistry, ServiceState};
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
@@ -63,11 +63,7 @@ impl ServiceController {
             self.mark_ready(unit_name);
             return Ok(());
         };
-        let timeout = cfg
-            .service
-            .as_ref()
-            .map(|s| s.timeout_start_secs.max(1))
-            .unwrap_or(90) as u64;
+        let timeout = start_timeout_secs(cfg);
         notify.register_start(unit_name, pid);
         match notify.wait_ready(unit_name, pid, timeout).await {
             Ok(()) => {
@@ -168,11 +164,7 @@ impl ServiceController {
         if !Self::is_oneshot_type(cfg) {
             return Ok(());
         }
-        let timeout = cfg
-            .service
-            .as_ref()
-            .map(|s| s.timeout_start_secs.max(1))
-            .unwrap_or(90) as u64;
+        let timeout = start_timeout_secs(cfg);
         match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await {
             Ok(Ok(status)) => {
                 info!(
@@ -320,7 +312,7 @@ impl ServiceController {
         Self::validate_dbus_config(cfg)?;
         let svc = cfg.service.as_ref().expect("dbus type implies service");
         let bus_name = svc.bus_name.as_str();
-        let timeout = svc.timeout_start_secs.max(1) as u64;
+        let timeout = start_timeout_secs(cfg);
         match self.dbus.wait_name_owned(bus_name, pid, timeout).await {
             Ok(()) => {
                 info!(
@@ -681,11 +673,7 @@ impl UnitController for ServiceController {
                 .context(sysa::l10n::t_("Failed to send SIGHUP"))?;
         }
         if wait_reload {
-            let timeout = cfg
-                .service
-                .as_ref()
-                .map(|s| s.timeout_start_secs.max(1))
-                .unwrap_or(90) as u64;
+            let timeout = start_timeout_secs(&cfg);
             let notify = self.notify.as_ref().unwrap();
             notify
                 .wait_reload(unit_name, pid, timeout)

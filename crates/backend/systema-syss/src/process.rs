@@ -121,6 +121,33 @@ fn open_service_log(name: &str) -> Option<std::fs::File> {
     Some(file)
 }
 
+/// systemd's `DefaultTimeoutStartSec=`: the start budget for a unit that does
+/// not set `TimeoutStartSec=` itself.
+pub(crate) const DEFAULT_TIMEOUT_START_SECS: u64 = 90;
+
+/// `TimeoutStartSec=` in seconds, falling back to
+/// [`DEFAULT_TIMEOUT_START_SECS`] when the unit leaves it unset.
+///
+/// An unset directive reaches us as `0`; reading that as "one second" killed
+/// every unit that did not spell out its timeout the moment it started.  A
+/// transient `dde-system-power-control.service` issued during a poweroff was
+/// stopped that way, which aborted the shutdown and left the
+/// `plymouthd --mode=shutdown` it had started running for the rest of the
+/// session.
+pub(crate) fn start_timeout_secs(config: &UnitConfig) -> u64 {
+    config
+        .service
+        .as_ref()
+        .map(|s| {
+            if s.timeout_start_secs > 0 {
+                s.timeout_start_secs as u64
+            } else {
+                DEFAULT_TIMEOUT_START_SECS
+            }
+        })
+        .unwrap_or(DEFAULT_TIMEOUT_START_SECS)
+}
+
 /// Launch the service described by `config`.
 /// Returns the PID and the Child handle of the spawned main process.
 /// The caller must keep the Child handle to later collect the exit status.
@@ -724,7 +751,7 @@ async fn run_exec_commands(
         let _tracked = child
             .id()
             .map(|pid| TransientPid::register(registry.clone(), unit_name, pid));
-        let timeout = svc.timeout_start_secs.max(1) as u64;
+        let timeout = start_timeout_secs(config);
         let status =
             match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await
             {
@@ -2708,6 +2735,23 @@ mod tests {
         assert!(forced_bus_env_applies("0"));
         assert!(!forced_bus_env_applies("user"));
         assert!(!forced_bus_env_applies("1000"));
+    }
+
+    #[test]
+    fn unset_start_timeout_falls_back_to_systemd_default() {
+        let mut cfg = UnitConfig {
+            service: Some(sysa::proto::ServiceConfig {
+                timeout_start_secs: 0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(start_timeout_secs(&cfg), DEFAULT_TIMEOUT_START_SECS);
+
+        if let Some(svc) = cfg.service.as_mut() {
+            svc.timeout_start_secs = 5;
+        }
+        assert_eq!(start_timeout_secs(&cfg), 5);
     }
 
     #[test]
