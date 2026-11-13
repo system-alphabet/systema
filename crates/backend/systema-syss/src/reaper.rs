@@ -1,9 +1,9 @@
 //! Orphan reaper — the subreaper half of a PID 1's SIGCHLD duty.
 //!
-//! System S registers itself as a child subreaper
-//! (`PR_SET_CHILD_SUBREAPER`, main.rs), so when an intermediate parent in a
-//! service's process tree dies, its children — *including already-dead
-//! zombies* — are reparented to us.  Nothing used to collect them:
+//! System S registers itself as a child subreaper / reaper
+//! (`sysa::reaper::set_child_subreaper`, main.rs), so when an intermediate
+//! parent in a service's process tree dies, its children — *including
+//! already-dead zombies* — are reparented to us.  Nothing used to collect them:
 //! `monitor_service` only `try_wait()`s the direct child it spawned itself,
 //! and `reap_children()` runs at shutdown only.
 //!

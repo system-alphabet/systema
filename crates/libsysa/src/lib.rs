@@ -9,6 +9,7 @@
 //! - Shared logging bootstrap for every binary
 //! - The notify broadcast channel (human-visible boot progress)
 //! - Event bus topics (server-side dispatch of unit state)
+//! - Child-subreaper / reaper registration for workers
 //! - Mount-point jurisdiction policy and unit name helpers
 //! - `--version` / `--full-version` output
 //! - The bake-in path default registry (once in libsysa so nothing
@@ -28,6 +29,7 @@ pub mod logging;
 pub mod mounts;
 pub mod notify;
 pub mod paths;
+pub mod reaper;
 pub mod signals;
 pub mod unit_name;
 pub mod version;
