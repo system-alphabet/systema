@@ -9,7 +9,7 @@
 //! System A's notify sender: they write `MANAGER_READY` / `WORKER_READY`
 //! datagrams to the listener socket SysAInit binds in `SYSTEMA_NOTIFY_DIR`.
 //! They also serve the fake System A control socket (`SYSTEMA_CONTROL_SOCKET`)
-//! for the control phase (`manager.list_units` / `manager.start_units`).
+//! for the control phase (`manager.daemon_reload` / `manager.start_units`).
 
 use std::fs;
 use std::io::{Read, Write};
@@ -28,9 +28,8 @@ use nix::unistd::Pid;
 use prost::Message;
 
 use sysa::proto::{
-    DaemonReloadResult, Envelope, ListUnitsResult, ManagerHelloResult, MethodCall, MethodResult,
-    RegisterAck, StartUnitsRequest, StartUnitsResult, UnitInfo, UnitStartResult,
-    WorkerRegistration,
+    DaemonReloadResult, Envelope, ManagerHelloResult, MethodCall, MethodResult, RegisterAck,
+    StartUnitsRequest, StartUnitsResult, UnitStartResult, WorkerRegistration,
 };
 
 /// Long-running shim: records its pid, then exits 0 on SIGTERM and otherwise
@@ -266,27 +265,11 @@ fn write_frame(stream: &mut UnixStream, payload: &[u8]) {
     stream.write_all(payload).unwrap();
 }
 
-/// Default canned `manager.list_units` reply.
-fn default_canned() -> Vec<UnitInfo> {
-    vec![
-        UnitInfo {
-            name: "foo.service".to_string(),
-            unit_type: "service".to_string(),
-            enabled: true,
-        },
-        UnitInfo {
-            name: "default.target".to_string(),
-            unit_type: "target".to_string(),
-            enabled: true,
-        },
-    ]
-}
-
 /// Serve the fake System A control socket at `<notify-dir>/control.sock`.
 ///
-/// Answers `manager.list_units` with `canned` and `manager.start_units`
-/// with an all-success reply, recording the requested names into `sent`.
-fn fake_control(notify_dir: &Path, canned: Vec<UnitInfo>, sent: Arc<Mutex<Vec<String>>>) {
+/// Answers `manager.start_units` with an all-success reply, recording the
+/// requested names into `sent`.
+fn fake_control(notify_dir: &Path, sent: Arc<Mutex<Vec<String>>>) {
     fs::create_dir_all(notify_dir).unwrap();
     let path = notify_dir.join("control.sock");
     let _ = fs::remove_file(&path);
@@ -298,7 +281,7 @@ fn fake_control(notify_dir: &Path, canned: Vec<UnitInfo>, sent: Arc<Mutex<Vec<St
                 Err(_) => continue,
             };
             // Serve every request on this connection (SysAInit sends
-            // manager.list_units and manager.start_units over one socket).
+            // manager.daemon_reload and manager.start_units over one socket).
             while let Some(frame) = read_frame(&mut stream) {
                 let Ok(env) = Envelope::decode(frame.as_slice()) else {
                     break;
@@ -351,22 +334,6 @@ fn fake_control(notify_dir: &Path, canned: Vec<UnitInfo>, sent: Arc<Mutex<Vec<St
                             source: "system-a".to_string(),
                             target: "system-sysi".to_string(),
                             method: "manager.register_power_units.result".to_string(),
-                            payload: result.encode_to_vec(),
-                        }
-                    }
-                    "manager.list_units" => {
-                        let mut units = canned.clone();
-                        units.sort_by(|a, b| a.name.cmp(&b.name));
-                        let result = ListUnitsResult {
-                            success: true,
-                            message: String::new(),
-                            units,
-                        };
-                        Envelope {
-                            request_id: env.request_id,
-                            source: "system-a".to_string(),
-                            target: "system-sysi".to_string(),
-                            method: "manager.list_units.result".to_string(),
                             payload: result.encode_to_vec(),
                         }
                     }
@@ -589,18 +556,8 @@ fn boot_all_with(
     buf: &Arc<Mutex<String>>,
     skip: &[&str],
 ) -> Arc<Mutex<Vec<String>>> {
-    boot_all_canned(notify_dir, buf, skip, default_canned())
-}
-
-/// Like `boot_all_with`, with a custom `manager.list_units` reply.
-fn boot_all_canned(
-    notify_dir: &Path,
-    buf: &Arc<Mutex<String>>,
-    skip: &[&str],
-    canned: Vec<UnitInfo>,
-) -> Arc<Mutex<Vec<String>>> {
     let sent = Arc::new(Mutex::new(Vec::new()));
-    fake_control(notify_dir, canned, sent.clone());
+    fake_control(notify_dir, sent.clone());
     let _power = fake_power_worker(notify_dir);
     let a = FakeA::new(notify_dir);
     a.manager_ready();
@@ -812,7 +769,7 @@ fn worker_timeout_exits_nonzero() {
 }
 
 #[test]
-fn control_phase_starts_enabled_units_and_default_target() {
+fn control_phase_starts_only_default_target() {
     let dir = shim_dir("control-boot");
     default_shims(&dir);
     let notify_dir = dir.join("notify");
@@ -821,49 +778,15 @@ fn control_phase_starts_enabled_units_and_default_target() {
     let buf = stderr_reader(&mut child);
     let sent = boot_all(&notify_dir, &buf);
 
-    // foo.service and default.target are both enabled in the canned reply,
-    // so default.target must not be re-added.
-    assert!(wait_for_lock(&sent, "foo.service", 5));
+    // A boot starts `default.target` and nothing else: System A expands the
+    // target's dependency closure, so units enabled only into shutdown
+    // targets (e.g. `reboot.target.wants/plymouth-reboot.service`) must not
+    // be started here.
     assert!(wait_for_lock(&sent, "default.target", 5));
-    assert!(wait_for(&buf, "Control phase: starting 2 unit(s)", 5));
-    assert!(wait_for(&buf, "enqueued start for 'foo.service'", 5));
+    assert!(wait_for(&buf, "Control phase: starting default.target", 5));
+    assert!(wait_for(&buf, "enqueued start for 'default.target'", 5));
     let locked = sent.lock().unwrap();
-    assert_eq!(
-        locked.iter().filter(|n| *n == "default.target").count(),
-        1,
-        "default.target must not be duplicated: {locked:?}"
-    );
-
-    send_term(&child);
-    let status = wait_timeout(&mut child, 8).expect("should exit after SIGTERM");
-    assert_eq!(status.code(), Some(0), "got {status:?}");
-    let _ = fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn control_phase_adds_missing_default_target() {
-    let dir = shim_dir("control-default");
-    default_shims(&dir);
-    let notify_dir = dir.join("notify");
-
-    let mut child = run_sysi(&dir, &notify_dir, &[]);
-    let buf = stderr_reader(&mut child);
-    let canned = vec![UnitInfo {
-        name: "bar.timer".to_string(),
-        unit_type: "timer".to_string(),
-        enabled: true,
-    }];
-    let sent = boot_all_canned(&notify_dir, &buf, &[], canned);
-
-    assert!(wait_for_lock(&sent, "bar.timer", 5));
-    assert!(wait_for_lock(&sent, "default.target", 5));
-    assert!(wait_for(&buf, "Control phase: starting 2 unit(s)", 5));
-    // default.target appended after the enabled unit.
-    let locked = sent.lock().unwrap();
-    assert_eq!(
-        locked.as_slice(),
-        &["bar.timer".to_string(), "default.target".to_string()]
-    );
+    assert_eq!(locked.as_slice(), &["default.target".to_string()]);
 
     send_term(&child);
     let status = wait_timeout(&mut child, 8).expect("should exit after SIGTERM");
@@ -900,11 +823,7 @@ fn power_worker_transition(method: &str, tag: &str) {
     default_shims(&dir);
     let notify_dir = dir.join("notify");
     let (commands, events) = fake_power_worker(&notify_dir);
-    fake_control(
-        &notify_dir,
-        default_canned(),
-        Arc::new(Mutex::new(Vec::new())),
-    );
+    fake_control(&notify_dir, Arc::new(Mutex::new(Vec::new())));
     let mut child = run_sysi(&dir, &notify_dir, &["--powerctl=never"]);
     let buf = stderr_reader(&mut child);
     let a = FakeA::new(&notify_dir);
@@ -946,7 +865,7 @@ fn missing_power_worker_readiness_aborts_before_control_phase() {
     default_shims(&dir);
     let notify_dir = dir.join("notify");
     let sent = Arc::new(Mutex::new(Vec::new()));
-    fake_control(&notify_dir, default_canned(), sent.clone());
+    fake_control(&notify_dir, sent.clone());
     let mut child = run_sysi(&dir, &notify_dir, &[]);
     let buf = stderr_reader(&mut child);
     let a = FakeA::new(&notify_dir);

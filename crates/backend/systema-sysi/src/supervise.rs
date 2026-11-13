@@ -9,7 +9,7 @@
 //!    next one.
 //! 4. Control phase: call `daemon_reload` on System A (which spawns
 //!    System F to discover and commit unit files), then ask System A
-//!    to start the enabled units and `default.target`.
+//!    to start `default.target`.
 //! 5. Steady state: reap children, forward signals, and log notify events.
 //!
 //! The Finder (System F) is no longer a supervised process.  System A
@@ -29,9 +29,8 @@ use nix::sys::signal::{kill, signal, SigHandler, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use sysa::proto::{
-    DaemonReloadRequest, DaemonReloadResult, ListUnitsRequest, ListUnitsResult,
-    ManagerHelloRequest, RegisterPowerUnitsRequest, RegisterPowerUnitsResult, StartUnitsRequest,
-    StartUnitsResult,
+    DaemonReloadRequest, DaemonReloadResult, ManagerHelloRequest, RegisterPowerUnitsRequest,
+    RegisterPowerUnitsResult, StartUnitsRequest, StartUnitsResult,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -688,7 +687,7 @@ async fn wait_ready(
 /// `Ok(Some(code))` when the caller must shut down (signal, other
 /// long-running child death, non-zero exit, or timeout).
 /// Phase 3 — the control plane: call daemon-reload to discover unit files,
-/// then ask System A to start every enabled unit plus `default.target`.
+/// then ask System A to start `default.target`.
 async fn control_phase(
     ctx: &mut WaitCtx,
     procs: &[Spawned],
@@ -754,35 +753,23 @@ async fn control_phase(
         // One request per connection: each `manager_call` drops its control
         // session after the reply, like `systemctl`'s one-call-per-connection
         // model.
-        let list = manager_call::<ListUnitsRequest, ListUnitsResult>(
-            &sock_path,
-            2,
-            "manager.list_units",
-            ListUnitsRequest { enabled_only: true },
-        )
-        .await?;
-        if !list.success {
-            anyhow::bail!(sysa::l10n::fmt(
-                sysa::l10n::t_("manager.list_units failed: {message}"),
-                &[("message", &(list.message).to_string())]
-            ));
-        }
-
-        let mut names: Vec<String> = list.units.into_iter().map(|u| u.name).collect();
-        if !names.iter().any(|n| n == "default.target") {
-            names.push("default.target".to_string());
-        }
-        info!(
-            "Control phase: starting {} unit(s): {:?}",
-            names.len(),
-            names
-        );
-
+        //
+        // Only `default.target` is started.  Its dependency closure (the
+        // `Wants=`/`Requires=` the Finder folds in from every `<unit>.wants/`
+        // and `<unit>.requires/` directory) is what a boot actually consists
+        // of, exactly like systemd.  Starting "every enabled unit" instead
+        // pulled in units that are enabled only into shutdown targets --
+        // `reboot.target.wants/plymouth-reboot.service` among them -- so a
+        // normal boot spawned `plymouthd --mode=reboot` and nothing ever
+        // quit it.
+        info!("Control phase: starting default.target");
         let start = manager_call::<StartUnitsRequest, StartUnitsResult>(
             &sock_path,
-            3,
+            2,
             "manager.start_units",
-            StartUnitsRequest { names },
+            StartUnitsRequest {
+                names: vec!["default.target".to_string()],
+            },
         )
         .await?;
         // systemd semantics: a unit failing to ENQUEUE is a degraded unit,
@@ -977,7 +964,7 @@ pub async fn run(
         }
     }
 
-    // --- Phase 3: control plane (daemon-reload + start enabled units). ---
+    // --- Phase 3: control plane (daemon-reload + start default.target). ---
     let mut pending_power = None;
     let control_result = tokio::select! {
         result = control_phase(&mut ctx, &procs, grace, ready_timeout) => result?,
