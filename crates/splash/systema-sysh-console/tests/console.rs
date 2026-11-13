@@ -14,7 +14,7 @@ fn scratch(tag: &str) -> PathBuf {
 }
 
 fn spawn_console(notify_dir: &Path) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_systema-sysh-console"))
+    Command::new(env!("CARGO_BIN_EXE_systema-sysh.console"))
         .env("SYSTEMA_NOTIFY_DIR", notify_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

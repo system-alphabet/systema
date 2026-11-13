@@ -1,3 +1,5 @@
+cargo-features = ["different-binary-name"]
+
 [package]
 name = "systema-sysh-console"
 version.workspace = true
@@ -7,6 +9,7 @@ license.workspace = true
 
 [[bin]]
 name = "systema-sysh-console"
+filename = "systema-sysh.console"
 path = "src/main.rs"
 
 [dependencies]

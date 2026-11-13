@@ -1,4 +1,4 @@
-//! systema-sysh-console — System H, the boot-log console frontend.
+//! systema-sysh.console — System H, the boot-log console frontend.
 //!
 //! Prints one line for every unit whose start reached a terminal state,
 //! success or failure:
@@ -68,7 +68,7 @@ const RED: &str = "\x1b[91m";
 
 #[derive(Parser)]
 #[command(
-    name = "systema-sysh-console",
+    name = "systema-sysh.console",
     about = "System H — boot-log console frontend"
 )]
 struct Args {

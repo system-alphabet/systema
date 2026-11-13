@@ -79,7 +79,7 @@ RUN set -eux; \
       '#!/bin/bash' \
       'echo "[init] starting systema workers..."' \
       '/opt/systema/systema-sysi &' \
-      '/opt/systema/systema-sysh-console &' \
+      '/opt/systema/systema-sysh.console &' \
       'exec /usr/bin/bash' > /init; \
     chmod +x /init
 
