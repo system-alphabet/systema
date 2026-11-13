@@ -114,7 +114,7 @@ fn main() {
     }
 
     let notify_dir = sysa::paths::instance().notify_dir.clone();
-    let (listener, _socket_file) = bind_listener(&notify_dir);
+    let (listener, socket_file) = bind_listener(&notify_dir);
 
     let mut console = Console::new();
     let mut buf = [0u8; 4096];
@@ -122,6 +122,11 @@ fn main() {
         match listener.recv(&mut buf) {
             Ok(n) => {
                 let body = String::from_utf8_lossy(&buf[..n]);
+                if sysa::notify::is_shutdown(&body) {
+                    // System A is exiting and waits for this listener to
+                    // close before it leaves.
+                    break;
+                }
                 if let Some(line) = console.on_datagram(&body, monotonic_ms()) {
                     println!("{}", line.render());
                     // stdout is line-buffered by std, but the console is
@@ -138,6 +143,11 @@ fn main() {
             Err(_) => thread::sleep(RETRY_INTERVAL),
         }
     }
+
+    // Close the listener (the FD first, then the socket file) before exiting
+    // so System A observes the closed channel.
+    drop(listener);
+    drop(socket_file);
 }
 
 // ---------------------------------------------------------------------------

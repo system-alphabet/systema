@@ -23,6 +23,10 @@ use anyhow::Result;
 use clap::Parser;
 use tracing::info;
 
+/// How long System A waits for notify listeners (System Init, the boot-log
+/// console, ...) to close their sockets after it announces its exit.
+const NOTIFY_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[derive(Parser)]
 #[command(name = "systema-sysa", about = "System A — System Allocator")]
 struct Args {
@@ -136,11 +140,18 @@ async fn main() -> Result<()> {
     // System Init during a power transition, or an interactive SIGINT).  On a
     // signal we unwind the runtime so sockets and sessions are dropped
     // cleanly.
-    tokio::select! {
-        result = ipc_handle => {
-            result??;
-        }
-        _sig = sysa::signals::shutdown_signal() => {}
+    let ipc_exit = tokio::select! {
+        result = ipc_handle => Some(result),
+        _sig = sysa::signals::shutdown_signal() => None,
+    };
+
+    // The allocator is leaving: tell every notify listener so it can close
+    // its socket, then give them a bounded moment to do it.  Nothing should
+    // be left broadcasting into a System A that no longer exists.
+    sysa::notify::announce_shutdown(NOTIFY_SHUTDOWN_TIMEOUT).await;
+
+    if let Some(result) = ipc_exit {
+        result??;
     }
 
     Ok(())

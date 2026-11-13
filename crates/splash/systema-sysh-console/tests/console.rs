@@ -145,6 +145,41 @@ fn joins_the_broadcast_channel_and_reports_completed_starts() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// System A's farewell: exit, and close (unlink) the notify socket before
+/// leaving so the allocator can finish its own exit.
+#[test]
+fn shutdown_announcement_exits_and_removes_the_socket() {
+    let dir = scratch("shutdown");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let mut child = spawn_console(&dir);
+    let socket = dir.join("console.sock");
+    assert!(
+        wait_for(|| socket.exists(), Duration::from_secs(5)),
+        "console never bound {}",
+        socket.display()
+    );
+
+    send_event(&socket, "SHUTDOWN=1\n");
+
+    let mut exited = false;
+    for _ in 0..500 {
+        if child.try_wait().expect("try_wait").is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(exited, "console did not exit on the shutdown announcement");
+    assert!(
+        !socket.exists(),
+        "console must unlink its socket before exiting"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_stale_socket_is_reclaimed_by_the_next_run() {
     let dir = scratch("cleanup");

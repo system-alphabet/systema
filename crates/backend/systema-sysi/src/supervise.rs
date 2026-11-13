@@ -57,7 +57,10 @@ pub fn default_notify_dir() -> String {
 /// cannot be unmounted while this FD is open — unlinking `init.sock` is not
 /// enough, the descriptor itself has to go.  Every exit path therefore
 /// calls [`NotifyListener::shutdown`], and so does the power transition
-/// before it attempts the unmount.
+/// before it attempts the unmount.  In addition, the receive thread closes
+/// the socket on its own when System A announces its shutdown
+/// (`SHUTDOWN=1`): the allocator waits for that before it exits, and the
+/// main loop may not be draining the channel at that moment.
 struct NotifyListener {
     sock_path: PathBuf,
     stop: Arc<AtomicBool>,
@@ -100,6 +103,7 @@ impl NotifyListener {
 
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
+        let sock_for_thread = sock_path.clone();
         let thread = thread::spawn(move || {
             let mut buf = [0u8; 4096];
             while !stopped.load(Ordering::SeqCst) {
@@ -110,7 +114,24 @@ impl NotifyListener {
                         if stopped.load(Ordering::SeqCst) {
                             break;
                         }
-                        let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+                        let body = String::from_utf8_lossy(&buf[..n]).into_owned();
+                        let allocator_is_leaving = sysa::notify::is_shutdown(&body);
+                        let _ = tx.send(body);
+                        if allocator_is_leaving {
+                            // System A is exiting and waits for every notify
+                            // listener to close its socket.  Close it right
+                            // here: the main loop may be inside a power
+                            // transition and not draining this channel, and
+                            // closing the listener is all System Init does on
+                            // this event.  Dropping `listener` closes the FD;
+                            // unlinking the path is what System A observes.
+                            info!(
+                                "notify: allocator announced shutdown; closing {}",
+                                sock_for_thread.display()
+                            );
+                            let _ = std::fs::remove_file(&sock_for_thread);
+                            break;
+                        }
                     }
                     // Read timeout: nothing arrived, just re-check `stop`.
                     Err(e)
@@ -1112,6 +1133,32 @@ mod tests {
         // Idempotent: shutdown paths may call it again.
         listener.shutdown();
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// System A announces its exit and waits for the listener to close, so
+    /// the receive thread has to close the socket by itself — during a power
+    /// transition the main loop is not draining the channel.
+    #[test]
+    fn notify_listener_closes_itself_on_the_allocator_shutdown() {
+        let dir = scratch_dir("notify-shutdown");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut listener =
+            NotifyListener::bind(dir.to_str().expect("utf-8 temp path"), tx).expect("bind");
+        let sock = dir.join("init.sock");
+        assert!(sock.exists());
+
+        let client = UnixDatagram::unbound().expect("client socket");
+        client.send_to(b"SHUTDOWN=1\n", &sock).expect("send");
+
+        assert_eq!(rx.blocking_recv().as_deref(), Some("SHUTDOWN=1\n"));
+        // The receive thread closed its end, so the channel ends and the
+        // socket file is gone without anyone calling `shutdown()`.
+        assert!(rx.blocking_recv().is_none());
+        assert!(!sock.exists());
+
+        // The regular shutdown path stays idempotent after the self-close.
+        listener.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
