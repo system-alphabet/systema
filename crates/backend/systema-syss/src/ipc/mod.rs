@@ -25,6 +25,9 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
     let registry = new_registry();
     *shared.lock().await = Some(registry.clone());
     let fdpass: Arc<Mutex<Option<tokio::net::UnixStream>>> = Arc::new(Mutex::new(None));
+    // Serializes the request/response rounds on `fdpass` (no correlation IDs
+    // on that stream — see `ServiceController::fd_request_lock`).
+    let fd_request_lock: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
 
     // Connect to the allocator's fdpass socket (SCM_RIGHTS channel used to
     // receive listener fds for socket activation). Non-fatal if unavailable:
@@ -80,6 +83,7 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
     ipc.run(
         {
             let no_cgroup_backend = no_cgroup_backend.clone();
+            let fd_request_lock = fd_request_lock.clone();
             move |event_pub| {
                 let cgroup = Querier::new(
                     event_pub.clone(),
@@ -93,6 +97,7 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
                     event_pub,
                     cgroup,
                     fdpass_controller.clone(),
+                    fd_request_lock.clone(),
                     notify.clone(),
                     dbus.clone(),
                 )

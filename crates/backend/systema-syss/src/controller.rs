@@ -19,6 +19,16 @@ pub struct ServiceController {
     event_pub: EventPublisher,
     cgroup: Querier,
     fdpass: Arc<Mutex<Option<tokio::net::UnixStream>>>,
+    /// Serializes `socket.request_fd` exchanges on the fdpass stream.
+    ///
+    /// The stream carries no request ID: System A forwards each
+    /// `socket.request_fd` to the socket worker (FIFO per requester worker)
+    /// and the fds come back in that order.  Two services starting at the
+    /// same time would each `recv_fd` on a dup of the same stream and could
+    /// swap fds, leaving e.g. `dbus-daemon` listening on the journald socket
+    /// while `/run/dbus/system_bus_socket` has no acceptor.  Holding this
+    /// lock for a whole request/response round keeps the pairing exact.
+    fd_request_lock: Arc<Mutex<()>>,
     notify: Option<NotifyManager>,
     dbus: DbusWaiter,
 }
@@ -29,6 +39,7 @@ impl ServiceController {
         event_pub: EventPublisher,
         cgroup: Querier,
         fdpass: Arc<Mutex<Option<tokio::net::UnixStream>>>,
+        fd_request_lock: Arc<Mutex<()>>,
         notify: Option<NotifyManager>,
         dbus: DbusWaiter,
     ) -> Self {
@@ -37,6 +48,7 @@ impl ServiceController {
             event_pub,
             cgroup,
             fdpass,
+            fd_request_lock,
             notify,
             dbus,
         }
@@ -342,9 +354,27 @@ impl ServiceController {
     /// Ask the socket worker (via the allocator) for the listener fds of the
     /// given socket units, in order.  Each request is a `socket.request_fd`
     /// envelope; the matching fd arrives back on our fdpass channel.
+    ///
+    /// A service that declares `Sockets=`/`Requires=*.socket` expects to be
+    /// spawned with those fds as `LISTEN_FDS`; starting it without them is
+    /// almost never recoverable (e.g. `dbus-daemon --address=systemd:` exits
+    /// silently with status 1), so every missing fd is logged with the service
+    /// it belongs to.
     #[cfg(unix)]
-    async fn request_listener_fds(&self, socket_units: &[String]) -> Vec<std::os::unix::io::RawFd> {
+    async fn request_listener_fds(
+        &self,
+        unit_name: &str,
+        socket_units: &[String],
+    ) -> Vec<std::os::unix::io::RawFd> {
         use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+        let requested: Vec<&String> = socket_units.iter().filter(|u| !u.is_empty()).collect();
+        if requested.is_empty() {
+            return Vec::new();
+        }
+        // One request/response round at a time: the fdpass stream has no
+        // correlation IDs, so concurrent rounds could swap fds between
+        // services (see `fd_request_lock`).
+        let _guard = self.fd_request_lock.lock().await;
         let stream = {
             let guard = self.fdpass.lock().await;
             match guard.as_ref() {
@@ -359,6 +389,10 @@ impl ServiceController {
             }
         };
         let Some(stream) = stream else {
+            warn!(
+                "{}: no fd-pass channel; starting without listener fds for {:?}",
+                unit_name, requested
+            );
             return Vec::new();
         };
         let mut fds: Vec<RawFd> = Vec::new();
@@ -384,6 +418,15 @@ impl ServiceController {
                     break;
                 }
             }
+        }
+        if fds.len() < requested.len() {
+            warn!(
+                "{}: obtained {} of {} listener fd(s) ({:?}); starting anyway",
+                unit_name,
+                fds.len(),
+                requested.len(),
+                requested
+            );
         }
         fds
     }
@@ -507,7 +550,9 @@ impl UnitController for ServiceController {
             return Ok(());
         }
         #[cfg(unix)]
-        let listen_fds = self.request_listener_fds(&cfg.socket_units).await;
+        let listen_fds = self
+            .request_listener_fds(unit_name, &cfg.socket_units)
+            .await;
         #[cfg(not(unix))]
         let listen_fds = Vec::new();
         let (_pid, child) = start_service(self.registry.clone(), &cfg, inv_id, listen_fds).await?;
@@ -602,7 +647,9 @@ impl UnitController for ServiceController {
             Some(invocation_id.to_string())
         };
         #[cfg(unix)]
-        let listen_fds = self.request_listener_fds(&cfg.socket_units).await;
+        let listen_fds = self
+            .request_listener_fds(unit_name, &cfg.socket_units)
+            .await;
         #[cfg(not(unix))]
         let listen_fds = Vec::new();
         let (_pid, child) = start_service(self.registry.clone(), &cfg, inv_id, listen_fds).await?;
@@ -704,6 +751,7 @@ mod tests {
                 Arc::default(),
             ),
             Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(())),
             None,
             DbusWaiter::default(),
         )
