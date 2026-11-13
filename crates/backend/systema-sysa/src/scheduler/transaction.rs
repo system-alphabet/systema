@@ -3352,6 +3352,77 @@ mod tests {
         assert_eq!(names(&s), vec!["b.service"]);
     }
 
+    /// Boot-transaction shape after SysI switched to a single
+    /// `default.target` root: everything is reached through the target
+    /// closure, and the injected `Requires=`/`After=sysinit.target` on
+    /// `systemd-user-sessions.service` must still order it after
+    /// `systemd-tmpfiles-setup.service` (`/run/nologin`).
+    #[test]
+    fn single_root_boot_orders_user_sessions_after_tmpfiles() {
+        let graphical = with_requires(
+            with_after(make_unit("graphical.target"), &["multi-user.target"]),
+            &["multi-user.target"],
+        );
+        let sysinit = with_wants(
+            make_unit("sysinit.target"),
+            &["systemd-tmpfiles-setup.service"],
+        );
+        let tmpfiles = with_before(
+            make_unit("systemd-tmpfiles-setup.service"),
+            &["sysinit.target"],
+        );
+        let multi = with_wants(
+            with_requires(
+                with_after(make_unit("multi-user.target"), &["basic.target"]),
+                &["basic.target"],
+            ),
+            &["systemd-user-sessions.service"],
+        );
+        let user_sessions = with_requires(
+            with_after(
+                make_unit("systemd-user-sessions.service"),
+                &["sysinit.target"],
+            ),
+            &["sysinit.target"],
+        );
+        let basic = with_requires(
+            with_after(make_unit("basic.target"), &["sysinit.target"]),
+            &["sysinit.target"],
+        );
+        let units = map(vec![
+            graphical,
+            multi,
+            basic,
+            sysinit,
+            tmpfiles,
+            user_sessions,
+        ]);
+        let s = steps(
+            &units,
+            &HashMap::new(),
+            &HashMap::new(),
+            "graphical.target",
+            Start,
+            Replace,
+        );
+        let us = s
+            .iter()
+            .find(|x| x.unit == "systemd-user-sessions.service")
+            .unwrap();
+        assert!(
+            us.wait_for.contains(&"sysinit.target".to_string()),
+            "user-sessions must wait for sysinit: {:?}",
+            us.wait_for
+        );
+        let si = s.iter().find(|x| x.unit == "sysinit.target").unwrap();
+        assert!(
+            si.wait_for
+                .contains(&"systemd-tmpfiles-setup.service".to_string()),
+            "sysinit must wait for tmpfiles: {:?}",
+            si.wait_for
+        );
+    }
+
     /// Reproduction of the /run/nologin boot race seen on the VM
     /// (2026-08-25): `systemd-tmpfiles-setup.service` (`f+! /run/nologin`)
     /// and `systemd-user-sessions.service` (`rm -f /run/nologin`) were both

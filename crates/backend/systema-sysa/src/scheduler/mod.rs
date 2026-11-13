@@ -1669,6 +1669,17 @@ async fn build_plan_for_roots(
 ) -> Result<TransactionPlan> {
     let root_names: Vec<&str> = roots.iter().map(|(name, _)| *name).collect();
 
+    // Default dependencies must be in the unit set *before* the plan is built:
+    // the reload task applies them after a Finder commit, but that pass runs
+    // asynchronously, so a boot plan (one `default.target` root) can otherwise
+    // be built from units that still lack the implicit `Requires=`/
+    // `After=sysinit.target` edges.  `systemd-user-sessions.service` would then
+    // start next to `systemd-tmpfiles-setup.service` instead of after it, and
+    // tmpfiles would re-create `/run/nologin` after user-sessions removed it —
+    // pam_nologin then blocks every unprivileged login.  The injection is
+    // idempotent, so running it here is safe.
+    crate::unit::loader::inject_default_dependencies(allocator.clone());
+
     // On-demand materialization (unit.define): before planning, walk the
     // dependency closure and request every referenced-but-missing unit from
     // the worker that owns its unit type, then commit the definitions through
