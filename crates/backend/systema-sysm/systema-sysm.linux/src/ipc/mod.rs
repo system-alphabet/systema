@@ -4,6 +4,7 @@ use sysa::worker_ipc::WorkerIpc;
 
 use crate::linux::controller::MountController;
 use crate::linux::mountinfo::MountInfoMonitor;
+use crate::linux::reaper;
 use crate::linux::state::{new_automount_registry, new_mount_registry};
 
 const WORKER_ID: &str = "system-m-1";
@@ -14,7 +15,11 @@ pub async fn run() -> Result<()> {
     let automount_registry = new_automount_registry();
 
     let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)
-        .with_socket_path(sysa::paths::instance().ipc_socket_path);
+        .with_socket_path(sysa::paths::instance().ipc_socket_path)
+        // The adopted mount daemons (FUSE helpers and friends) are this
+        // worker's children, so they are stopped before the `worker.exit`
+        // goodbye, while the connection is still open.
+        .on_shutdown(|| async { reaper::stop_children().await });
     sysa::signals::forward_shutdown(ipc.shutdown_handle());
     ipc.run(
         move |event_pub| {

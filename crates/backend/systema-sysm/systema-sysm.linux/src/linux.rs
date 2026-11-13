@@ -8,12 +8,14 @@ mod ipc;
 mod mount;
 #[path = "mountinfo.rs"]
 mod mountinfo;
+#[path = "reaper.rs"]
+mod reaper;
 #[path = "state.rs"]
 mod state;
 
 use anyhow::Result;
 use clap::Parser;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Parser)]
 #[command(
@@ -94,10 +96,22 @@ pub async fn run() -> Result<()> {
 
     info!("System M (System Mount Worker for Linux) starting up");
 
+    // Adopt the daemons `mount(8)` leaves behind: the intermediate
+    // `mount.fuse` parent exits, so without a subreaper the FUSE daemon is
+    // reparented to PID 1.  As their parent we are also the one that has to
+    // stop and reap them on shutdown (`reaper::stop_children`).
+    if let Err(e) = sysa::reaper::set_child_subreaper(true) {
+        warn!("Failed to register as a child subreaper (mount daemons may be orphaned): {e}");
+    }
+
     // SIGTERM/SIGINT are handled inside the IPC loop: it sends
     // `worker.exit`, waits for System A to close the connection, and only
     // then returns here.
-    ipc::run().await?;
+    let result = ipc::run().await;
 
-    Ok(())
+    // Fallback for leaving the loop without its shutdown hook (the hook only
+    // runs for a requested shutdown); idempotent when it already ran.
+    reaper::stop_children().await;
+
+    result
 }
