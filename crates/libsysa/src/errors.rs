@@ -1,6 +1,6 @@
 //! The wording of every IPC-kernel failure, and its localization.
 //!
-//! `sysa-ipc` reports failures as [`SysError`] — a stable [`ErrorCode`]
+//! The IPC contract (`libsystema-sysa`) reports failures as [`SysError`] — a stable [`ErrorCode`]
 //! plus the values of its `{name}` placeholders — and carries no message
 //! text at all.  This module owns the message table: each code maps to an
 //! English template (the gettext msgid) that is translated and filled here.
@@ -10,7 +10,7 @@
 //! stays free of gettext and of every user-facing string.
 
 use anyhow::Error;
-use sysa_ipc::error_code::{ErrorCode, SysError};
+use libsystema_shared::error_code::{ErrorCode, SysError};
 
 use crate::l10n;
 

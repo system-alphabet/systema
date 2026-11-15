@@ -770,6 +770,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "libsystema-shared"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures",
+ "libc",
+ "prost",
+ "prost-build",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "libsystema-sysa"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libsystema-shared",
+ "prost",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1358,28 +1387,11 @@ dependencies = [
  "colored",
  "gettext-rs",
  "libc",
- "sysa-ipc",
+ "libsystema-shared",
+ "libsystema-sysa",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "sysa-ipc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "futures",
- "libc",
- "prost",
- "prost-build",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]

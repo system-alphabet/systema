@@ -6,7 +6,8 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-sysa-ipc = { path = "../libsysa-ipc" }
+libsystema-sysa = { path = "../libsystema-sysa" }
+libsystema-shared = { path = "../libsystema-shared" }
 async-trait.workspace = true
 bytes.workspace = true
 tokio.workspace = true

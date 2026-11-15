@@ -1,6 +1,6 @@
-//! Error codes for the IPC kernel.
+//! Error codes for the IPC contract.
 //!
-//! `sysa-ipc` reports failures as [`SysError`] values: an [`ErrorCode`]
+//! [`SysError`] values carry an [`ErrorCode`]
 //! plus the values of the code's `{name}` placeholders.  The kernel carries
 //! **no message text at all** — not even an English fallback: the wording
 //! of every failure lives in `sysa::errors`, which maps a code to its

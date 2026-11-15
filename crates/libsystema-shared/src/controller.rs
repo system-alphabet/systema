@@ -1,3 +1,10 @@
+//! The unit status model and the controller trait every worker implements.
+//!
+//! Both live on the worker-facing side of the split: `UnitStatus` is the
+//! model every `status` reply and state update carries, and `UnitController`
+//! is the ops table the IPC loop dispatches to.  The protobuf conversion
+//! helpers come with the model, so a worker never needs the server crate.
+
 use std::collections::HashMap;
 
 use anyhow::Context;

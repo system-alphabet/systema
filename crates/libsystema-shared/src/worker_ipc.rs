@@ -366,8 +366,8 @@ pub struct WorkerIpc {
     on_reconnect: Option<Arc<dyn Fn() -> ReconnectHook + Send + Sync>>,
     on_method_result: Option<MethodResultHook>,
     /// Override of System A's socket path.  All callers must set this via
-    /// [`Self::with_socket_path`] before running; sysa-ipc no longer owns
-    /// the baked-in path registry (that moved to [`sysa::paths`]).
+    /// [`Self::with_socket_path`] before running; this crate does not own
+    /// the baked-in path registry (that lives in `sysa::paths`).
     socket_path: Option<String>,
     /// Exit flag: `None` while running, `Some(reason)` once [`Self::shutdown`]
     /// asked the loop to leave.  A polled atomic would only be noticed
@@ -439,8 +439,8 @@ impl WorkerIpc {
 
     /// Connect to `path` instead of the compiled-in socket.
     ///
-    /// Every caller must chain this before [`Self::run`] — sysa-ipc no
-    /// longer carries the baked-in path registry (see [`sysa::paths`]).
+    /// Every caller must chain this before [`Self::run`] — this crate does
+    /// not carry the baked-in path registry (see `sysa::paths`).
     pub fn with_socket_path(mut self, path: impl Into<String>) -> Self {
         self.socket_path = Some(path.into());
         self

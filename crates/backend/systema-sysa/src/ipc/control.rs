@@ -164,7 +164,7 @@ async fn handle_control_session(stream: UnixStream, allocator: AllocatorHandle) 
     //
     // Before any of that, an IPC-aware client exchanges the wire version
     // (`ipc.version` → `ipc.version.result`): the allocator pins one
-    // version (`sysa_ipc::ipc::IPC_VERSION`), refuses everything else and
+    // version (`libsystema_sysa::ipc::IPC_VERSION`), refuses everything else and
     // closes the connection before hello semantics start.  Peers that skip
     // the exchange (legacy) proceed exactly as before.
     let first_env = loop {

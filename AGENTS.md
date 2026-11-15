@@ -21,17 +21,27 @@ changes do **not** need to be written back into these docs.
   identifiers and commit messages in English.
 
 ## Workspace gotchas
-- **Directory name ≠ package name**: `crates/libsysa` is package **`sysa`**,
-  `crates/libsysa-ipc` is **`sysa-ipc`**. `cargo test -p libsysa` fails with
-  "did not match any packages" — always target packages `sysa`/`sysa-ipc` etc.
-- `libsysa` re-exports the whole `sysa-ipc` facade (`pub use sysa_ipc::{…}`)
+- **Directory name ≠ package name**: `crates/libsysa` is package **`sysa`**;
+  `crates/libsystema-sysa` and `crates/libsystema-shared` keep their own
+  names. `cargo test -p libsysa` fails with "did not match any packages" —
+  always target packages `sysa`/`libsystema-sysa`/`libsystema-shared` etc.
+- The IPC layer is two crates, with the dependency direction strictly
+  **shared → nothing, sysa → shared**: **`libsystema-shared`** owns the wire
+  contract (proto, framing, version constants, IR, error codes), the
+  `UnitStatus` model and the worker-side runtime/clients (`WorkerIpc`,
+  `UnitController`, finder, staging/unit-state admin); **`libsystema-sysa`**
+  depends on it and adds only the server-side handshake helpers
+  (`version_request_from`, `version_verdict`, `version_result_envelope`,
+  `gate_session_first`).  `libsysa` re-exports both
+  (`pub use libsystema_shared::{…}` / `pub use libsystema_sysa::ipc`)
   precisely so every consumer keeps the old `sysa::ipc`/`sysa::proto`/
-  `sysa::worker_ipc` paths. Never move modules without preserving re-exports.
+  `sysa::worker_ipc` paths. Never move modules without preserving
+  re-exports.  `libsystema-shared` must never depend on `libsystema-sysa`.
 - All proto Rust types are generated into `OUT_DIR` at build time by
-  `crates/libsysa-ipc/build.rs` (which also bakes compile-time path defaults
-  and compiles `.po` → `.mo`). **Edit `proto/*.proto` only**; never commit
-  generated files. `libsysa/build.rs` only emits build info.
-- `libsysa-ipc/build.rs` bakes default filesystem paths from env vars at build
+  `crates/libsystema-shared/build.rs`. **Edit `proto/*.proto` only**; never
+  commit generated files. `libsysa/build.rs` emits build info, bakes the
+  compile-time path defaults and compiles `.po` → `.mo`.
+- `libsysa/build.rs` bakes default filesystem paths from env vars at build
   time; `SYSTEMA_*` env overrides at runtime. On Termux/Android **source
   `termux-env.sh` (or `termux-env-local.sh`) before `cargo build`** so the
   baked defaults match `$PREFIX`; an env change re-runs build.rs — no
@@ -64,7 +74,7 @@ changes do **not** need to be written back into these docs.
   implementation on other targets. A bare unconditional `libc`/`nix`
   dependency breaks the FreeBSD/OpenBSD/Android matrix.
 - Worker lifecycle (reconnect+backoff, graceful `worker.exit`
-  handshake) lives **inside** `WorkerIpc::run()` in `sysa-ipc`, but the
+  handshake) lives **inside** `WorkerIpc::run()` in `libsystema-shared`, but the
   loop watches **no** process signals: a caller asks it to leave through
   `WorkerIpc::shutdown(reason)` / a `ShutdownHandle`, and the loop exits
   at a loop boundary (cleanup on the still-open connection, then the
@@ -110,11 +120,12 @@ changes do **not** need to be written back into these docs.
   workers stay zbus-free (syss may use D-Bus as a *client* only).
 
 ## Tests
-- Per package: `cargo test -p sysa-ipc`; single test:
-  `cargo test -p sysa-ipc <name>`. Unit tests are colocated `mod tests`
-  with `#[tokio::test]`; integration tests in `crates/*/tests/`.
+- Per package: `cargo test -p libsystema-shared` / `-p libsystema-sysa`;
+  single test: `cargo test -p <package> <name>`. Unit tests are colocated
+  `mod tests` with `#[tokio::test]`; integration tests in `crates/*/tests/`.
 - Worker-IPC tests run against a fake System A at a test-only socket path
-  (injection via `#[cfg(test)]` in `sysa-ipc/worker_ipc.rs`) — no root, no
+  (injection via `#[cfg(test)]` in
+  `libsystema-shared/src/worker_ipc.rs`) — no root, no
   `/run` sockets, fast on Linux.
 - Actually running daemons needs root for `/run/systema` sockets; the
   user-domain instance is `systema-sysu --login` with all sockets under

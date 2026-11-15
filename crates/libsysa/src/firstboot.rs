@@ -11,13 +11,13 @@
 //! Classification rules, in order:
 //!
 //! 1. **Forced first boot** — the flag file
-//!    ([`sysa_ipc::paths::firstboot_flag_file`], default `/firstboot`)
+//!    ([`crate::paths::firstboot_flag_file`], default `/firstboot`)
 //!    exists.  Deliberate override: operators may create it to make
 //!    `ConditionFirstBoot=yes` units run on *every* boot (factory-reset
 //!    image maintenance, reprovisioning); deleting it restores normal
 //!    classification.
 //! 2. **Machine id state** — first boot iff *no* machine id file exists in
-//!    the candidate list (build-time [`sysa_ipc::paths::machine_id_file`]
+//!    the candidate list (build-time [`crate::paths::machine_id_file`]
 //!    first, then [`MACHINE_ID_FALLBACK_FILES`]).  Fuller semantics detail:
 //!    unlike systemd we do not read file contents — an existing file always
 //!    counts as initialized; only the absence of a machine id anywhere
@@ -28,7 +28,7 @@ use std::path::Path;
 use crate::paths;
 
 /// Fallback machine-id files consulted after the primary
-/// [`sysa_ipc::paths::machine_id_file`], covering the locations other
+/// [`crate::paths::machine_id_file`], covering the locations other
 /// ecosystems settle the id in: usrmerge distributions keep it in
 /// `/usr/etc`, the D-Bus daemon at the head of its own list, and BSD
 /// systems under `/var/db`.
