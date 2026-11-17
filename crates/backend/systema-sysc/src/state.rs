@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
 use crate::config::TimerConfig;
+use parking_lot::RwLock;
 
 /// Runtime state of a `.timer` unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

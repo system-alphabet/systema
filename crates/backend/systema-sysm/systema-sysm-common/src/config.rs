@@ -30,7 +30,10 @@ pub struct AutomountConfig {
 /// An automount unit's map also carries its companion `.mount` directives
 /// (System A merges them before dispatch), so both sections can come from the
 /// same map.  `None` means the map does not describe that kind of unit.
-pub fn parse(unit_name: &str, config: &UnitConfig) -> (Option<MountConfig>, Option<AutomountConfig>) {
+pub fn parse(
+    unit_name: &str,
+    config: &UnitConfig,
+) -> (Option<MountConfig>, Option<AutomountConfig>) {
     if config.config_json.is_empty() {
         return (None, None);
     }

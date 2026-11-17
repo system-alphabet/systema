@@ -1,7 +1,7 @@
 use crate::config::ServiceConfig;
 use crate::dbus::DbusWaiter;
 use crate::notify::NotifyManager;
-use crate::process::{start_service, start_timeout_secs, stop_service};
+use crate::process::{run_exec_reload, start_service, start_timeout_secs, stop_service};
 use crate::state::{ServiceRegistry, ServiceState};
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
@@ -138,12 +138,20 @@ impl ServiceController {
     /// Mark an ExecStart-less "action" service as started (no-process
     /// equivalent of a oneshot that exits 0): the unit becomes active and
     /// stays so, like `RemainAfterExit=yes`.
-    fn mark_noop_started(&self, unit_name: &str, invocation_id: Option<String>) {
+    fn mark_noop_started(
+        &self,
+        unit_name: &str,
+        invocation_id: Option<String>,
+        service: Option<&ServiceConfig>,
+    ) {
         let mut reg = self.registry.lock();
         let inst = reg.entry(unit_name.to_string()).or_default();
         inst.state = ServiceState::Running;
         inst.main_pid = None;
         inst.invocation_id = invocation_id;
+        inst.service_config = service.cloned();
+        inst.timeout_stop_secs = service.map(|s| s.timeout_stop_secs);
+        inst.remain_after_exit = service.is_some_and(|s| s.remain_after_exit);
         drop(reg);
         self.publish_state(unit_name);
     }
@@ -151,8 +159,7 @@ impl ServiceController {
     /// Whether the unit is `Type=oneshot` and thus the start job must wait
     /// for the ExecStart process to exit (like systemd).
     fn is_oneshot_type(cfg: &UnitConfig) -> bool {
-        ServiceConfig::from_unit_config(cfg)
-            .is_some_and(|s| s.service_type.as_str() == "oneshot")
+        ServiceConfig::from_unit_config(cfg).is_some_and(|s| s.service_type.as_str() == "oneshot")
     }
 
     /// Wait for the oneshot service's ExecStart process to exit.
@@ -285,8 +292,7 @@ impl ServiceController {
     /// Whether the unit is `Type=dbus` and thus must own its `BusName=`
     /// before the start job completes.
     fn is_dbus_type(cfg: &UnitConfig) -> bool {
-        ServiceConfig::from_unit_config(cfg)
-            .is_some_and(|s| s.service_type.as_str() == "dbus")
+        ServiceConfig::from_unit_config(cfg).is_some_and(|s| s.service_type.as_str() == "dbus")
     }
 
     fn validate_dbus_config(cfg: &UnitConfig) -> Result<()> {
@@ -464,8 +470,8 @@ impl ServiceController {
     /// A failing command fails the start job and the unit, like systemd's
     /// `service_enter_start_post()`.
     async fn run_start_post(&self, unit_name: &str, cfg: &UnitConfig) -> Result<()> {
-        let has_commands = ServiceConfig::from_unit_config(cfg)
-            .is_some_and(|s| !s.exec_start_post.is_empty());
+        let has_commands =
+            ServiceConfig::from_unit_config(cfg).is_some_and(|s| !s.exec_start_post.is_empty());
         if !has_commands {
             return Ok(());
         }
@@ -529,7 +535,8 @@ impl UnitController for ServiceController {
                 "{}: no ExecStart, start completes without spawning a process",
                 unit_name
             );
-            self.mark_noop_started(unit_name, inv_id);
+            let service = ServiceConfig::from_unit_config(&cfg);
+            self.mark_noop_started(unit_name, inv_id, service.as_ref());
             return Ok(());
         }
         #[cfg(unix)]
@@ -545,6 +552,7 @@ impl UnitController for ServiceController {
             if let Some(inst) = reg.get_mut(unit_name) {
                 inst.timeout_stop_secs = Some(svc.timeout_stop_secs);
                 inst.remain_after_exit = svc.remain_after_exit;
+                inst.service_config = Some(svc.clone());
             }
         }
         self.publish_state(unit_name);
@@ -606,7 +614,8 @@ impl UnitController for ServiceController {
             } else {
                 Some(invocation_id.to_string())
             };
-            self.mark_noop_started(unit_name, inv_id);
+            let service = ServiceConfig::from_unit_config(&cfg);
+            self.mark_noop_started(unit_name, inv_id, service.as_ref());
             return Ok(());
         }
         let timeout = ServiceConfig::from_unit_config(&cfg)
@@ -637,6 +646,7 @@ impl UnitController for ServiceController {
             if let Some(inst) = reg.get_mut(unit_name) {
                 inst.timeout_stop_secs = Some(svc.timeout_stop_secs);
                 inst.remain_after_exit = svc.remain_after_exit;
+                inst.service_config = Some(svc.clone());
             }
         }
         self.publish_state(unit_name);
@@ -669,14 +679,15 @@ impl UnitController for ServiceController {
                 &[("unit_name", unit_name)],
             ))
         };
+        let service = ServiceConfig::from_unit_config(&cfg).unwrap_or_default();
+        let notify_reload = service.service_type == "notify-reload";
+        let has_exec_reload = !service.exec_reload.is_empty();
         // Type=notify-reload: the reload job waits for RELOADING=1
         // (validated against MONOTONIC_USEC) followed by READY=1, like
         // systemd's service_notify_message_process_state().  The cycle must
         // be registered before the signal goes out so no notification can
         // slip in between.
         let wait_reload = {
-            let notify_reload = ServiceConfig::from_unit_config(&cfg)
-                .is_some_and(|s| s.service_type == "notify-reload");
             notify_reload
                 && self
                     .notify
@@ -684,12 +695,20 @@ impl UnitController for ServiceController {
                     .map(|n| n.register_reload(unit_name, pid))
                     .unwrap_or(false)
         };
-        #[cfg(unix)]
-        {
-            use nix::sys::signal;
-            use nix::unistd::Pid;
-            signal::kill(Pid::from_raw(pid as i32), signal::Signal::SIGHUP)
-                .context(sysa::l10n::t_("Failed to send SIGHUP"))?;
+        // ExecReload= replaces the reload signal for ordinary services.  For
+        // Type=notify-reload systemd still sends the signal afterwards, so
+        // the notification cycle can be observed.
+        if has_exec_reload {
+            run_exec_reload(self.registry.clone(), unit_name, &cfg, Some(pid)).await?;
+        }
+        if !has_exec_reload || notify_reload {
+            #[cfg(unix)]
+            {
+                use nix::sys::signal;
+                use nix::unistd::Pid;
+                signal::kill(Pid::from_raw(pid as i32), signal::Signal::SIGHUP)
+                    .context(sysa::l10n::t_("Failed to send SIGHUP"))?;
+            }
         }
         if wait_reload {
             let timeout = start_timeout_secs(&cfg);

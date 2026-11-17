@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use crate::config::ServiceConfig;
+
 /// The lifecycle state of a managed service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
@@ -38,6 +40,12 @@ pub struct ServiceInstance {
     pub last_exit_code: Option<i32>,
     /// Stop timeout in seconds (from ServiceConfig).
     pub timeout_stop_secs: Option<u32>,
+    /// The `[Service]` directives of the current activation.
+    ///
+    /// Kept on the instance because `stop` and a spontaneous `reload` are not
+    /// accompanied by a unit config on the wire: the worker must still be able
+    /// to run `ExecStop=`, `ExecStopPost=` and `ExecReload=`.
+    pub service_config: Option<ServiceConfig>,
     /// RemainAfterExit=yes: the service stays "active" after its main
     /// process exits successfully (oneshot style) instead of going
     /// inactive.
@@ -70,6 +78,7 @@ impl ServiceInstance {
             main_pid: None,
             last_exit_code: None,
             timeout_stop_secs: None,
+            service_config: None,
             remain_after_exit: false,
             ignore_failure: false,
             transient_pids: HashSet::new(),

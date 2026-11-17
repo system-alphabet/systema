@@ -167,7 +167,10 @@ mod tests {
             }),
             config: Some({
                 let mut map = ConfigMap::new();
-                map.insert("ExecStart".to_string(), serde_json::json!(["/sbin/agetty %i"]));
+                map.insert(
+                    "ExecStart".to_string(),
+                    serde_json::json!(["/sbin/agetty %i"]),
+                );
                 map.insert("TTYPath".to_string(), serde_json::json!("/dev/%i"));
                 map.insert("Environment".to_string(), serde_json::json!(["GETTY=%I"]));
                 map

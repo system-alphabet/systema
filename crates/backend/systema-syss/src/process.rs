@@ -637,17 +637,13 @@ impl Drop for TransientPid {
 async fn run_exec_commands(
     registry: ServiceRegistry,
     unit_name: &str,
-    config: &UnitConfig,
+    svc: &ServiceConfig,
+    cgroup_path: &str,
     commands: &[String],
     phase: &str,
+    timeout_secs: u64,
+    main_pid: Option<u32>,
 ) -> Result<()> {
-    let svc = ServiceConfig::from_unit_config(config).ok_or_else(|| {
-        anyhow::anyhow!(sysa::l10n::fmt(
-            sysa::l10n::t_("No [Service] config for {unit_name}."),
-            &[("unit_name", unit_name)]
-        ))
-    })?;
-
     for raw in commands {
         let parsed = parse_exec_start(raw, unit_name)?;
 
@@ -666,7 +662,13 @@ async fn run_exec_commands(
 
         let identity_env = identity_env(creds.as_ref());
         let directory_env = prepare_service_directories(&svc, creds.as_ref())?;
-        let env_table = build_env_table(&svc.environment, &[], &identity_env, &directory_env);
+        let mut env_table = build_env_table(&svc.environment, &[], &identity_env, &directory_env);
+        if let Some(pid) = main_pid {
+            // `$MAINPID` must expand here too, not only be present in the
+            // child environment: ExecStop=/ExecReload= commonly interpolate it
+            // into their arguments before the shell sees them.
+            env_table.insert("MAINPID".to_string(), pid.to_string());
+        }
         let final_args = if parsed.flags.no_env_expand {
             parsed.args.clone()
         } else {
@@ -718,8 +720,18 @@ async fn run_exec_commands(
                 }
             }
         }
+        // Control commands (`ExecStop=`, `ExecStopPost=`, `ExecReload=`) see
+        // the main process PID in `$MAINPID`, like systemd.
+        if let Some(pid) = main_pid {
+            if let (Ok(k), Ok(v)) = (
+                CString::new("MAINPID"),
+                CString::new(pid.to_string().as_str()),
+            ) {
+                child_envs.push((k, v));
+            }
+        }
 
-        if let Some(mut pre) = build_pre_exec(child_envs, &[], creds, config.cgroup_path.clone()) {
+        if let Some(mut pre) = build_pre_exec(child_envs, &[], creds, cgroup_path.to_string()) {
             unsafe {
                 cmd.pre_exec(move || pre());
             }
@@ -750,7 +762,7 @@ async fn run_exec_commands(
         let _tracked = child
             .id()
             .map(|pid| TransientPid::register(registry.clone(), unit_name, pid));
-        let timeout = start_timeout_secs(config);
+        let timeout = timeout_secs;
         let status =
             match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await
             {
@@ -810,13 +822,24 @@ pub async fn run_exec_start_pre(
     unit_name: &str,
     config: &UnitConfig,
 ) -> Result<()> {
-    let commands = ServiceConfig::from_unit_config(config)
-        .map(|s| s.exec_start_pre.clone())
-        .unwrap_or_default();
-    if commands.is_empty() {
+    let Some(svc) = ServiceConfig::from_unit_config(config) else {
+        return Ok(());
+    };
+    if svc.exec_start_pre.is_empty() {
         return Ok(());
     }
-    run_exec_commands(registry, unit_name, config, &commands, "ExecStartPre").await
+    let timeout = start_timeout_secs(config);
+    run_exec_commands(
+        registry,
+        unit_name,
+        &svc,
+        &config.cgroup_path,
+        &svc.exec_start_pre,
+        "ExecStartPre",
+        timeout,
+        None,
+    )
+    .await
 }
 
 /// Run the unit's `ExecStartPost=` commands in order, once the start phase
@@ -827,13 +850,138 @@ pub async fn run_exec_start_post(
     unit_name: &str,
     config: &UnitConfig,
 ) -> Result<()> {
-    let commands = ServiceConfig::from_unit_config(config)
-        .map(|s| s.exec_start_post.clone())
-        .unwrap_or_default();
-    if commands.is_empty() {
+    let Some(svc) = ServiceConfig::from_unit_config(config) else {
+        return Ok(());
+    };
+    if svc.exec_start_post.is_empty() {
         return Ok(());
     }
-    run_exec_commands(registry, unit_name, config, &commands, "ExecStartPost").await
+    let main_pid = registry
+        .lock()
+        .get(unit_name)
+        .and_then(|inst| inst.main_pid);
+    let timeout = start_timeout_secs(config);
+    run_exec_commands(
+        registry,
+        unit_name,
+        &svc,
+        &config.cgroup_path,
+        &svc.exec_start_post,
+        "ExecStartPost",
+        timeout,
+        main_pid,
+    )
+    .await
+}
+
+/// Run the unit's `ExecStop=` commands before the kill phase.
+///
+/// Uses the configuration retained on the instance, because a `stop` request
+/// carries no unit config.  Each command is bounded by `TimeoutStopSec`; the
+/// first failure without the `-` prefix aborts the remaining commands, like
+/// systemd's control-command loop.
+#[cfg(unix)]
+pub async fn run_exec_stop(
+    registry: ServiceRegistry,
+    unit_name: &str,
+    timeout_secs: u32,
+) -> Result<()> {
+    let (svc, main_pid, cgroup) = {
+        let reg = registry.lock();
+        match reg.get(unit_name) {
+            Some(inst) => (
+                inst.service_config.clone(),
+                inst.main_pid,
+                inst.cgroup_path.clone().unwrap_or_default(),
+            ),
+            None => return Ok(()),
+        }
+    };
+    let Some(svc) = svc else {
+        return Ok(());
+    };
+    if svc.exec_stop.is_empty() {
+        return Ok(());
+    }
+    run_exec_commands(
+        registry,
+        unit_name,
+        &svc,
+        &cgroup,
+        &svc.exec_stop,
+        "ExecStop",
+        timeout_secs as u64,
+        main_pid,
+    )
+    .await
+}
+
+/// Run the unit's `ExecStopPost=` commands after the kill phase.
+///
+/// Runs even when `ExecStop=` failed, matching systemd's stop-post state.
+#[cfg(unix)]
+pub async fn run_exec_stop_post(
+    registry: ServiceRegistry,
+    unit_name: &str,
+    timeout_secs: u32,
+) -> Result<()> {
+    let (svc, main_pid, cgroup) = {
+        let reg = registry.lock();
+        match reg.get(unit_name) {
+            Some(inst) => (
+                inst.service_config.clone(),
+                inst.main_pid,
+                inst.cgroup_path.clone().unwrap_or_default(),
+            ),
+            None => return Ok(()),
+        }
+    };
+    let Some(svc) = svc else {
+        return Ok(());
+    };
+    if svc.exec_stop_post.is_empty() {
+        return Ok(());
+    }
+    run_exec_commands(
+        registry,
+        unit_name,
+        &svc,
+        &cgroup,
+        &svc.exec_stop_post,
+        "ExecStopPost",
+        timeout_secs as u64,
+        main_pid,
+    )
+    .await
+}
+
+/// Run the unit's `ExecReload=` commands instead of sending the reload signal
+/// (for non-`notify-reload` services).  Bounded by `TimeoutStartSec`.
+#[cfg(unix)]
+pub async fn run_exec_reload(
+    registry: ServiceRegistry,
+    unit_name: &str,
+    config: &UnitConfig,
+    main_pid: Option<u32>,
+) -> Result<()> {
+    let Some(svc) = ServiceConfig::from_unit_config(config) else {
+        return Ok(());
+    };
+    if svc.exec_reload.is_empty() {
+        return Ok(());
+    }
+    let timeout = start_timeout_secs(config);
+    run_exec_commands(
+        registry,
+        unit_name,
+        &svc,
+        &config.cgroup_path,
+        &svc.exec_reload,
+        "ExecReload",
+        timeout,
+        main_pid,
+    )
+    .await
 }
 
 // Services cannot be started on non-Unix targets (`start_service` bails), so
@@ -852,6 +1000,34 @@ pub async fn run_exec_start_post(
     _registry: ServiceRegistry,
     _unit_name: &str,
     _config: &UnitConfig,
+) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub async fn run_exec_stop(
+    _registry: ServiceRegistry,
+    _unit_name: &str,
+    _timeout_secs: u32,
+) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub async fn run_exec_stop_post(
+    _registry: ServiceRegistry,
+    _unit_name: &str,
+    _timeout_secs: u32,
+) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub async fn run_exec_reload(
+    _registry: ServiceRegistry,
+    _unit_name: &str,
+    _config: &UnitConfig,
+    _main_pid: Option<u32>,
 ) -> Result<()> {
     Ok(())
 }
@@ -942,6 +1118,16 @@ pub async fn stop_service(
         if let Some(inst) = reg.get_mut(unit_name) {
             inst.state = ServiceState::Stopping;
         }
+    }
+
+    // Phase 3 — ExecStop= commands run before any signal, like systemd's
+    // SERVICE_STOP state.  A failure aborts the remaining stop commands but
+    // does not abort the stop itself: the kill phase below still runs and the
+    // unit ends `failed`.
+    let mut control_failed = false;
+    if let Err(e) = run_exec_stop(registry.clone(), unit_name, timeout_secs).await {
+        warn!("ExecStop for {} failed: {}", unit_name, e);
+        control_failed = true;
     }
 
     #[cfg(not(unix))]
@@ -1045,10 +1231,23 @@ pub async fn stop_service(
         }
     }
 
+    // Phase 6 — ExecStopPost= always runs after the stop attempt, even when
+    // ExecStop= failed or the kill timed out (systemd's SERVICE_STOP_POST).
+    if let Err(e) = run_exec_stop_post(registry.clone(), unit_name, timeout_secs).await {
+        warn!("ExecStopPost for {} failed: {}", unit_name, e);
+        control_failed = true;
+    }
+
     {
         let mut reg = registry.lock();
         if let Some(inst) = reg.get_mut(unit_name) {
-            inst.state = ServiceState::Dead;
+            // systemd reports the unit `failed` when a non-ignored control
+            // command failed during the stop, even though the stop completed.
+            inst.state = if control_failed {
+                ServiceState::Failed
+            } else {
+                ServiceState::Dead
+            };
             inst.main_pid = None;
             inst.invocation_id = None;
         }
@@ -3478,5 +3677,172 @@ mod stop_tests {
 
         kill_now(escapee).await;
         reaper.abort();
+    }
+
+    fn temp_marker(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "systema-syss-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ))
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stop_runs_exec_stop_before_the_kill_phase() {
+        let marker = temp_marker("exec-stop");
+        let main = spawn_sleeper(false);
+        let registry = running_registry("exec-stop.service", main);
+        {
+            let mut reg = registry.lock();
+            let inst = reg.get_mut("exec-stop.service").unwrap();
+            inst.service_config = Some(ServiceConfig {
+                exec_stop: vec![format!("/bin/sh -c 'echo stop > {}'", marker.display())],
+                ..Default::default()
+            });
+        }
+
+        stop_service(registry.clone(), "exec-stop.service", 2, None)
+            .await
+            .expect("stop succeeds");
+
+        assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "stop");
+        assert!(!is_alive(main), "the kill phase still runs after ExecStop");
+        assert_eq!(
+            registry.lock().get("exec-stop.service").unwrap().state,
+            ServiceState::Dead
+        );
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn exec_stop_receives_main_pid() {
+        let marker = temp_marker("mainpid");
+        let main = spawn_sleeper(false);
+        let registry = running_registry("mainpid.service", main);
+        {
+            let mut reg = registry.lock();
+            let inst = reg.get_mut("mainpid.service").unwrap();
+            inst.service_config = Some(ServiceConfig {
+                exec_stop: vec![format!("/bin/sh -c 'echo $MAINPID > {}'", marker.display())],
+                ..Default::default()
+            });
+        }
+
+        stop_service(registry.clone(), "mainpid.service", 2, None)
+            .await
+            .expect("stop succeeds");
+
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap().trim(),
+            main.to_string()
+        );
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn exec_stop_failure_still_runs_stop_post_and_fails_the_unit() {
+        let marker = temp_marker("exec-stop-post");
+        let main = spawn_sleeper(false);
+        let registry = running_registry("exec-fail.service", main);
+        {
+            let mut reg = registry.lock();
+            let inst = reg.get_mut("exec-fail.service").unwrap();
+            inst.service_config = Some(ServiceConfig {
+                exec_stop: vec!["/bin/false".to_string()],
+                exec_stop_post: vec![format!("/bin/sh -c 'echo post > {}'", marker.display())],
+                ..Default::default()
+            });
+        }
+
+        stop_service(registry.clone(), "exec-fail.service", 2, None)
+            .await
+            .expect("the stop itself still completes");
+
+        assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "post");
+        assert!(
+            !is_alive(main),
+            "the kill phase runs despite ExecStop failing"
+        );
+        assert_eq!(
+            registry.lock().get("exec-fail.service").unwrap().state,
+            ServiceState::Failed
+        );
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn exec_stop_ignores_failures_with_the_minus_prefix() {
+        let marker = temp_marker("exec-ignore");
+        let main = spawn_sleeper(false);
+        let registry = running_registry("exec-ignore.service", main);
+        {
+            let mut reg = registry.lock();
+            let inst = reg.get_mut("exec-ignore.service").unwrap();
+            inst.service_config = Some(ServiceConfig {
+                exec_stop: vec![
+                    "-/bin/false".to_string(),
+                    format!("/bin/sh -c 'echo ok > {}'", marker.display()),
+                ],
+                ..Default::default()
+            });
+        }
+
+        stop_service(registry.clone(), "exec-ignore.service", 2, None)
+            .await
+            .expect("stop succeeds");
+
+        assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "ok");
+        assert_eq!(
+            registry.lock().get("exec-ignore.service").unwrap().state,
+            ServiceState::Dead
+        );
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn reload_runs_exec_reload_commands() {
+        let marker = temp_marker("exec-reload");
+        let registry = new_registry();
+        let cfg = UnitConfig {
+            config_json: ServiceConfig {
+                exec_reload: vec![format!("/bin/sh -c 'echo reload > {}'", marker.display())],
+                ..Default::default()
+            }
+            .to_config_json(),
+            ..Default::default()
+        };
+
+        run_exec_reload(registry, "reload.service", &cfg, None)
+            .await
+            .expect("ExecReload runs");
+
+        assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "reload");
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn reload_failure_is_reported() {
+        let registry = new_registry();
+        let cfg = UnitConfig {
+            config_json: ServiceConfig {
+                exec_reload: vec!["/bin/false".to_string()],
+                ..Default::default()
+            }
+            .to_config_json(),
+            ..Default::default()
+        };
+
+        assert!(run_exec_reload(registry, "reload-fail.service", &cfg, None)
+            .await
+            .is_err());
     }
 }

@@ -3319,10 +3319,7 @@ mod tests {
             id: "getty@.service".to_string(),
             unit_type: Some(UnitType::Service),
             description: Some("Getty on %I".to_string()),
-            config: Some(directive_map(&[(
-                "TTYPath",
-                serde_json::json!("/dev/%i"),
-            )])),
+            config: Some(directive_map(&[("TTYPath", serde_json::json!("/dev/%i"))])),
             template: Some(TemplateInfo {
                 definition: true,
                 of: None,

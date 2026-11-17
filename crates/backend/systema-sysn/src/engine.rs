@@ -320,11 +320,11 @@ pub(crate) fn epoch_now() -> u64 {
 mod tests {
     use super::*;
     use crate::backend::{PathBackend, PathChange};
+    use crate::config::PathConfig;
     use crate::spec::{PathSpec, PathSpecKind};
     use crate::state::PathInstance;
     use async_trait::async_trait;
     use std::time::Duration;
-    use crate::config::PathConfig;
 
     /// Backend that never reports changes; unit tests drive the engine
     /// directly through `process_change`/`on_target_inactive`.

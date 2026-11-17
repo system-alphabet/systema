@@ -3,8 +3,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
 use crate::config::PathConfig;
+use parking_lot::RwLock;
 
 use crate::spec::{PathSignature, PathSpec};
 

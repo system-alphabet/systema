@@ -513,10 +513,7 @@ mod tests {
 
         let ir = convert_unit_file(&uf);
         let config = ir.config.expect("service directives");
-        assert_eq!(
-            config.get("Type").and_then(|v| v.as_str()),
-            Some("dbus")
-        );
+        assert_eq!(config.get("Type").and_then(|v| v.as_str()), Some("dbus"));
         assert_eq!(
             config.get("BusName").and_then(|v| v.as_str()),
             Some("org.deepin.dde.Authenticate1")

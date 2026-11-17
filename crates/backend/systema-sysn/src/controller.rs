@@ -4,10 +4,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::config::PathConfig;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
-use crate::config::PathConfig;
 use tracing::{info, warn};
 
 use crate::engine::{arm_unit, publish_path, recheck_level, status_of, EngineShared};

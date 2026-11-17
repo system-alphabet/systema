@@ -278,7 +278,10 @@ fn put_strings(map: &mut ConfigMap, key: &str, values: &[String]) {
 
 fn put_execs(map: &mut ConfigMap, key: &str, commands: &[ExecCommand]) {
     if !commands.is_empty() {
-        let raw: Vec<&str> = commands.iter().map(|command| command.raw.as_str()).collect();
+        let raw: Vec<&str> = commands
+            .iter()
+            .map(|command| command.raw.as_str())
+            .collect();
         map.insert(key.to_string(), json!(raw));
     }
 }
@@ -321,10 +324,9 @@ pub fn apply_config_map(uf: &mut UnitFile, map: &ConfigMap) {
         }
         UnitKind::Timer => apply_timer(uf.timer.get_or_insert_with(Default::default), map),
         UnitKind::Swap => apply_swap(uf.swap.get_or_insert_with(Default::default), map),
-        UnitKind::Slice => apply_resource_control(
-            &mut uf.slice.get_or_insert_with(Default::default).rc,
-            map,
-        ),
+        UnitKind::Slice => {
+            apply_resource_control(&mut uf.slice.get_or_insert_with(Default::default).rc, map)
+        }
         UnitKind::Scope => apply_scope(uf.scope.get_or_insert_with(Default::default), map),
         UnitKind::Device => apply_device(uf.device.get_or_insert_with(Default::default), map),
         UnitKind::Path => apply_path(uf.path.get_or_insert_with(Default::default), map),
@@ -350,11 +352,7 @@ fn apply_service(section: &mut ServiceSection, map: &ConfigMap) {
     apply_strings(map, "Environment", &mut section.environment);
     apply_strings(map, "EnvironmentFile", &mut section.environment_file);
     apply_strings(map, "StateDirectory", &mut section.state_directory);
-    apply_u32(
-        map,
-        "StateDirectoryMode",
-        &mut section.state_directory_mode,
-    );
+    apply_u32(map, "StateDirectoryMode", &mut section.state_directory_mode);
     apply_strings(map, "LogsDirectory", &mut section.logs_directory);
     apply_u32(map, "LogsDirectoryMode", &mut section.logs_directory_mode);
     apply_strings(map, "RuntimeDirectory", &mut section.runtime_directory);
@@ -391,7 +389,11 @@ fn apply_service(section: &mut ServiceSection, map: &ConfigMap) {
     apply_str(map, "StandardError", &mut section.standard_error);
     apply_str(map, "TTYPath", &mut section.tty_path);
     apply_u32(map, "RestartSteps", &mut section.restart_steps);
-    apply_u32(map, "RestartMaxDelaySec", &mut section.restart_max_delay_sec);
+    apply_u32(
+        map,
+        "RestartMaxDelaySec",
+        &mut section.restart_max_delay_sec,
+    );
     apply_resource_control(&mut section.rc, map);
 }
 
@@ -507,11 +509,7 @@ fn apply_path(section: &mut PathSection, map: &ConfigMap) {
         "TriggerLimitIntervalSec",
         &mut section.trigger_limit_interval_sec,
     );
-    apply_u32(
-        map,
-        "TriggerLimitBurst",
-        &mut section.trigger_limit_burst,
-    );
+    apply_u32(map, "TriggerLimitBurst", &mut section.trigger_limit_burst);
 }
 
 fn apply_resource_control(rc: &mut ResourceControl, map: &ConfigMap) {

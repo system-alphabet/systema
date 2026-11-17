@@ -14,8 +14,8 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike};
 use crate::config::TimerConfig;
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike};
 
 /// A parsed calendar component set: (year, month, day) for dates and
 /// (hour, minute, second) for times.  Empty set means "any".

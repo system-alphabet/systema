@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
 use crate::config::DeviceConfig;
+use parking_lot::RwLock;
 
 use crate::discovery::DeviceMeta;
 

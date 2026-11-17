@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
+use crate::config::DeviceConfig;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
-use crate::config::DeviceConfig;
 
 use crate::discovery::enumerate_devices;
 use crate::engine::{publish_unit, status_of, EngineShared};

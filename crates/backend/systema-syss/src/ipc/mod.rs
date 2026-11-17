@@ -8,6 +8,7 @@ use sysa::worker_ipc::{EventPublisher, WorkerIpc};
 
 use crate::cgroup::Querier;
 use crate::controller::ServiceController;
+use crate::process::{run_exec_stop, run_exec_stop_post};
 use crate::state::{new_registry, ServiceRegistry, ServiceState};
 
 const WORKER_ID: &str = "system-s-1";
@@ -154,14 +155,19 @@ pub(crate) async fn monitor_service(
                 );
                 // `ExecStart=-`: a non-zero exit is recorded in
                 // `last_exit_code` but counts as success for the unit.
-                let (stay_active, succeeded) = {
+                let (stay_active, succeeded, stopping, timeout_stop) = {
                     let reg = registry.lock();
                     reg.get(&unit_name)
                         .map(|inst| {
                             let succeeded = inst.exit_succeeded(status.success());
-                            (succeeded && inst.remain_after_exit, succeeded)
+                            (
+                                succeeded && inst.remain_after_exit,
+                                succeeded,
+                                inst.state == ServiceState::Stopping,
+                                inst.timeout_stop_secs.unwrap_or(30),
+                            )
                         })
-                        .unwrap_or((false, status.success()))
+                        .unwrap_or((false, status.success(), false, 30))
                 };
                 if stay_active {
                     // RemainAfterExit=yes: keep the unit "active" after a
@@ -183,10 +189,32 @@ pub(crate) async fn monitor_service(
                     publish_service_state(&registry, &event_pub, &unit_name);
                     break;
                 }
-                let state = if succeeded {
-                    ServiceState::Dead
-                } else {
+                if stopping {
+                    // An explicit stop is already running; it owns ExecStop=,
+                    // the kill phase and ExecStopPost=.
+                    break;
+                }
+                let mut control_failed = false;
+                if succeeded {
+                    // systemd runs ExecStop= when a service exits cleanly on
+                    // its own (service_enter_exited_or_stop ->
+                    // service_enter_stop); a failed exit jumps straight to the
+                    // signal/post path without ExecStop=.
+                    if let Err(e) = run_exec_stop(registry.clone(), &unit_name, timeout_stop).await
+                    {
+                        warn!("ExecStop for {} failed: {}", unit_name, e);
+                        control_failed = true;
+                    }
+                }
+                if let Err(e) = run_exec_stop_post(registry.clone(), &unit_name, timeout_stop).await
+                {
+                    warn!("ExecStopPost for {} failed: {}", unit_name, e);
+                    control_failed = true;
+                }
+                let state = if !succeeded || control_failed {
                     ServiceState::Failed
+                } else {
+                    ServiceState::Dead
                 };
                 {
                     let mut reg = registry.lock();

@@ -11,17 +11,15 @@ pub struct ServiceConfig {
     pub exec_start: String,
     pub exec_start_pre: Vec<String>,
     pub exec_start_post: Vec<String>,
-    pub exec_stop: String,
-    pub exec_reload: String,
+    pub exec_stop: Vec<String>,
+    pub exec_stop_post: Vec<String>,
+    pub exec_reload: Vec<String>,
     pub working_directory: String,
     pub user: String,
     pub group: String,
     pub pam_name: String,
     pub environment: Vec<String>,
-    pub restart_policy: String,
-    pub restart_delay_secs: u32,
     pub service_type: String,
-    pub pid_file: String,
     pub timeout_start_secs: u32,
     pub timeout_stop_secs: u32,
     pub standard_input: String,
@@ -63,23 +61,15 @@ impl ServiceConfig {
                 .unwrap_or_default(),
             exec_start_pre: get_strings(map, "ExecStartPre"),
             exec_start_post: get_strings(map, "ExecStartPost"),
-            exec_stop: get_strings(map, "ExecStop")
-                .into_iter()
-                .next()
-                .unwrap_or_default(),
-            exec_reload: get_strings(map, "ExecReload")
-                .into_iter()
-                .next()
-                .unwrap_or_default(),
+            exec_stop: get_strings(map, "ExecStop"),
+            exec_stop_post: get_strings(map, "ExecStopPost"),
+            exec_reload: get_strings(map, "ExecReload"),
             working_directory: get_string(map, "WorkingDirectory").unwrap_or_default(),
             user: get_string(map, "User").unwrap_or_default(),
             group: get_string(map, "Group").unwrap_or_default(),
             pam_name: get_string(map, "PAMName").unwrap_or_default(),
             environment: get_strings(map, "Environment"),
-            restart_policy: get_string(map, "Restart").unwrap_or_default(),
-            restart_delay_secs: get_u32_or(map, "RestartSec", 0),
             service_type: get_string(map, "Type").unwrap_or_default(),
-            pid_file: get_string(map, "PIDFile").unwrap_or_default(),
             timeout_start_secs: get_u32_or(map, "TimeoutStartSec", 0),
             timeout_stop_secs: get_u32_or(map, "TimeoutStopSec", 0),
             standard_input: get_string(map, "StandardInput").unwrap_or_default(),
@@ -119,19 +109,20 @@ impl ServiceConfig {
             put("ExecStartPost", json!(self.exec_start_post));
         }
         if !self.exec_stop.is_empty() {
-            put("ExecStop", json!([self.exec_stop]));
+            put("ExecStop", json!(self.exec_stop));
+        }
+        if !self.exec_stop_post.is_empty() {
+            put("ExecStopPost", json!(self.exec_stop_post));
         }
         if !self.exec_reload.is_empty() {
-            put("ExecReload", json!([self.exec_reload]));
+            put("ExecReload", json!(self.exec_reload));
         }
         for (key, value) in [
             ("WorkingDirectory", &self.working_directory),
             ("User", &self.user),
             ("Group", &self.group),
             ("PAMName", &self.pam_name),
-            ("Restart", &self.restart_policy),
             ("Type", &self.service_type),
-            ("PIDFile", &self.pid_file),
             ("StandardInput", &self.standard_input),
             ("StandardOutput", &self.standard_output),
             ("StandardError", &self.standard_error),
@@ -155,9 +146,11 @@ impl ServiceConfig {
             put("RuntimeDirectory", json!(self.runtime_directory));
         }
         if !self.configuration_directory.is_empty() {
-            put("ConfigurationDirectory", json!(self.configuration_directory));
+            put(
+                "ConfigurationDirectory",
+                json!(self.configuration_directory),
+            );
         }
-        put("RestartSec", json!(self.restart_delay_secs));
         put("TimeoutStartSec", json!(self.timeout_start_secs));
         put("TimeoutStopSec", json!(self.timeout_stop_secs));
         put("RemainAfterExit", json!(self.remain_after_exit));
