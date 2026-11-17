@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
-use sysa::proto::PathConfig;
+use crate::config::PathConfig;
 use tracing::{info, warn};
 
 use crate::engine::{arm_unit, publish_path, recheck_level, status_of, EngineShared};
@@ -46,7 +46,7 @@ impl UnitController for PathController {
             ));
         }
         let cfg = decode_unit_config(config)?;
-        let path_cfg = cfg.path.clone().ok_or_else(|| {
+        let path_cfg = PathConfig::from_unit_config(&cfg).ok_or_else(|| {
             anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No PathConfig for '{unit_name}'"),
                 &[("unit_name", &unit_name.to_string())]
@@ -200,7 +200,7 @@ impl UnitController for PathController {
 
     async fn reload(&self, unit_name: &str, config: &[u8]) -> Result<()> {
         let cfg = decode_unit_config(config)?;
-        let path_cfg = cfg.path.clone().ok_or_else(|| {
+        let path_cfg = PathConfig::from_unit_config(&cfg).ok_or_else(|| {
             anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No PathConfig for '{unit_name}'"),
                 &[("unit_name", &unit_name.to_string())]

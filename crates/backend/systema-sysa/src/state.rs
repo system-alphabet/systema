@@ -1031,42 +1031,12 @@ fn apply_ir_patch(ir: &UnitIR, uf: &mut UnitFile) {
         uf.unit.asserts.clone_from(asserts);
     }
 
-    // Copy section configs when provided.
-    if let Some(svc) = &ir.service {
-        uf.service = Some(service_config_to_section(svc));
-    }
-    if let Some(mnt) = &ir.mount {
-        uf.mount = Some(mount_config_to_section(mnt));
-    }
-    if let Some(amt) = &ir.automount {
-        uf.automount = Some(automount_config_to_section(amt));
-    }
-    if let Some(tmr) = &ir.timer {
-        uf.timer = Some(timer_config_to_section(tmr));
-    }
-    if let Some(sock) = &ir.socket {
-        uf.socket = Some(socket_config_to_section(sock));
-    }
-    if let Some(path) = &ir.path {
-        uf.path = Some(path_config_to_section(path));
-    }
-
-    // Resource-control directives apply to whichever cgroup-owned section the
-    // unit's kind owns (`[Service]`, `[Slice]`, or `[Scope]`).
-    if let Some(rc) = &ir.resource_control {
-        let section_rc = resource_control_to_section(rc);
-        match uf.kind {
-            UnitKind::Service => {
-                uf.service.get_or_insert_with(Default::default).rc = section_rc;
-            }
-            UnitKind::Slice => {
-                uf.slice.get_or_insert_with(Default::default).rc = section_rc;
-            }
-            UnitKind::Scope => {
-                uf.scope.get_or_insert_with(Default::default).rc = section_rc;
-            }
-            _ => {}
-        }
+    // The unit's own section travels as flattened systemd directives.  Apply
+    // them to the typed model the loader and the D-Bus layer consume; only the
+    // directives present in the map are touched, so a partial commit patches
+    // exactly what it carries.
+    if let Some(config) = &ir.config {
+        systema_sysf_systemd::config_map::apply_config_map(uf, config);
     }
 }
 
@@ -1112,131 +1082,6 @@ fn unit_kind_from_type(ty: &systema_sysf::ir::UnitType) -> UnitKind {
     }
 }
 
-fn service_config_to_section(
-    cfg: &systema_sysf::ir::ServiceConfig,
-) -> crate::unit::types::ServiceSection {
-    use crate::unit::types::ServiceType;
-    // The plane that parsed the definition owns `Type=`; only synthesized
-    // configs (which carry none) fall back to the ExecStart shape.  Guessing
-    // `simple` for a `notify`/`notify-reload` unit would complete its start
-    // job at spawn time, i.e. before the service is ready.
-    let svc_type = if cfg.service_type.is_empty() {
-        match cfg.exec_start.first() {
-            Some(_) => ServiceType::Simple,
-            None => ServiceType::Oneshot,
-        }
-    } else {
-        ServiceType::from(cfg.service_type.as_str())
-    };
-    crate::unit::types::ServiceSection {
-        service_type: svc_type,
-        bus_name: cfg.bus_name.clone(),
-        exec_start: cfg.exec_start.iter().map(exec_cmd_from_ir).collect(),
-        exec_stop: cfg.exec_stop.iter().map(exec_cmd_from_ir).collect(),
-        exec_reload: cfg.exec_reload.iter().map(exec_cmd_from_ir).collect(),
-        exec_start_pre: cfg.exec_start_pre.iter().map(exec_cmd_from_ir).collect(),
-        exec_start_post: cfg.exec_start_post.iter().map(exec_cmd_from_ir).collect(),
-        exec_stop_post: cfg.exec_stop_post.iter().map(exec_cmd_from_ir).collect(),
-        working_directory: cfg.working_directory.clone(),
-        user: cfg.user.clone(),
-        group: cfg.group.clone(),
-        pam_name: cfg.pam_name.clone(),
-        environment: cfg.environment.clone(),
-        environment_file: cfg.environment_file.clone(),
-        state_directory: cfg.state_directory.clone(),
-        state_directory_mode: cfg.state_directory_mode,
-        logs_directory: cfg.logs_directory.clone(),
-        logs_directory_mode: cfg.logs_directory_mode,
-        runtime_directory: cfg.runtime_directory.clone(),
-        runtime_directory_mode: cfg.runtime_directory_mode,
-        configuration_directory: cfg.configuration_directory.clone(),
-        configuration_directory_mode: cfg.configuration_directory_mode,
-        restart: restart_policy_from_ir(&cfg.restart_policy),
-        restart_sec: cfg.restart_sec,
-        timeout_start_sec: cfg.timeout_start_sec,
-        timeout_stop_sec: cfg.timeout_stop_sec,
-        remain_after_exit: cfg.remain_after_exit,
-        watchdog_sec: cfg.watchdog_sec,
-        kill_signal: cfg.kill_signal.clone(),
-        kill_mode: cfg.kill_mode.clone(),
-        standard_input: cfg.standard_input.clone(),
-        standard_output: cfg.standard_output.clone(),
-        standard_error: cfg.standard_error.clone(),
-        tty_path: cfg.tty_path.clone(),
-        ..Default::default()
-    }
-}
-
-fn resource_control_to_section(
-    rc: &systema_sysf::ir::ResourceControl,
-) -> crate::unit::types::ResourceControl {
-    crate::unit::types::ResourceControl {
-        cpu_quota: rc.cpu_quota.clone(),
-        cpu_quota_period: rc.cpu_quota_period.clone(),
-        cpu_weight: rc.cpu_weight,
-        startup_cpu_weight: rc.startup_cpu_weight,
-        cpu_set_cpus: rc.cpu_set_cpus.clone(),
-        cpu_set_memory_nodes: rc.cpu_set_memory_nodes.clone(),
-        memory_min: rc.memory_min.clone(),
-        memory_low: rc.memory_low.clone(),
-        memory_high: rc.memory_high.clone(),
-        memory_max: rc.memory_max.clone(),
-        memory_swap_max: rc.memory_swap_max.clone(),
-        io_weight: rc.io_weight,
-        startup_io_weight: rc.startup_io_weight,
-        io_device_weight: rc.io_device_weight.clone(),
-        io_read_bandwidth_max: rc.io_read_bandwidth_max.clone(),
-        io_write_bandwidth_max: rc.io_write_bandwidth_max.clone(),
-        tasks_max: rc.tasks_max,
-        allowed_cpus: rc.allowed_cpus.clone(),
-        allowed_memory_nodes: rc.allowed_memory_nodes.clone(),
-        delegate: rc.delegate,
-        delegate_controllers: rc.delegate_controllers.clone(),
-        delegate_subgroup: rc.delegate_subgroup.clone(),
-    }
-}
-
-fn exec_cmd_from_ir(cmd: &systema_sysf::ir::ExecCommand) -> crate::unit::types::ExecCommand {
-    crate::unit::types::ExecCommand {
-        raw: cmd.raw.clone(),
-        program: cmd.program.clone(),
-        args: cmd.args.clone(),
-        ignore_failure: cmd.ignore_failure,
-        privileged: cmd.privileged,
-        no_env_lookup: false,
-        no_kill_on_stop: false,
-        no_new_privileges: false,
-    }
-}
-
-fn restart_policy_from_ir(
-    policy: &systema_sysf::ir::RestartPolicy,
-) -> crate::unit::types::RestartPolicy {
-    use crate::unit::types::RestartPolicy as SdRp;
-    match policy {
-        systema_sysf::ir::RestartPolicy::No => SdRp::No,
-        systema_sysf::ir::RestartPolicy::OnSuccess => SdRp::OnSuccess,
-        systema_sysf::ir::RestartPolicy::OnFailure => SdRp::OnFailure,
-        systema_sysf::ir::RestartPolicy::OnAbnormal => SdRp::OnAbnormal,
-        systema_sysf::ir::RestartPolicy::OnWatchdog => SdRp::OnWatchdog,
-        systema_sysf::ir::RestartPolicy::OnAbort => SdRp::OnAbort,
-        systema_sysf::ir::RestartPolicy::Always => SdRp::Always,
-    }
-}
-
-fn mount_config_to_section(
-    cfg: &systema_sysf::ir::MountConfig,
-) -> crate::unit::types::MountSection {
-    crate::unit::types::MountSection {
-        what: cfg.what.clone(),
-        where_: cfg.where_.clone(),
-        type_: cfg.type_.clone(),
-        options: cfg.options.clone(),
-        timeout_sec: cfg.timeout_sec,
-        ..Default::default()
-    }
-}
-
 // --------------------------------------------------------------------------
 // Login-session accounting
 // --------------------------------------------------------------------------
@@ -1271,70 +1116,6 @@ pub fn track_session(
         sessions.remove(&uid);
     }
     (before != after).then_some((uid, after))
-}
-
-fn automount_config_to_section(
-    cfg: &systema_sysf::ir::AutomountConfig,
-) -> crate::unit::types::AutomountSection {
-    crate::unit::types::AutomountSection {
-        where_: cfg.where_.clone(),
-        extra_options: cfg.extra_options.clone(),
-        timeout_idle_sec: cfg.timeout_idle_sec,
-        directory_mode: cfg.directory_mode.clone(),
-    }
-}
-
-fn timer_config_to_section(
-    cfg: &systema_sysf::ir::TimerConfig,
-) -> crate::unit::types::TimerSection {
-    crate::unit::types::TimerSection {
-        on_active_sec: cfg.on_active_sec,
-        on_boot_sec: cfg.on_boot_sec,
-        on_startup_sec: cfg.on_startup_sec,
-        on_unit_active_sec: cfg.on_unit_active_sec,
-        on_unit_inactive_sec: cfg.on_unit_inactive_sec,
-        on_calendar: cfg.on_calendar.clone(),
-        accuracy_sec: cfg.accuracy_sec,
-        randomized_delay_sec: cfg.randomized_delay_sec,
-        unit: cfg.unit.clone(),
-        persistent: cfg.persistent,
-        ..Default::default()
-    }
-}
-
-fn socket_config_to_section(
-    cfg: &systema_sysf::ir::SocketConfig,
-) -> crate::unit::types::SocketSection {
-    crate::unit::types::SocketSection {
-        listen_stream: cfg.listen_stream.clone(),
-        listen_datagram: cfg.listen_datagram.clone(),
-        listen_sequential_packet: cfg.listen_sequential_packet.clone(),
-        listen_fifo: cfg.listen_fifo.clone(),
-        listen_netlink: cfg.listen_netlink.clone(),
-        accept: cfg.accept,
-        service: cfg.service.clone(),
-        socket_mode: cfg.socket_mode.clone(),
-        socket_user: cfg.socket_user.clone(),
-        socket_group: cfg.socket_group.clone(),
-        backlog: cfg.backlog,
-        directory_mode: cfg.directory_mode.clone(),
-        ..Default::default()
-    }
-}
-
-fn path_config_to_section(cfg: &systema_sysf::ir::PathConfig) -> crate::unit::types::PathSection {
-    crate::unit::types::PathSection {
-        path_exists: cfg.path_exists.clone(),
-        path_exists_glob: cfg.path_exists_glob.clone(),
-        path_changed: cfg.path_changed.clone(),
-        path_modified: cfg.path_modified.clone(),
-        directory_not_empty: cfg.directory_not_empty.clone(),
-        unit: cfg.unit.clone(),
-        make_directory: cfg.make_directory,
-        directory_mode: cfg.directory_mode.clone(),
-        trigger_limit_interval_sec: cfg.trigger_limit_interval_sec,
-        trigger_limit_burst: cfg.trigger_limit_burst,
-    }
 }
 
 // --------------------------------------------------------------------------
@@ -1440,39 +1221,19 @@ pub fn generate_invocation_id() -> String {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use systema_sysf::ir::{DependencySet, MountConfig, ServiceConfig, UnitType};
+    use systema_sysf::ir::{ConfigMap, DependencySet, UnitType};
 
     fn mount_ir(id: &str, where_: &str) -> UnitIR {
+        let mut config = ConfigMap::new();
+        config.insert("What".to_string(), serde_json::json!("tmpfs"));
+        config.insert("Where".to_string(), serde_json::json!(where_));
+        config.insert("Type".to_string(), serde_json::json!("tmpfs"));
+        config.insert("Options".to_string(), serde_json::json!("rw,nosuid"));
         UnitIR {
             id: id.to_string(),
             unit_type: Some(UnitType::Mount),
-            description: None,
-            source_format: Some("dynamic".to_string()),
-            source_path: None,
-            slice: None,
-            dependencies: None,
-            service: None,
-            mount: Some(MountConfig {
-                what: "tmpfs".to_string(),
-                where_: where_.to_string(),
-                type_: "tmpfs".to_string(),
-                options: "rw,nosuid".to_string(),
-                timeout_sec: 0,
-            }),
-            automount: None,
-            timer: None,
-            socket: None,
-            path: None,
-            conditions: None,
-            asserts: None,
-            wanted_by: None,
-            required_by: None,
-            enabled: None,
-            unit_file_state: None,
-            aliases: Vec::new(),
-            alias_of: None,
-            resource_control: None,
-            template: None,
+            config: Some(config),
+            ..Default::default()
         }
     }
 
@@ -1506,16 +1267,18 @@ mod tests {
     #[test]
     fn commit_preserves_dbus_type_and_bus_name() {
         let mut state = AllocatorState::new();
-        let mut ir = UnitIR {
+        let mut config = ConfigMap::new();
+        config.insert("Type".to_string(), serde_json::json!("dbus"));
+        config.insert(
+            "BusName".to_string(),
+            serde_json::json!("org.deepin.dde.Authenticate1"),
+        );
+        let ir = UnitIR {
             id: "deepin-authenticate.service".to_string(),
             unit_type: Some(UnitType::Service),
+            config: Some(config),
             ..Default::default()
         };
-        ir.service = Some(ServiceConfig {
-            service_type: "dbus".to_string(),
-            bus_name: "org.deepin.dde.Authenticate1".to_string(),
-            ..Default::default()
-        });
         stage(&mut state, 7, vec![ir]);
 
         state.commit_staging(7, "test").unwrap();
@@ -1817,27 +1580,8 @@ mod tests {
         UnitIR {
             id: id.to_string(),
             unit_type: Some(UnitType::Target),
-            description: None,
-            source_format: Some("systemd".to_string()),
-            source_path: None,
-            slice: None,
             dependencies: Some(deps),
-            service: None,
-            mount: None,
-            automount: None,
-            timer: None,
-            socket: None,
-            path: None,
-            conditions: None,
-            asserts: None,
-            wanted_by: None,
-            required_by: None,
-            enabled: None,
-            unit_file_state: None,
-            aliases: Vec::new(),
-            alias_of: None,
-            resource_control: None,
-            template: None,
+            ..Default::default()
         }
     }
 
@@ -1856,27 +1600,8 @@ mod tests {
         let lightdm = UnitIR {
             id: "lightdm.service".to_string(),
             unit_type: Some(UnitType::Service),
-            description: None,
-            source_format: Some("systemd".to_string()),
-            source_path: None,
-            slice: None,
-            dependencies: None,
-            service: Some(Default::default()),
-            mount: None,
-            automount: None,
-            timer: None,
-            socket: None,
-            path: None,
-            conditions: None,
-            asserts: None,
-            wanted_by: None,
-            required_by: None,
-            enabled: None,
-            unit_file_state: None,
             aliases: vec!["display-manager.service".to_string()],
-            alias_of: None,
-            resource_control: None,
-            template: None,
+            ..Default::default()
         };
         // `[Install] Alias=display-manager.service` in lightdm.service plus
         // the `/etc/systemd/system/display-manager.service` symlink both feed
@@ -1921,27 +1646,8 @@ mod tests {
         UnitIR {
             id: id.to_string(),
             unit_type: Some(UnitType::Service),
-            description: None,
-            source_format: Some("systemd".to_string()),
-            source_path: None,
-            aliases: Vec::new(),
-            alias_of: None,
-            slice: None,
-            dependencies: None,
-            service: Some(Default::default()),
-            mount: None,
-            automount: None,
-            timer: None,
-            socket: None,
-            path: None,
-            conditions: None,
-            asserts: None,
-            wanted_by: None,
-            required_by: None,
-            enabled: None,
-            unit_file_state: None,
-            resource_control: None,
-            template: None,
+            config: Some(ConfigMap::new()),
+            ..Default::default()
         }
     }
 
@@ -1950,7 +1656,7 @@ mod tests {
         UnitIR {
             alias_of: Some(target.to_string()),
             unit_type: None,
-            service: None,
+            config: None,
             ..service_ir(alias)
         }
     }
@@ -2202,7 +1908,13 @@ mod tests {
         let area = state.get_staging_area(7, "systema-sysd/discovery").unwrap();
         assert_eq!(area.units.len(), 2);
         let a = &area.units["a.service"];
-        assert_eq!(a.mount.as_ref().unwrap().where_, "/a-new");
+        assert_eq!(
+            a.config
+                .as_ref()
+                .and_then(|config| config.get("Where"))
+                .and_then(|value| value.as_str()),
+            Some("/a-new")
+        );
         assert!(area.units.contains_key("b.service"));
     }
 

@@ -52,7 +52,7 @@ async fn alias_records_resolve_the_highest_priority_link() {
         .expect("one alias record for the contested name");
     assert_eq!(record.alias_of.as_deref(), Some("lightdm.service"));
     assert!(record.unit_type.is_none(), "an alias is not a definition");
-    assert!(record.service.is_none());
+    assert!(record.config.is_none());
 
     assert_eq!(
         map["x-display-manager.service"].alias_of.as_deref(),

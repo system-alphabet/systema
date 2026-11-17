@@ -54,5 +54,4 @@ fn main() {
 
 ## 相关 API
 
-- [`UnitIR`](./UnitIR.md)：持有 `Option<UnitType>`。
-- [`ServiceConfig`](./ServiceConfig.md)：服务类型单元的具体配置。
+- [`UnitIR`](./UnitIR.md)：持有 `Option<UnitType>`；类型专属指令见 `UnitIR::config`。

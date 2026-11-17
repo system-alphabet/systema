@@ -21,6 +21,7 @@
 //! | `!!`   | `NO_SETUID` (seccomp only) | Like `!` but only for seccomp    |
 //! | `|`    | `VIA_SHELL`                | Run via `sh -c`                  |
 
+use crate::config::ServiceConfig;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -135,12 +136,10 @@ pub(crate) const DEFAULT_TIMEOUT_START_SECS: u64 = 90;
 /// `plymouthd --mode=shutdown` it had started running for the rest of the
 /// session.
 pub(crate) fn start_timeout_secs(config: &UnitConfig) -> u64 {
-    config
-        .service
-        .as_ref()
-        .map(|s| {
-            if s.timeout_start_secs > 0 {
-                s.timeout_start_secs as u64
+    ServiceConfig::from_unit_config(config)
+        .map(|svc| {
+            if svc.timeout_start_secs > 0 {
+                svc.timeout_start_secs as u64
             } else {
                 DEFAULT_TIMEOUT_START_SECS
             }
@@ -167,7 +166,7 @@ pub async fn start_service(
     listen_fds: Vec<RawFd>,
 ) -> Result<(u32, Child)> {
     let unit_name = config.unit_name.clone();
-    let svc = config.service.as_ref().ok_or_else(|| {
+    let svc = ServiceConfig::from_unit_config(config).ok_or_else(|| {
         anyhow::anyhow!(sysa::l10n::fmt(
             sysa::l10n::t_("No [Service] config for {unit_name}."),
             &[("unit_name", &unit_name)]
@@ -291,7 +290,7 @@ pub async fn start_service(
     // Build environment lookup table (process env + passwd identity env +
     // unit Environment= + PAM env + forced env).
     let identity_env = identity_env(creds.as_ref());
-    let directory_env = prepare_service_directories(svc, creds.as_ref())?;
+    let directory_env = prepare_service_directories(&svc, creds.as_ref())?;
     let env_table = build_env_table(&svc.environment, &pam_env, &identity_env, &directory_env);
 
     // Expand $VAR / ${VAR} in every argument, handling standalone splitting.
@@ -439,7 +438,7 @@ pub async fn start_service(
     // redirect the requested standard streams to it.  The pre_exec action is
     // returned so it can be merged with the env/socket-activation one below
     // (std::process only allows a single pre_exec hook).
-    let (tty_fd, tty_pre_exec) = apply_tty(&mut cmd, svc, &unit_name)?;
+    let (tty_fd, tty_pre_exec) = apply_tty(&mut cmd, &svc, &unit_name)?;
 
     // Per-service log capture: redirect stdout/stderr to
     // /var/log/services/<unit_name>.log unless TTY already owns them.
@@ -642,7 +641,7 @@ async fn run_exec_commands(
     commands: &[String],
     phase: &str,
 ) -> Result<()> {
-    let svc = config.service.as_ref().ok_or_else(|| {
+    let svc = ServiceConfig::from_unit_config(config).ok_or_else(|| {
         anyhow::anyhow!(sysa::l10n::fmt(
             sysa::l10n::t_("No [Service] config for {unit_name}."),
             &[("unit_name", unit_name)]
@@ -666,7 +665,7 @@ async fn run_exec_commands(
         };
 
         let identity_env = identity_env(creds.as_ref());
-        let directory_env = prepare_service_directories(svc, creds.as_ref())?;
+        let directory_env = prepare_service_directories(&svc, creds.as_ref())?;
         let env_table = build_env_table(&svc.environment, &[], &identity_env, &directory_env);
         let final_args = if parsed.flags.no_env_expand {
             parsed.args.clone()
@@ -811,9 +810,7 @@ pub async fn run_exec_start_pre(
     unit_name: &str,
     config: &UnitConfig,
 ) -> Result<()> {
-    let commands = config
-        .service
-        .as_ref()
+    let commands = ServiceConfig::from_unit_config(config)
         .map(|s| s.exec_start_pre.clone())
         .unwrap_or_default();
     if commands.is_empty() {
@@ -830,9 +827,7 @@ pub async fn run_exec_start_post(
     unit_name: &str,
     config: &UnitConfig,
 ) -> Result<()> {
-    let commands = config
-        .service
-        .as_ref()
+    let commands = ServiceConfig::from_unit_config(config)
         .map(|s| s.exec_start_post.clone())
         .unwrap_or_default();
     if commands.is_empty() {
@@ -1436,7 +1431,7 @@ fn close_tty_fd(_fd: Option<RawFd>) {}
 #[cfg(unix)]
 fn apply_tty(
     cmd: &mut Command,
-    svc: &sysa::proto::ServiceConfig,
+    svc: &ServiceConfig,
     unit_name: &str,
 ) -> Result<(Option<RawFd>, Option<PreExecFn>)> {
     let tty_in = is_tty_mode(&svc.standard_input);
@@ -1514,7 +1509,7 @@ fn apply_tty(
 #[cfg(not(unix))]
 fn apply_tty(
     _cmd: &mut Command,
-    _svc: &sysa::proto::ServiceConfig,
+    _svc: &ServiceConfig,
     _unit_name: &str,
 ) -> Result<(Option<i32>, Option<PreExecFn>)> {
     Ok((None, None))
@@ -2081,7 +2076,7 @@ fn prepare_directory_family(
 /// unit (e.g. `Failed to create /var/lib/…`).
 #[cfg(unix)]
 fn prepare_service_directories(
-    svc: &sysa::proto::ServiceConfig,
+    svc: &ServiceConfig,
     creds: Option<&Creds>,
 ) -> Result<Vec<(String, String)>> {
     let bases = directory_bases();
@@ -2739,18 +2734,24 @@ mod tests {
 
     #[test]
     fn unset_start_timeout_falls_back_to_systemd_default() {
-        let mut cfg = UnitConfig {
-            service: Some(sysa::proto::ServiceConfig {
+        let cfg = UnitConfig {
+            config_json: ServiceConfig {
                 timeout_start_secs: 0,
                 ..Default::default()
-            }),
+            }
+            .to_config_json(),
             ..Default::default()
         };
         assert_eq!(start_timeout_secs(&cfg), DEFAULT_TIMEOUT_START_SECS);
 
-        if let Some(svc) = cfg.service.as_mut() {
-            svc.timeout_start_secs = 5;
-        }
+        let cfg = UnitConfig {
+            config_json: ServiceConfig {
+                timeout_start_secs: 5,
+                ..Default::default()
+            }
+            .to_config_json(),
+            ..Default::default()
+        };
         assert_eq!(start_timeout_secs(&cfg), 5);
     }
 
@@ -2971,7 +2972,7 @@ mod tests {
     fn prepare_service_directories_skips_empty_families() {
         // No directory directives listed → no env produced and nothing
         // created anywhere.
-        let svc = sysa::proto::ServiceConfig::default();
+        let svc = ServiceConfig::default();
         let env = prepare_service_directories(&svc, None).unwrap_or_else(|e| {
             panic!("empty family must not fail: {e}");
         });
@@ -2994,19 +2995,20 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let first = dir.join("first");
         let second = dir.join("second");
-        let mut cfg = UnitConfig {
+        let cfg = UnitConfig {
             unit_name: "pre-test.service".to_string(),
+            config_json: ServiceConfig {
+                service_type: "oneshot".to_string(),
+                exec_start: "/bin/true".to_string(),
+                exec_start_pre: vec![
+                    format!("/bin/sh -c 'echo one >> {}'", first.display()),
+                    format!("/bin/sh -c 'echo two >> {}'", second.display()),
+                ],
+                ..Default::default()
+            }
+            .to_config_json(),
             ..Default::default()
         };
-        cfg.service = Some(sysa::proto::ServiceConfig {
-            service_type: "oneshot".to_string(),
-            exec_start: "/bin/true".to_string(),
-            exec_start_pre: vec![
-                format!("/bin/sh -c 'echo one >> {}'", first.display()),
-                format!("/bin/sh -c 'echo two >> {}'", second.display()),
-            ],
-            ..Default::default()
-        });
 
         run_exec_start_pre(crate::state::new_registry(), "pre-test.service", &cfg)
             .await
@@ -3020,14 +3022,15 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn exec_start_pre_failure_aborts_unless_ignored() {
-        let mut cfg = UnitConfig {
-            unit_name: "pre-fail.service".to_string(),
-            ..Default::default()
-        };
-        cfg.service = Some(sysa::proto::ServiceConfig {
+        let mut pre = ServiceConfig {
             exec_start_pre: vec!["/bin/false".to_string()],
             ..Default::default()
-        });
+        };
+        let cfg = UnitConfig {
+            unit_name: "pre-fail.service".to_string(),
+            config_json: pre.to_config_json(),
+            ..Default::default()
+        };
         let err = run_exec_start_pre(crate::state::new_registry(), "pre-fail.service", &cfg)
             .await
             .expect_err("a failing ExecStartPre must abort the start");
@@ -3037,7 +3040,12 @@ mod tests {
             "unexpected: {err}"
         );
 
-        cfg.service.as_mut().unwrap().exec_start_pre = vec!["-/bin/false".to_string()];
+        pre.exec_start_pre = vec!["-/bin/false".to_string()];
+        let cfg = UnitConfig {
+            unit_name: "pre-fail.service".to_string(),
+            config_json: pre.to_config_json(),
+            ..Default::default()
+        };
         run_exec_start_pre(crate::state::new_registry(), "pre-fail.service", &cfg)
             .await
             .expect("the '-' prefix must ignore the failure");

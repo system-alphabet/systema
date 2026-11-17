@@ -9,6 +9,7 @@
 //!   staging area so they become first-class units.
 //! - Report `method.result` and `unit.state_update` messages back to System A.
 
+mod config;
 mod controller;
 mod discovery;
 mod engine;

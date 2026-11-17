@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use sysa::proto::DeviceConfig;
+use crate::config::DeviceConfig;
 
 use crate::discovery::DeviceMeta;
 

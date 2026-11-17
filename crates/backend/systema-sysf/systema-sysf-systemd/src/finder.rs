@@ -4,17 +4,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use systema_sysf::ir::{
-    self, AutomountConfig, Condition, DependencySet, ExecCommand, MountConfig, PathConfig,
-    ServiceConfig, SocketConfig, TemplateInfo, TimerConfig, UnitIR, UnitType,
-};
+use systema_sysf::ir::{Condition, DependencySet, TemplateInfo, UnitIR, UnitType};
 use systema_sysf::Finder;
 
+use crate::config_map;
 use crate::loader;
-use crate::types::{
-    ExecCommand as SdExecCommand, ResourceControl as SdResourceControl,
-    RestartPolicy as SdRestartPolicy, ServiceSection, UnitFile, UnitKind,
-};
+use crate::types::{UnitFile, UnitKind};
 
 /// Systemd implementation of the [`Finder`] trait.
 ///
@@ -112,12 +107,9 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         source_path: None,
         slice: (!uf.unit.slice.is_empty()).then(|| uf.unit.slice.clone()),
         dependencies: Some(convert_dependencies(uf)),
-        service: uf.service.as_ref().map(convert_service),
-        mount: uf.mount.as_ref().map(convert_mount),
-        automount: uf.automount.as_ref().map(convert_automount),
-        timer: uf.timer.as_ref().map(convert_timer),
-        socket: uf.socket.as_ref().map(convert_socket),
-        path: uf.path.as_ref().map(convert_path),
+        // The unit's own section travels as the flattened systemd directive
+        // map: the consumer parses the directives it owns.
+        config: Some(config_map::to_config_map(uf)),
         conditions: Some(convert_conditions(uf)),
         asserts: Some(convert_asserts(uf)),
         wanted_by: Some(uf.install.wanted_by.iter().cloned().collect()),
@@ -131,7 +123,6 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         // file and which search-path directory wins.
         aliases: Vec::new(),
         alias_of: None,
-        resource_control: extract_resource_control(uf),
         template: convert_template_info(&uf.name),
     }
 }
@@ -231,12 +222,7 @@ fn alias_record(alias: &str, canonical: &str) -> UnitIR {
         source_path: None,
         slice: None,
         dependencies: None,
-        service: None,
-        mount: None,
-        automount: None,
-        timer: None,
-        socket: None,
-        path: None,
+        config: None,
         conditions: None,
         asserts: None,
         wanted_by: None,
@@ -245,47 +231,7 @@ fn alias_record(alias: &str, canonical: &str) -> UnitIR {
         unit_file_state: None,
         aliases: Vec::new(),
         alias_of: Some(canonical.to_string()),
-        resource_control: None,
         template: None,
-    }
-}
-
-/// Pull the parsed resource-control directives from the unit's cgroup-owned
-/// section (`[Service]`, `[Slice]`, or `[Scope]`) into the unified IR.
-fn extract_resource_control(uf: &UnitFile) -> Option<ir::ResourceControl> {
-    let rc = match &uf.kind {
-        UnitKind::Service => uf.service.as_ref().map(|s| &s.rc),
-        UnitKind::Slice => uf.slice.as_ref().map(|s| &s.rc),
-        UnitKind::Scope => uf.scope.as_ref().map(|s| &s.rc),
-        _ => return None,
-    };
-    rc.map(convert_resource_control)
-}
-
-fn convert_resource_control(rc: &SdResourceControl) -> ir::ResourceControl {
-    ir::ResourceControl {
-        cpu_quota: rc.cpu_quota.clone(),
-        cpu_quota_period: rc.cpu_quota_period.clone(),
-        cpu_weight: rc.cpu_weight,
-        startup_cpu_weight: rc.startup_cpu_weight,
-        cpu_set_cpus: rc.cpu_set_cpus.clone(),
-        cpu_set_memory_nodes: rc.cpu_set_memory_nodes.clone(),
-        memory_min: rc.memory_min.clone(),
-        memory_low: rc.memory_low.clone(),
-        memory_high: rc.memory_high.clone(),
-        memory_max: rc.memory_max.clone(),
-        memory_swap_max: rc.memory_swap_max.clone(),
-        io_weight: rc.io_weight,
-        startup_io_weight: rc.startup_io_weight,
-        io_device_weight: rc.io_device_weight.clone(),
-        io_read_bandwidth_max: rc.io_read_bandwidth_max.clone(),
-        io_write_bandwidth_max: rc.io_write_bandwidth_max.clone(),
-        tasks_max: rc.tasks_max,
-        allowed_cpus: rc.allowed_cpus.clone(),
-        allowed_memory_nodes: rc.allowed_memory_nodes.clone(),
-        delegate: rc.delegate,
-        delegate_controllers: rc.delegate_controllers.clone(),
-        delegate_subgroup: rc.delegate_subgroup.clone(),
     }
 }
 
@@ -323,133 +269,6 @@ fn convert_dependencies(uf: &UnitFile) -> DependencySet {
         propagates_reload_to: uf.unit.propagates_reload_to.clone(),
         success_action: uf.unit.success_action.as_str().to_string(),
         default_dependencies: uf.unit.default_dependencies,
-    }
-}
-
-fn convert_exec(cmd: &SdExecCommand) -> ExecCommand {
-    ExecCommand {
-        raw: cmd.raw.clone(),
-        program: cmd.program.clone(),
-        args: cmd.args.clone(),
-        ignore_failure: cmd.ignore_failure,
-        privileged: cmd.privileged,
-    }
-}
-
-fn convert_restart(policy: &SdRestartPolicy) -> ir::RestartPolicy {
-    match policy {
-        SdRestartPolicy::No => ir::RestartPolicy::No,
-        SdRestartPolicy::OnSuccess => ir::RestartPolicy::OnSuccess,
-        SdRestartPolicy::OnFailure => ir::RestartPolicy::OnFailure,
-        SdRestartPolicy::OnAbnormal => ir::RestartPolicy::OnAbnormal,
-        SdRestartPolicy::OnWatchdog => ir::RestartPolicy::OnWatchdog,
-        SdRestartPolicy::OnAbort => ir::RestartPolicy::OnAbort,
-        SdRestartPolicy::Always => ir::RestartPolicy::Always,
-    }
-}
-
-fn convert_service(svc: &ServiceSection) -> ServiceConfig {
-    ServiceConfig {
-        service_type: svc.service_type.as_str().to_string(),
-        bus_name: svc.bus_name.clone(),
-        exec_start: svc.exec_start.iter().map(convert_exec).collect(),
-        exec_stop: svc.exec_stop.iter().map(convert_exec).collect(),
-        exec_reload: svc.exec_reload.iter().map(convert_exec).collect(),
-        exec_start_pre: svc.exec_start_pre.iter().map(convert_exec).collect(),
-        exec_start_post: svc.exec_start_post.iter().map(convert_exec).collect(),
-        exec_stop_post: svc.exec_stop_post.iter().map(convert_exec).collect(),
-        working_directory: svc.working_directory.clone(),
-        user: svc.user.clone(),
-        group: svc.group.clone(),
-        pam_name: svc.pam_name.clone(),
-        environment: svc.environment.clone(),
-        environment_file: svc.environment_file.clone(),
-        state_directory: svc.state_directory.clone(),
-        state_directory_mode: svc.state_directory_mode,
-        logs_directory: svc.logs_directory.clone(),
-        logs_directory_mode: svc.logs_directory_mode,
-        runtime_directory: svc.runtime_directory.clone(),
-        runtime_directory_mode: svc.runtime_directory_mode,
-        configuration_directory: svc.configuration_directory.clone(),
-        configuration_directory_mode: svc.configuration_directory_mode,
-        restart_policy: convert_restart(&svc.restart),
-        restart_sec: svc.restart_sec,
-        timeout_start_sec: svc.timeout_start_sec,
-        timeout_stop_sec: svc.timeout_stop_sec,
-        remain_after_exit: svc.remain_after_exit,
-        watchdog_sec: svc.watchdog_sec,
-        kill_signal: svc.kill_signal.clone(),
-        kill_mode: svc.kill_mode.clone(),
-        standard_input: svc.standard_input.clone(),
-        standard_output: svc.standard_output.clone(),
-        standard_error: svc.standard_error.clone(),
-        tty_path: svc.tty_path.clone(),
-    }
-}
-
-fn convert_automount(amt: &crate::types::AutomountSection) -> AutomountConfig {
-    AutomountConfig {
-        where_: amt.where_.clone(),
-        extra_options: amt.extra_options.clone(),
-        timeout_idle_sec: amt.timeout_idle_sec,
-        directory_mode: amt.directory_mode.clone(),
-    }
-}
-
-fn convert_mount(mnt: &crate::types::MountSection) -> MountConfig {
-    MountConfig {
-        what: mnt.what.clone(),
-        where_: mnt.where_.clone(),
-        type_: mnt.type_.clone(),
-        options: mnt.options.clone(),
-        timeout_sec: mnt.timeout_sec,
-    }
-}
-
-fn convert_timer(tmr: &crate::types::TimerSection) -> TimerConfig {
-    TimerConfig {
-        on_active_sec: tmr.on_active_sec,
-        on_boot_sec: tmr.on_boot_sec,
-        on_startup_sec: tmr.on_startup_sec,
-        on_unit_active_sec: tmr.on_unit_active_sec,
-        on_unit_inactive_sec: tmr.on_unit_inactive_sec,
-        on_calendar: tmr.on_calendar.clone(),
-        accuracy_sec: tmr.accuracy_sec,
-        randomized_delay_sec: tmr.randomized_delay_sec,
-        unit: tmr.unit.clone(),
-        persistent: tmr.persistent,
-    }
-}
-
-fn convert_socket(sock: &crate::types::SocketSection) -> SocketConfig {
-    SocketConfig {
-        listen_stream: sock.listen_stream.clone(),
-        listen_datagram: sock.listen_datagram.clone(),
-        listen_sequential_packet: sock.listen_sequential_packet.clone(),
-        listen_fifo: sock.listen_fifo.clone(),
-        listen_netlink: sock.listen_netlink.clone(),
-        accept: sock.accept,
-        service: sock.service.clone(),
-        socket_mode: sock.socket_mode.clone(),
-        socket_user: sock.socket_user.clone(),
-        socket_group: sock.socket_group.clone(),
-        backlog: sock.backlog,
-        directory_mode: sock.directory_mode.clone(),
-    }
-}
-
-fn convert_path(path: &crate::types::PathSection) -> PathConfig {
-    PathConfig {
-        path_exists: path.path_exists.clone(),
-        path_exists_glob: path.path_exists_glob.clone(),
-        path_changed: path.path_changed.clone(),
-        path_modified: path.path_modified.clone(),
-        directory_not_empty: path.directory_not_empty.clone(),
-        unit: path.unit.clone(),
-        make_directory: path.make_directory,
-        directory_mode: path.directory_mode.clone(),
-        trigger_limit_interval_sec: path.trigger_limit_interval_sec,
-        trigger_limit_burst: path.trigger_limit_burst,
     }
 }
 
@@ -676,9 +495,10 @@ mod tests {
             ..Default::default()
         });
         let ir = convert_unit_file(&uf);
+        let config = ir.config.expect("service directives");
         assert_eq!(
-            ir.service.as_ref().expect("service config").service_type,
-            "notify-reload"
+            config.get("Type").and_then(|v| v.as_str()),
+            Some("notify-reload")
         );
     }
 
@@ -692,9 +512,15 @@ mod tests {
         });
 
         let ir = convert_unit_file(&uf);
-        let service = ir.service.expect("service config");
-        assert_eq!(service.service_type, "dbus");
-        assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
+        let config = ir.config.expect("service directives");
+        assert_eq!(
+            config.get("Type").and_then(|v| v.as_str()),
+            Some("dbus")
+        );
+        assert_eq!(
+            config.get("BusName").and_then(|v| v.as_str()),
+            Some("org.deepin.dde.Authenticate1")
+        );
     }
 
     #[test]
@@ -712,15 +538,33 @@ mod tests {
         for unit in [path, socket] {
             let json = serde_json::to_vec(&convert_unit_file(&unit)).unwrap();
             let ir: UnitIR = serde_json::from_slice(&json).unwrap();
-            if let Some(path) = ir.path {
-                assert_eq!(path.path_exists, ["/run/acpid.socket"]);
-                assert_eq!(path.path_changed, ["/var/run/test"]);
-                assert_eq!(path.unit, "acpid.service");
-                assert!(path.make_directory);
+            let config = ir.config.expect("type-specific directives");
+            let strings = |key: &str| {
+                config
+                    .get(key)
+                    .and_then(|value| value.as_array())
+                    .expect("array directive")
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .collect::<Vec<_>>()
+            };
+            if ir.id.ends_with(".path") {
+                assert_eq!(strings("PathExists"), ["/run/acpid.socket"]);
+                assert_eq!(strings("PathChanged"), ["/var/run/test"]);
+                assert_eq!(
+                    config.get("Unit").and_then(|v| v.as_str()),
+                    Some("acpid.service")
+                );
+                assert_eq!(
+                    config.get("MakeDirectory").and_then(|v| v.as_bool()),
+                    Some(true)
+                );
             } else {
-                let socket = ir.socket.unwrap();
-                assert_eq!(socket.listen_sequential_packet, ["@/org/kernel/udev/udevd"]);
-                assert_eq!(socket.listen_netlink, ["kobject-uevent 1"]);
+                assert_eq!(
+                    strings("ListenSequentialPacket"),
+                    ["@/org/kernel/udev/udevd"]
+                );
+                assert_eq!(strings("ListenNetlink"), ["kobject-uevent 1"]);
             }
         }
     }
@@ -738,7 +582,7 @@ mod tests {
             .expect("alias record emitted");
         assert_eq!(record.alias_of.as_deref(), Some("lightdm.service"));
         assert!(record.unit_type.is_none());
-        assert!(record.service.is_none());
+        assert!(record.config.is_none());
         // The canonical units carry no competing alias list.
         assert!(map["lightdm.service"].aliases.is_empty());
         assert!(map["ddm.service"].aliases.is_empty());

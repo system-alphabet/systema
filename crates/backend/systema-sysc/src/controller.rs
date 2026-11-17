@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
 use tracing::{info, warn};
 
+use crate::config::TimerConfig;
 use crate::engine::{publish_timer, send_fired, status_of, EngineShared};
 use crate::schedule::{
     compute_next_elapse, default_target_unit, epoch_now, missed_calendar_elapse,
@@ -43,7 +44,7 @@ impl UnitController for TimerController {
             ));
         }
         let cfg = decode_unit_config(config)?;
-        let timer_cfg = cfg.timer.clone().ok_or_else(|| {
+        let timer_cfg = TimerConfig::from_unit_config(&cfg).ok_or_else(|| {
             anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No TimerConfig for '{unit_name}'"),
                 &[("unit_name", &unit_name.to_string())]
@@ -167,7 +168,7 @@ impl UnitController for TimerController {
 
     async fn reload(&self, unit_name: &str, config: &[u8]) -> Result<()> {
         let cfg = decode_unit_config(config)?;
-        let timer_cfg = cfg.timer.clone().ok_or_else(|| {
+        let timer_cfg = TimerConfig::from_unit_config(&cfg).ok_or_else(|| {
             anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No TimerConfig for '{unit_name}'"),
                 &[("unit_name", &unit_name.to_string())]

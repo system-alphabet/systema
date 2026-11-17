@@ -1,4 +1,5 @@
 use crate::activation::ActivationRegistry;
+use crate::config::SocketConfig;
 use crate::socket::{self, SocketManager};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -27,7 +28,7 @@ impl SocketController {
 
     /// Resolve the service a socket unit activates (explicit `Service=`
     /// wins, else the "foo.socket" -> "foo.service" convention).
-    fn service_name(sc: &sysa::proto::SocketConfig, unit_name: &str) -> String {
+    fn service_name(sc: &SocketConfig, unit_name: &str) -> String {
         if sc.service.is_empty() {
             unit_name.replace(".socket", ".service")
         } else {
@@ -77,12 +78,10 @@ impl UnitController for SocketController {
 
     async fn start(&self, unit_name: &str, config: &[u8], _invocation_id: &str) -> Result<()> {
         let cfg = decode_unit_config(config)?;
-        let sc = cfg
-            .socket
-            .as_ref()
+        let sc = SocketConfig::from_unit_config(&cfg)
             .context(sysa::l10n::t_("no SocketConfig in UnitConfig"))?;
-        socket::start_socket(&self.manager, unit_name, sc)?;
-        let service = Self::service_name(sc, unit_name);
+        socket::start_socket(&self.manager, unit_name, &sc)?;
+        let service = Self::service_name(&sc, unit_name);
         if sc.accept {
             socket::spawn_accept_loops(&self.manager, unit_name);
         } else {

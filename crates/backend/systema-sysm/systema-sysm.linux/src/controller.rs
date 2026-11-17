@@ -467,9 +467,10 @@ impl UnitController for MountController {
 
     async fn start(&self, unit_name: &str, config: &[u8], _invocation_id: &str) -> Result<()> {
         let cfg = decode_unit_config(config)?;
+        let (mount_cfg, auto_cfg) = systema_sysm_common::config::parse(unit_name, &cfg);
         match resolve_unit_type(&self.mount_registry, &self.automount_registry, unit_name) {
             "mount" => {
-                let mount_cfg = cfg.mount.as_ref().ok_or_else(|| {
+                let mount_cfg = mount_cfg.as_ref().ok_or_else(|| {
                     anyhow::anyhow!(sysa::l10n::fmt(
                         sysa::l10n::t_("No MountConfig for {unit_name}"),
                         &[("unit_name", &unit_name.to_string())]
@@ -479,7 +480,7 @@ impl UnitController for MountController {
                 self.publish_mount_state(unit_name);
             }
             "automount" => {
-                let auto_cfg = cfg.automount.as_ref().ok_or_else(|| {
+                let auto_cfg = auto_cfg.as_ref().ok_or_else(|| {
                     anyhow::anyhow!(sysa::l10n::fmt(
                         sysa::l10n::t_("No AutomountConfig for {unit_name}"),
                         &[("unit_name", &unit_name.to_string())]
@@ -498,7 +499,7 @@ impl UnitController for MountController {
                     self.automount_registry.clone(),
                     unit_name,
                     auto_cfg,
-                    cfg.mount.as_ref(),
+                    mount_cfg.as_ref(),
                     self.trigger_tx.clone(),
                 )
                 .await?;
@@ -557,9 +558,10 @@ impl UnitController for MountController {
 
     async fn restart(&self, unit_name: &str, config: &[u8], _invocation_id: &str) -> Result<()> {
         let cfg = decode_unit_config(config)?;
+        let (mount_cfg, auto_cfg) = systema_sysm_common::config::parse(unit_name, &cfg);
         match resolve_unit_type(&self.mount_registry, &self.automount_registry, unit_name) {
             "mount" => {
-                let mount_cfg = cfg.mount.as_ref().ok_or_else(|| {
+                let mount_cfg = mount_cfg.as_ref().ok_or_else(|| {
                     anyhow::anyhow!(sysa::l10n::fmt(
                         sysa::l10n::t_("No MountConfig for {unit_name}"),
                         &[("unit_name", &unit_name.to_string())]
@@ -571,7 +573,7 @@ impl UnitController for MountController {
             }
             "automount" => {
                 automount_enter_dead(self.automount_registry.clone(), unit_name).await?;
-                let auto_cfg = cfg.automount.as_ref().ok_or_else(|| {
+                let auto_cfg = auto_cfg.as_ref().ok_or_else(|| {
                     anyhow::anyhow!(sysa::l10n::fmt(
                         sysa::l10n::t_("No AutomountConfig for {unit_name}"),
                         &[("unit_name", &unit_name.to_string())]
@@ -581,7 +583,7 @@ impl UnitController for MountController {
                     self.automount_registry.clone(),
                     unit_name,
                     auto_cfg,
-                    cfg.mount.as_ref(),
+                    mount_cfg.as_ref(),
                     self.trigger_tx.clone(),
                 )
                 .await?;
@@ -597,7 +599,8 @@ impl UnitController for MountController {
 
     async fn reload(&self, unit_name: &str, config: &[u8]) -> Result<()> {
         let cfg = decode_unit_config(config)?;
-        let mount_cfg = cfg.mount.as_ref().ok_or_else(|| {
+        let (mount_cfg, _) = systema_sysm_common::config::parse(unit_name, &cfg);
+        let mount_cfg = mount_cfg.as_ref().ok_or_else(|| {
             anyhow::anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No MountConfig for {unit_name}"),
                 &[("unit_name", &unit_name.to_string())]

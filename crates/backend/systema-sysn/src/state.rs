@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use sysa::proto::PathConfig;
+use crate::config::PathConfig;
 
 use crate::spec::{PathSignature, PathSpec};
 

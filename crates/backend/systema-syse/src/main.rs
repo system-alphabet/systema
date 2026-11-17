@@ -10,6 +10,7 @@
 //! - Report `method.result` and `unit.state_update` messages back to System A.
 
 mod cgroup;
+mod config;
 mod controller;
 mod ipc;
 mod state;

@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use sysa::finder::UnitFinder;
-use systema_sysf::ir::{MountConfig as IrMountConfig, UnitIR, UnitType};
+use systema_sysf::ir::{ConfigMap, UnitIR, UnitType};
 use tracing::{info, warn};
 
 /// A single entry of the mount table in a platform-neutral form.
@@ -96,36 +96,18 @@ pub fn mount_unit_name_from_path(path: &str) -> String {
 /// Only facts the mount table actually knows are provided (`unit_type`,
 /// the mount point as description, and the `[Mount]` config).
 pub fn build_mount_unit_ir(unit_name: &str, entry: &MountTableEntry) -> UnitIR {
+    let mut config = ConfigMap::new();
+    config.insert("What".to_string(), serde_json::json!(entry.what));
+    config.insert("Where".to_string(), serde_json::json!(entry.mount_point));
+    config.insert("Type".to_string(), serde_json::json!(entry.fstype));
+    config.insert("Options".to_string(), serde_json::json!(entry.options));
     UnitIR {
         id: unit_name.to_string(),
         unit_type: Some(UnitType::Mount),
         description: Some(entry.mount_point.clone()),
         source_format: Some("dynamic".to_string()),
-        source_path: None,
-        slice: None,
-        dependencies: None,
-        service: None,
-        mount: Some(IrMountConfig {
-            what: entry.what.clone(),
-            where_: entry.mount_point.clone(),
-            type_: entry.fstype.clone(),
-            options: entry.options.clone(),
-            timeout_sec: 0,
-        }),
-        automount: None,
-        timer: None,
-        socket: None,
-        path: None,
-        conditions: None,
-        asserts: None,
-        wanted_by: None,
-        required_by: None,
-        enabled: None,
-        unit_file_state: None,
-        aliases: Vec::new(),
-        alias_of: None,
-        resource_control: None,
-        template: None,
+        config: Some(config),
+        ..Default::default()
     }
 }
 
@@ -339,12 +321,10 @@ mod tests {
         // The description is the mount point path itself (e.g. "/tmp"),
         // not a prose label.
         assert_eq!(ir.description.as_deref(), Some("/tmp"));
-        let mnt = ir.mount.unwrap();
-        assert_eq!(mnt.what, "test");
-        assert_eq!(mnt.where_, "/tmp");
-        assert_eq!(mnt.type_, "tmpfs");
-        assert_eq!(mnt.options, "");
-        assert!(ir.service.is_none());
-        assert!(ir.automount.is_none());
+        let mnt = ir.config.expect("mount directives");
+        assert_eq!(mnt.get("What").and_then(|v| v.as_str()), Some("test"));
+        assert_eq!(mnt.get("Where").and_then(|v| v.as_str()), Some("/tmp"));
+        assert_eq!(mnt.get("Type").and_then(|v| v.as_str()), Some("tmpfs"));
+        assert_eq!(mnt.get("Options").and_then(|v| v.as_str()), Some(""));
     }
 }

@@ -88,25 +88,21 @@ pub fn ensure_defined(allocator: &AllocatorHandle, name: &str) -> Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use systema_sysf::ir::{ExecCommand, ServiceConfig, TemplateInfo, UnitIR, UnitType};
+    use systema_sysf::ir::{ConfigMap, TemplateInfo, UnitIR, UnitType};
 
     fn template_ir() -> UnitIR {
+        let mut config = ConfigMap::new();
+        config.insert(
+            "ExecStart".to_string(),
+            serde_json::json!(["/sbin/agetty %i"]),
+        );
+        config.insert("TTYPath".to_string(), serde_json::json!("/dev/%i"));
         UnitIR {
             id: "getty@.service".to_string(),
             unit_type: Some(UnitType::Service),
             description: Some("Getty on %I".to_string()),
             source_format: Some("systemd".to_string()),
-            service: Some(ServiceConfig {
-                exec_start: vec![ExecCommand {
-                    raw: "/sbin/agetty %i".to_string(),
-                    program: "/sbin/agetty".to_string(),
-                    args: vec!["%i".to_string()],
-                    ignore_failure: false,
-                    privileged: false,
-                }],
-                tty_path: "/dev/%i".to_string(),
-                ..Default::default()
-            }),
+            config: Some(config),
             template: Some(TemplateInfo {
                 definition: true,
                 of: None,
@@ -154,9 +150,10 @@ mod tests {
             id: "getty@tty3.service".to_string(),
             unit_type: Some(UnitType::Service),
             description: Some("Reported instance".to_string()),
-            service: Some(ServiceConfig {
-                tty_path: "/dev/custom".to_string(),
-                ..Default::default()
+            config: Some({
+                let mut config = ConfigMap::new();
+                config.insert("TTYPath".to_string(), serde_json::json!("/dev/custom"));
+                config
             }),
             template: Some(TemplateInfo {
                 definition: false,

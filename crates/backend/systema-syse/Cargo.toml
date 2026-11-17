@@ -27,3 +27,6 @@ parking_lot.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["process", "signal", "user"] }
+
+[dev-dependencies]
+serde_json.workspace = true

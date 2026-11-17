@@ -324,7 +324,7 @@ mod tests {
     use crate::state::PathInstance;
     use async_trait::async_trait;
     use std::time::Duration;
-    use sysa::proto::PathConfig;
+    use crate::config::PathConfig;
 
     /// Backend that never reports changes; unit tests drive the engine
     /// directly through `process_change`/`on_target_inactive`.

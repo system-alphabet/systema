@@ -24,12 +24,9 @@ use crate::state::{
     JobStatus, StartLimitState,
 };
 use crate::unit::types::{
-    ExitKind, MountSection, RestartPolicy, StartLimitAction, UnitFile, UnitKind, UnitSection,
+    ExitKind, RestartPolicy, StartLimitAction, UnitFile, UnitKind, UnitSection,
 };
-use sysa::proto::{
-    AutomountConfig, DeviceConfig, MountConfig, PathConfig, ScopeConfig, ServiceConfig,
-    SocketAddress, SocketConfig, TimerConfig, UnitConfig, UnitDefineRequest, UnitDefineResult,
-};
+use sysa::proto::{UnitConfig, UnitDefineRequest, UnitDefineResult};
 
 use crate::scheduler::job_type::{job_type_collapse, JobType, UnitActiveState};
 use crate::scheduler::transaction::{
@@ -2654,176 +2651,46 @@ fn build_unit_config(
     all_units: &HashMap<String, UnitFile>,
     cgroup_path: &str,
 ) -> UnitConfig {
-    let service = uf.service.as_ref().map(|svc| ServiceConfig {
-        // Only the first ExecStart command is sent to the worker.
-        // Multiple ExecStart directives (Type=oneshot) will be supported in Phase 2.
-        exec_start: svc
-            .exec_start
-            .first()
-            .map(|c| c.raw.clone())
-            .unwrap_or_default(),
-        // Every ExecStartPre=/ExecStartPost= line is forwarded in order: the
-        // worker runs the pre commands before spawning ExecStart and the post
-        // commands after its start phase completed.
-        exec_start_pre: svc.exec_start_pre.iter().map(|c| c.raw.clone()).collect(),
-        exec_start_post: svc.exec_start_post.iter().map(|c| c.raw.clone()).collect(),
-        exec_stop: svc
-            .exec_stop
-            .first()
-            .map(|c| c.raw.clone())
-            .unwrap_or_default(),
-        exec_reload: svc
-            .exec_reload
-            .first()
-            .map(|c| c.raw.clone())
-            .unwrap_or_default(),
-        working_directory: svc.working_directory.clone(),
-        user: svc.user.clone(),
-        group: svc.group.clone(),
-        pam_name: svc.pam_name.clone(),
-        environment: svc.environment.clone(),
-        restart_policy: svc.restart.as_str().to_string(),
-        restart_delay_secs: svc.restart_sec,
-        service_type: svc.service_type.as_str().to_string(),
-        pid_file: svc.pid_file.clone(),
-        timeout_start_secs: svc.timeout_start_sec,
-        timeout_stop_secs: svc.timeout_stop_sec,
-        standard_input: svc.standard_input.clone(),
-        standard_output: svc.standard_output.clone(),
-        standard_error: svc.standard_error.clone(),
-        tty_path: svc.tty_path.clone(),
-        remain_after_exit: svc.remain_after_exit,
-        bus_name: svc.bus_name.clone(),
-        state_directory: svc.state_directory.clone(),
-        state_directory_mode: svc.state_directory_mode,
-        logs_directory: svc.logs_directory.clone(),
-        logs_directory_mode: svc.logs_directory_mode,
-        runtime_directory: svc.runtime_directory.clone(),
-        runtime_directory_mode: svc.runtime_directory_mode,
-        configuration_directory: svc.configuration_directory.clone(),
-        configuration_directory_mode: svc.configuration_directory_mode,
-    });
+    // The worker parses the unit's own section from the flattened directives,
+    // so the allocator forwards what the finder/loader produced instead of
+    // projecting it into a typed wire message.
+    let mut config = systema_sysf_systemd::config_map::to_config_map(uf);
 
-    let socket = uf.socket.as_ref().map(|sk| {
-        let mut listen: Vec<SocketAddress> = Vec::new();
-        for addr in &sk.listen_stream {
-            listen.push(SocketAddress {
-                stream: addr.clone(),
-                ..Default::default()
-            });
-        }
-        for addr in &sk.listen_datagram {
-            listen.push(SocketAddress {
-                datagram: addr.clone(),
-                ..Default::default()
-            });
-        }
-        for addr in &sk.listen_sequential_packet {
-            listen.push(SocketAddress {
-                sequential_packet: addr.clone(),
-                ..Default::default()
-            });
-        }
-        for addr in &sk.listen_fifo {
-            listen.push(SocketAddress {
-                fifo: addr.clone(),
-                ..Default::default()
-            });
-        }
-        for addr in &sk.listen_netlink {
-            listen.push(SocketAddress {
-                netlink: addr.clone(),
-                ..Default::default()
-            });
-        }
-        // Resolve the associated service name: an explicit `Service=`
-        // directive wins; otherwise follow the systemd convention
-        // "foo.socket" -> "foo.service".
-        let svc_name = if sk.service.is_empty() {
-            uf.name.replace(".socket", ".service")
-        } else {
-            sk.service.clone()
-        };
-
-        SocketConfig {
-            listen,
-            accept: sk.accept,
-            backlog: sk.backlog,
-            socket_mode: sk.socket_mode.clone(),
-            socket_user: sk.socket_user.clone(),
-            socket_group: sk.socket_group.clone(),
-            service: svc_name,
-            directory_mode: sk.directory_mode.clone(),
-        }
-    });
-
-    // For automount units, preload the companion `.mount` unit's config so
+    // For automount units, merge the companion `.mount` unit's directives so
     // the worker can satisfy kernel trigger requests locally (scheme A).
-    // The companion's [Mount] section wins if the automount unit itself
-    // carries one (it normally does not).
-    let mount = if uf.automount.is_some() && uf.mount.is_none() {
-        let mount_name = format!("{}.mount", uf.name.trim_end_matches(".automount"));
-        all_units
-            .get(&mount_name)
-            .and_then(|muf| muf.mount.as_ref())
-            .map(mount_config_from_section)
-    } else {
-        uf.mount.as_ref().map(mount_config_from_section)
-    };
+    // `Where=` and `DirectoryMode=` collide between the two sections; systemd
+    // requires the automount and its mount unit to agree on them.
+    if uf.kind == UnitKind::Automount {
+        let companion = if uf.mount.is_some() {
+            Some(uf)
+        } else {
+            let mount_name = format!("{}.mount", uf.name.trim_end_matches(".automount"));
+            all_units
+                .get(&mount_name)
+                .filter(|muf| muf.kind == UnitKind::Mount)
+        };
+        if let Some(companion) = companion {
+            config.extend(systema_sysf_systemd::config_map::to_config_map(companion));
+        }
+    }
 
-    let automount = uf.automount.as_ref().map(|a| AutomountConfig {
-        r#where: a.where_.clone(),
-        extra_options: a.extra_options.clone(),
-        timeout_idle_sec: a.timeout_idle_sec,
-        directory_mode: a.directory_mode.clone(),
-    });
+    // An explicit `Service=` wins; otherwise follow the systemd convention
+    // "foo.socket" -> "foo.service".
+    if uf.kind == UnitKind::Socket && !config.contains_key("Service") {
+        config.insert(
+            "Service".to_string(),
+            serde_json::Value::String(uf.name.replace(".socket", ".service")),
+        );
+    }
 
-    let timer = uf.timer.as_ref().map(|t| TimerConfig {
-        on_active_sec: t.on_active_sec,
-        on_boot_sec: t.on_boot_sec,
-        on_startup_sec: t.on_startup_sec,
-        on_unit_active_sec: t.on_unit_active_sec,
-        on_unit_inactive_sec: t.on_unit_inactive_sec,
-        on_calendar: t.on_calendar.clone(),
-        accuracy_sec: t.accuracy_sec,
-        randomized_delay_sec: t.randomized_delay_sec,
-        unit: t.unit.clone(),
-        persistent: t.persistent,
-    });
-
-    let device = uf.device.as_ref().map(|d| DeviceConfig {
-        device_name: d.device_name.clone(),
-        device_path: d.device_path.clone(),
-        sysfs_path: d.sysfs_path.clone(),
-        property: d.property.clone(),
-    });
-
-    let path = uf.path.as_ref().map(|p| PathConfig {
-        path_exists: p.path_exists.clone(),
-        path_exists_glob: p.path_exists_glob.clone(),
-        path_changed: p.path_changed.clone(),
-        path_modified: p.path_modified.clone(),
-        directory_not_empty: p.directory_not_empty.clone(),
-        unit: p.unit.clone(),
-        make_directory: p.make_directory,
-        directory_mode: p.directory_mode.clone(),
-        trigger_limit_interval_sec: p.trigger_limit_interval_sec,
-        trigger_limit_burst: p.trigger_limit_burst,
-    });
-
-    let scope = uf.scope.as_ref().map(|s| ScopeConfig {
-        pids: s
-            .pids
-            .iter()
-            .filter_map(|p| p.trim().parse::<u32>().ok())
-            .collect(),
-        timeout_stop_secs: s.timeout_stop_sec,
-        runtime_max_secs: s.runtime_max_sec,
-        kill_signal: s.kill_signal.clone(),
-        send_sighup: s.send_sighup,
-        controller: String::new(),
-        slice: uf.unit.slice.clone(),
-    });
+    // `Slice=` lives in `[Unit]`, but the scope worker needs it to place the
+    // scope's cgroup; carry it in the same directive map.
+    if uf.kind == UnitKind::Scope && !uf.unit.slice.is_empty() {
+        config.insert(
+            "Slice".to_string(),
+            serde_json::Value::String(uf.unit.slice.clone()),
+        );
+    }
 
     UnitConfig {
         unit_name: uf.name.clone(),
@@ -2832,14 +2699,7 @@ fn build_unit_config(
         // dispatch; empty = the unit does not delegate and System S must
         // leave the spawned process's cgroup alone.
         cgroup_path: cgroup_path.to_string(),
-        service,
-        socket,
-        mount,
-        automount,
-        timer,
-        device,
-        path,
-        scope,
+        config_json: sysa::ir::config::to_json_bytes(&config),
         socket_units: {
             let mut deps: Vec<String> = uf
                 .unit
@@ -2857,20 +2717,6 @@ fn build_unit_config(
             deps.dedup();
             deps
         },
-    }
-}
-
-fn mount_config_from_section(m: &MountSection) -> MountConfig {
-    MountConfig {
-        what: m.what.clone(),
-        r#where: m.where_.clone(),
-        r#type: m.type_.clone(),
-        options: m.options.clone(),
-        timeout_sec: m.timeout_sec,
-        lazy_unmount: m.lazy_unmount,
-        force_unmount: m.force_unmount,
-        directory_mode: m.directory_mode.clone(),
-        sloppy_options: m.sloppy_options,
     }
 }
 
@@ -3367,10 +3213,22 @@ mod tests {
         });
 
         let config = build_unit_config(&unit, &HashMap::new(), "");
+        let directives = sysa::ir::config::parse_json(&config.config_json).unwrap();
+        assert_eq!(
+            directives.get("Type").and_then(|v| v.as_str()),
+            Some("dbus")
+        );
+        assert_eq!(
+            directives.get("BusName").and_then(|v| v.as_str()),
+            Some("org.deepin.dde.Authenticate1")
+        );
+    }
 
-        let service = config.service.expect("service config");
-        assert_eq!(service.service_type, "dbus");
-        assert_eq!(service.bus_name, "org.deepin.dde.Authenticate1");
+    fn directive_map(entries: &[(&str, serde_json::Value)]) -> systema_sysf::ir::ConfigMap {
+        entries
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), value.clone()))
+            .collect()
     }
 
     #[test]
@@ -3378,26 +3236,27 @@ mod tests {
         let path_ir = UnitIR {
             id: "acpid.path".into(),
             unit_type: Some(systema_sysf::ir::UnitType::Path),
-            path: Some(systema_sysf::ir::PathConfig {
-                path_exists: vec!["/run/acpid.socket".into()],
-                path_changed: vec!["/run/acpid".into()],
-                unit: "acpid.service".into(),
-                make_directory: true,
-                directory_mode: "0750".into(),
-                trigger_limit_interval_sec: 5,
-                trigger_limit_burst: 7,
-                ..Default::default()
-            }),
+            config: Some(directive_map(&[
+                ("PathExists", serde_json::json!(["/run/acpid.socket"])),
+                ("PathChanged", serde_json::json!(["/run/acpid"])),
+                ("Unit", serde_json::json!("acpid.service")),
+                ("MakeDirectory", serde_json::json!(true)),
+                ("DirectoryMode", serde_json::json!("0750")),
+                ("TriggerLimitIntervalSec", serde_json::json!(5)),
+                ("TriggerLimitBurst", serde_json::json!(7)),
+            ])),
             ..Default::default()
         };
         let socket_ir = UnitIR {
             id: "udev.socket".into(),
             unit_type: Some(systema_sysf::ir::UnitType::Socket),
-            socket: Some(systema_sysf::ir::SocketConfig {
-                listen_sequential_packet: vec!["@/org/kernel/udev/udevd".into()],
-                listen_netlink: vec!["kobject-uevent 1".into()],
-                ..Default::default()
-            }),
+            config: Some(directive_map(&[
+                (
+                    "ListenSequentialPacket",
+                    serde_json::json!(["@/org/kernel/udev/udevd"]),
+                ),
+                ("ListenNetlink", serde_json::json!(["kobject-uevent 1"])),
+            ])),
             ..Default::default()
         };
         let mut state = AllocatorState::new();
@@ -3407,29 +3266,43 @@ mod tests {
             .collect();
         state.init_staging_area(42, "finder", units).unwrap();
         state.commit_staging(42, "finder").unwrap();
-        let path = build_unit_config(&state.units["acpid.path"], &state.units, "")
-            .path
-            .unwrap();
-        assert_eq!(path.path_exists, ["/run/acpid.socket"]);
-        assert_eq!(path.path_changed, ["/run/acpid"]);
-        assert_eq!(path.unit, "acpid.service");
-        assert!(path.make_directory);
-        assert_eq!(path.directory_mode, "0750");
+        let path = build_unit_config(&state.units["acpid.path"], &state.units, "");
+        let path = sysa::ir::config::parse_json(&path.config_json).unwrap();
         assert_eq!(
-            (path.trigger_limit_interval_sec, path.trigger_limit_burst),
-            (5, 7)
+            sysa::ir::config::get_strings(&path, "PathExists"),
+            ["/run/acpid.socket"]
         );
-        let socket = build_unit_config(&state.units["udev.socket"], &state.units, "")
-            .socket
-            .unwrap();
-        assert!(socket
-            .listen
-            .iter()
-            .any(|a| a.sequential_packet == "@/org/kernel/udev/udevd"));
-        assert!(socket
-            .listen
-            .iter()
-            .any(|a| a.netlink == "kobject-uevent 1"));
+        assert_eq!(
+            sysa::ir::config::get_strings(&path, "PathChanged"),
+            ["/run/acpid"]
+        );
+        assert_eq!(
+            sysa::ir::config::get_string(&path, "Unit").as_deref(),
+            Some("acpid.service")
+        );
+        assert!(sysa::ir::config::get_bool(&path, "MakeDirectory"));
+        assert_eq!(
+            sysa::ir::config::get_mode(&path, "DirectoryMode"),
+            Some(0o750)
+        );
+        assert_eq!(
+            (
+                sysa::ir::config::get_u32(&path, "TriggerLimitIntervalSec"),
+                sysa::ir::config::get_u32(&path, "TriggerLimitBurst"),
+            ),
+            (Some(5), Some(7))
+        );
+
+        let socket = build_unit_config(&state.units["udev.socket"], &state.units, "");
+        let socket = sysa::ir::config::parse_json(&socket.config_json).unwrap();
+        assert_eq!(
+            sysa::ir::config::get_strings(&socket, "ListenSequentialPacket"),
+            ["@/org/kernel/udev/udevd"]
+        );
+        assert_eq!(
+            sysa::ir::config::get_strings(&socket, "ListenNetlink"),
+            ["kobject-uevent 1"]
+        );
     }
 
     // =========================================================================
@@ -3439,17 +3312,17 @@ mod tests {
     #[tokio::test]
     async fn request_unit_definition_materializes_an_instance_from_the_ir_template() {
         use crate::state::Allocator;
-        use systema_sysf::ir::{ServiceConfig, TemplateInfo};
+        use systema_sysf::ir::TemplateInfo;
 
         let allocator = Allocator::handle();
         let template = UnitIR {
             id: "getty@.service".to_string(),
             unit_type: Some(UnitType::Service),
             description: Some("Getty on %I".to_string()),
-            service: Some(ServiceConfig {
-                tty_path: "/dev/%i".to_string(),
-                ..Default::default()
-            }),
+            config: Some(directive_map(&[(
+                "TTYPath",
+                serde_json::json!("/dev/%i"),
+            )])),
             template: Some(TemplateInfo {
                 definition: true,
                 of: None,
@@ -3474,7 +3347,9 @@ mod tests {
             .get("getty@tty5.service")
             .expect("instance materialized from the template");
         assert_eq!(unit.unit.description, "Getty on tty5");
-        assert_eq!(unit.service.as_ref().unwrap().tty_path, "/dev/tty5");
+        let service = unit.service.as_ref().expect("service section");
+        assert_eq!(service.tty_path, "/dev/tty5");
+        assert_eq!(service.service_type.as_str(), "simple");
         // A template is never a unit of its own.
         assert!(!state.units.contains_key("getty@.service"));
     }
@@ -3744,7 +3619,11 @@ mod tests {
             ..Default::default()
         });
         let cfg = build_unit_config(&uf, &HashMap::new(), "");
-        assert_eq!(cfg.socket.as_ref().unwrap().service, "foo.service");
+        let directives = sysa::ir::config::parse_json(&cfg.config_json).unwrap();
+        assert_eq!(
+            sysa::ir::config::get_string(&directives, "Service").as_deref(),
+            Some("foo.service")
+        );
 
         // Explicit Service= wins over the derived name.
         let mut uf = make_unit("bar.socket");
@@ -3754,9 +3633,10 @@ mod tests {
             ..Default::default()
         });
         let cfg = build_unit_config(&uf, &HashMap::new(), "");
+        let directives = sysa::ir::config::parse_json(&cfg.config_json).unwrap();
         assert_eq!(
-            cfg.socket.as_ref().unwrap().service,
-            "custom-daemon.service"
+            sysa::ir::config::get_string(&directives, "Service").as_deref(),
+            Some("custom-daemon.service")
         );
     }
 
@@ -3886,11 +3766,14 @@ mod tests {
 
     #[test]
     fn test_build_unit_config_service() {
-        let uf = make_unit("test.service");
-        let mut uf = uf;
+        let mut uf = make_unit("test.service");
         uf.service = Some(crate::unit::types::ServiceSection::default());
         let config = build_unit_config(&uf, &HashMap::new(), "");
-        assert!(config.service.is_some());
+        let directives = sysa::ir::config::parse_json(&config.config_json).unwrap();
+        assert_eq!(
+            sysa::ir::config::get_string(&directives, "Type").as_deref(),
+            Some("simple")
+        );
     }
 
     #[test]
@@ -3912,10 +3795,19 @@ mod tests {
         let mut units = HashMap::new();
         units.insert(mount.name.clone(), mount);
         let config = build_unit_config(&auto, &units, "");
-        let mount_cfg = config.mount.expect("companion mount config preloaded");
-        assert_eq!(mount_cfg.what, "/dev/sdb1");
-        assert_eq!(mount_cfg.r#where, "/mnt/data");
-        assert_eq!(mount_cfg.r#type, "ext4");
+        let directives = sysa::ir::config::parse_json(&config.config_json).unwrap();
+        assert_eq!(
+            sysa::ir::config::get_string(&directives, "What").as_deref(),
+            Some("/dev/sdb1")
+        );
+        assert_eq!(
+            sysa::ir::config::get_string(&directives, "Where").as_deref(),
+            Some("/mnt/data")
+        );
+        assert_eq!(
+            sysa::ir::config::get_string(&directives, "Type").as_deref(),
+            Some("ext4")
+        );
     }
 
     // =========================================================================
@@ -5008,13 +4900,7 @@ mod tests {
             } else {
                 None
             },
-            service: None,
-            mount: None,
-            automount: None,
-            timer: None,
-            socket: None,
-            path: None,
-            resource_control: None,
+            config: None,
             conditions: None,
             asserts: None,
             wanted_by: None,

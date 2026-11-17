@@ -1,3 +1,4 @@
+use crate::config::ServiceConfig;
 use crate::dbus::DbusWaiter;
 use crate::notify::NotifyManager;
 use crate::process::{start_service, start_timeout_secs, stop_service};
@@ -57,10 +58,8 @@ impl ServiceController {
     /// Whether the unit is `Type=notify` / `Type=notify-reload` and thus
     /// must report `READY=1` (sd_notify) before its start job completes.
     fn is_notify_type(cfg: &UnitConfig) -> bool {
-        cfg.service
-            .as_ref()
-            .map(|s| matches!(s.service_type.as_str(), "notify" | "notify-reload"))
-            .unwrap_or(false)
+        ServiceConfig::from_unit_config(cfg)
+            .is_some_and(|s| matches!(s.service_type.as_str(), "notify" | "notify-reload"))
     }
 
     /// Wait for the service's readiness notification (Type=notify(-reload)).
@@ -133,10 +132,7 @@ impl ServiceController {
     /// to trigger `poweroff-force` on success); starting them completes
     /// immediately with no process being spawned.
     fn is_noop_service(cfg: &UnitConfig) -> bool {
-        match cfg.service.as_ref() {
-            None => true,
-            Some(s) => s.exec_start.is_empty(),
-        }
+        ServiceConfig::from_unit_config(cfg).is_none_or(|s| s.exec_start.is_empty())
     }
 
     /// Mark an ExecStart-less "action" service as started (no-process
@@ -155,10 +151,8 @@ impl ServiceController {
     /// Whether the unit is `Type=oneshot` and thus the start job must wait
     /// for the ExecStart process to exit (like systemd).
     fn is_oneshot_type(cfg: &UnitConfig) -> bool {
-        cfg.service
-            .as_ref()
-            .map(|s| s.service_type.as_str() == "oneshot")
-            .unwrap_or(false)
+        ServiceConfig::from_unit_config(cfg)
+            .is_some_and(|s| s.service_type.as_str() == "oneshot")
     }
 
     /// Wait for the oneshot service's ExecStart process to exit.
@@ -200,11 +194,8 @@ impl ServiceController {
                         unit_name
                     );
                 }
-                let stay_active = cfg
-                    .service
-                    .as_ref()
-                    .map(|s| succeeded && s.remain_after_exit)
-                    .unwrap_or(false);
+                let stay_active = ServiceConfig::from_unit_config(cfg)
+                    .is_some_and(|s| succeeded && s.remain_after_exit);
                 if stay_active {
                     info!(
                         "Service {}: RemainAfterExit=yes, keeping unit active after successful exit",
@@ -294,19 +285,15 @@ impl ServiceController {
     /// Whether the unit is `Type=dbus` and thus must own its `BusName=`
     /// before the start job completes.
     fn is_dbus_type(cfg: &UnitConfig) -> bool {
-        cfg.service
-            .as_ref()
-            .map(|s| s.service_type.as_str() == "dbus")
-            .unwrap_or(false)
+        ServiceConfig::from_unit_config(cfg)
+            .is_some_and(|s| s.service_type.as_str() == "dbus")
     }
 
     fn validate_dbus_config(cfg: &UnitConfig) -> Result<()> {
-        if Self::is_dbus_type(cfg)
-            && cfg
-                .service
-                .as_ref()
-                .is_some_and(|service| service.bus_name.is_empty())
-        {
+        let Some(service) = ServiceConfig::from_unit_config(cfg) else {
+            return Ok(());
+        };
+        if service.service_type == "dbus" && service.bus_name.is_empty() {
             anyhow::bail!(sysa::l10n::t_(
                 "Service is of type D-Bus but no D-Bus service name has been specified. Refusing."
             ));
@@ -322,7 +309,7 @@ impl ServiceController {
             return Ok(());
         }
         Self::validate_dbus_config(cfg)?;
-        let svc = cfg.service.as_ref().expect("dbus type implies service");
+        let svc = ServiceConfig::from_unit_config(cfg).expect("dbus type implies service");
         let bus_name = svc.bus_name.as_str();
         let timeout = start_timeout_secs(cfg);
         match self.dbus.wait_name_owned(bus_name, pid, timeout).await {
@@ -477,9 +464,7 @@ impl ServiceController {
     /// A failing command fails the start job and the unit, like systemd's
     /// `service_enter_start_post()`.
     async fn run_start_post(&self, unit_name: &str, cfg: &UnitConfig) -> Result<()> {
-        let has_commands = cfg
-            .service
-            .as_ref()
+        let has_commands = ServiceConfig::from_unit_config(cfg)
             .is_some_and(|s| !s.exec_start_post.is_empty());
         if !has_commands {
             return Ok(());
@@ -488,9 +473,7 @@ impl ServiceController {
             crate::process::run_exec_start_post(self.registry.clone(), unit_name, cfg).await
         {
             warn!("{}: ExecStartPost failed: {}", unit_name, e);
-            let timeout = cfg
-                .service
-                .as_ref()
+            let timeout = ServiceConfig::from_unit_config(cfg)
                 .map(|s| s.timeout_stop_secs)
                 .unwrap_or(30);
             let _ = stop_service(
@@ -555,16 +538,13 @@ impl UnitController for ServiceController {
             .await;
         #[cfg(not(unix))]
         let listen_fds = Vec::new();
+        let svc = ServiceConfig::from_unit_config(&cfg).expect("non-noop service has a section");
         let (_pid, child) = start_service(self.registry.clone(), &cfg, inv_id, listen_fds).await?;
         {
             let mut reg = self.registry.lock();
             if let Some(inst) = reg.get_mut(unit_name) {
-                inst.timeout_stop_secs = cfg.service.as_ref().map(|s| s.timeout_stop_secs);
-                inst.remain_after_exit = cfg
-                    .service
-                    .as_ref()
-                    .map(|s| s.remain_after_exit)
-                    .unwrap_or(false);
+                inst.timeout_stop_secs = Some(svc.timeout_stop_secs);
+                inst.remain_after_exit = svc.remain_after_exit;
             }
         }
         self.publish_state(unit_name);
@@ -629,9 +609,7 @@ impl UnitController for ServiceController {
             self.mark_noop_started(unit_name, inv_id);
             return Ok(());
         }
-        let timeout = cfg
-            .service
-            .as_ref()
+        let timeout = ServiceConfig::from_unit_config(&cfg)
             .map(|s| s.timeout_stop_secs)
             .unwrap_or(30);
         stop_service(
@@ -652,16 +630,13 @@ impl UnitController for ServiceController {
             .await;
         #[cfg(not(unix))]
         let listen_fds = Vec::new();
+        let svc = ServiceConfig::from_unit_config(&cfg).expect("non-noop service has a section");
         let (_pid, child) = start_service(self.registry.clone(), &cfg, inv_id, listen_fds).await?;
         {
             let mut reg = self.registry.lock();
             if let Some(inst) = reg.get_mut(unit_name) {
-                inst.timeout_stop_secs = cfg.service.as_ref().map(|s| s.timeout_stop_secs);
-                inst.remain_after_exit = cfg
-                    .service
-                    .as_ref()
-                    .map(|s| s.remain_after_exit)
-                    .unwrap_or(false);
+                inst.timeout_stop_secs = Some(svc.timeout_stop_secs);
+                inst.remain_after_exit = svc.remain_after_exit;
             }
         }
         self.publish_state(unit_name);
@@ -700,11 +675,8 @@ impl UnitController for ServiceController {
         // be registered before the signal goes out so no notification can
         // slip in between.
         let wait_reload = {
-            let notify_reload = cfg
-                .service
-                .as_ref()
-                .map(|s| s.service_type == "notify-reload")
-                .unwrap_or(false);
+            let notify_reload = ServiceConfig::from_unit_config(&cfg)
+                .is_some_and(|s| s.service_type == "notify-reload");
             notify_reload
                 && self
                     .notify
@@ -738,7 +710,22 @@ impl UnitController for ServiceController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sysa::proto::ServiceConfig;
+    use crate::config::ServiceConfig;
+
+    fn unit_config(name: &str, svc: &ServiceConfig) -> UnitConfig {
+        UnitConfig {
+            unit_name: name.to_string(),
+            config_json: svc.to_config_json(),
+            ..Default::default()
+        }
+    }
+
+    fn mutate_service(mut cfg: UnitConfig, f: impl FnOnce(&mut ServiceConfig)) -> UnitConfig {
+        let mut svc = ServiceConfig::from_unit_config(&cfg).unwrap_or_default();
+        f(&mut svc);
+        cfg.config_json = svc.to_config_json();
+        cfg
+    }
 
     fn controller() -> ServiceController {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -758,16 +745,15 @@ mod tests {
     }
 
     fn dbus_cfg(bus_name: &str) -> UnitConfig {
-        UnitConfig {
-            unit_name: "dbus-test.service".to_string(),
-            service: Some(ServiceConfig {
+        unit_config(
+            "dbus-test.service",
+            &ServiceConfig {
                 service_type: "dbus".to_string(),
                 bus_name: bus_name.to_string(),
                 timeout_start_secs: 30,
                 ..Default::default()
-            }),
-            ..Default::default()
-        }
+            },
+        )
     }
 
     #[tokio::test]
@@ -775,15 +761,17 @@ mod tests {
         assert!(ServiceController::is_dbus_type(&dbus_cfg(
             "org.example.Daemon"
         )));
-        let mut cfg = dbus_cfg("org.example.Daemon");
-        cfg.service.as_mut().unwrap().service_type = "simple".to_string();
+        let cfg = mutate_service(dbus_cfg("org.example.Daemon"), |svc| {
+            svc.service_type = "simple".to_string();
+        });
         assert!(!ServiceController::is_dbus_type(&cfg));
     }
 
     #[tokio::test]
     async fn non_dbus_start_is_not_waited_on() {
-        let mut cfg = dbus_cfg("org.example.Daemon");
-        cfg.service.as_mut().unwrap().service_type = "simple".to_string();
+        let cfg = mutate_service(dbus_cfg("org.example.Daemon"), |svc| {
+            svc.service_type = "simple".to_string();
+        });
         let result = controller()
             .await_dbus_start("dbus-test.service", 9999, &cfg)
             .await;
@@ -809,8 +797,9 @@ mod tests {
         use prost::Message;
 
         let ctrl = controller();
-        let mut cfg = dbus_cfg("");
-        cfg.service.as_mut().unwrap().exec_start = "/usr/bin/true".to_string();
+        let cfg = mutate_service(dbus_cfg(""), |svc| {
+            svc.exec_start = "/usr/bin/true".to_string();
+        });
 
         let err = ctrl
             .start("dbus-test.service", &cfg.encode_to_vec(), "")
@@ -828,15 +817,14 @@ mod tests {
     }
 
     fn oneshot_cfg() -> UnitConfig {
-        UnitConfig {
-            unit_name: "oneshot-test.service".to_string(),
-            service: Some(ServiceConfig {
+        unit_config(
+            "oneshot-test.service",
+            &ServiceConfig {
                 service_type: "oneshot".to_string(),
                 timeout_start_secs: 30,
                 ..Default::default()
-            }),
-            ..Default::default()
-        }
+            },
+        )
     }
 
     /// Register a unit in the controller's registry so state updates land.
@@ -856,15 +844,17 @@ mod tests {
     #[tokio::test]
     async fn oneshot_type_is_detected() {
         assert!(ServiceController::is_oneshot_type(&oneshot_cfg()));
-        let mut cfg = oneshot_cfg();
-        cfg.service.as_mut().unwrap().service_type = "simple".to_string();
+        let cfg = mutate_service(oneshot_cfg(), |svc| {
+            svc.service_type = "simple".to_string();
+        });
         assert!(!ServiceController::is_oneshot_type(&cfg));
     }
 
     #[tokio::test]
     async fn non_oneshot_start_is_not_waited_on() {
-        let mut cfg = oneshot_cfg();
-        cfg.service.as_mut().unwrap().service_type = "simple".to_string();
+        let cfg = mutate_service(oneshot_cfg(), |svc| {
+            svc.service_type = "simple".to_string();
+        });
         assert!(
             !ServiceController::is_oneshot_type(&cfg),
             "simple should not be detected as oneshot"
@@ -873,8 +863,9 @@ mod tests {
 
     #[tokio::test]
     async fn start_post_failure_fails_the_unit() {
-        let mut cfg = oneshot_cfg();
-        cfg.service.as_mut().unwrap().exec_start_post = vec!["/bin/false".to_string()];
+        let cfg = mutate_service(oneshot_cfg(), |svc| {
+            svc.exec_start_post = vec!["/bin/false".to_string()];
+        });
         let ctrl = controller();
         register_unit(&ctrl, "oneshot-test.service");
         // No live process: the stop path returns early, the unit is marked
@@ -975,8 +966,9 @@ mod tests {
         // plymouth-read-write.service shape: Type=oneshot, RemainAfterExit=yes
         // and `ExecStart=-...`; an ignored failure must still keep the unit
         // active.
-        let mut cfg = oneshot_cfg();
-        cfg.service.as_mut().unwrap().remain_after_exit = true;
+        let cfg = mutate_service(oneshot_cfg(), |svc| {
+            svc.remain_after_exit = true;
+        });
         let child = tokio::process::Command::new("false")
             .spawn()
             .expect("failed to spawn false");
@@ -999,8 +991,9 @@ mod tests {
 
     #[tokio::test]
     async fn await_oneshot_exit_remain_after_exit() {
-        let mut cfg = oneshot_cfg();
-        cfg.service.as_mut().unwrap().remain_after_exit = true;
+        let cfg = mutate_service(oneshot_cfg(), |svc| {
+            svc.remain_after_exit = true;
+        });
         let child = tokio::process::Command::new("true")
             .spawn()
             .expect("failed to spawn true");
@@ -1018,29 +1011,34 @@ mod tests {
     #[tokio::test]
     async fn noop_service_is_detected() {
         // systemd-poweroff.service carries practically no [Service] section.
-        let mut cfg = oneshot_cfg();
-        cfg.service.as_mut().unwrap().exec_start = "/usr/bin/true".to_string();
+        let cfg = mutate_service(oneshot_cfg(), |svc| {
+            svc.exec_start = "/usr/bin/true".to_string();
+        });
         assert!(
             !ServiceController::is_noop_service(&cfg),
             "oneshot with an ExecStart is not a no-op"
         );
-        cfg.service = None;
+        let mut empty = oneshot_cfg();
+        empty.config_json.clear();
         assert!(
-            ServiceController::is_noop_service(&cfg),
+            ServiceController::is_noop_service(&empty),
             "a unit with no configured service is a no-op"
         );
-        cfg.service = Some(ServiceConfig {
-            service_type: "simple".to_string(),
-            exec_start: "/usr/bin/true".to_string(),
-            ..Default::default()
-        });
+        let simple = unit_config(
+            "oneshot-test.service",
+            &ServiceConfig {
+                service_type: "simple".to_string(),
+                exec_start: "/usr/bin/true".to_string(),
+                ..Default::default()
+            },
+        );
         assert!(
-            !ServiceController::is_noop_service(&cfg),
+            !ServiceController::is_noop_service(&simple),
             "ExecStart= set means there is something to run"
         );
-        cfg.service.as_mut().unwrap().exec_start.clear();
+        let cleared = mutate_service(simple, |svc| svc.exec_start.clear());
         assert!(
-            ServiceController::is_noop_service(&cfg),
+            ServiceController::is_noop_service(&cleared),
             "empty ExecStart= is a no-op"
         );
     }

@@ -6,6 +6,7 @@ use sysa::worker_ipc::EventPublisher;
 use tracing::{info, warn};
 
 use crate::cgroup::{self, scope_cgroup_path};
+use crate::config::ScopeConfig;
 use crate::state::{ScopeRegistry, ScopeState};
 
 pub struct ScopeController {
@@ -178,7 +179,7 @@ impl UnitController for ScopeController {
 
     async fn start(&self, unit_name: &str, config: &[u8], invocation_id: &str) -> Result<()> {
         let cfg = decode_unit_config(config)?;
-        let scope_cfg = cfg.scope.as_ref().ok_or_else(|| {
+        let scope_cfg = ScopeConfig::from_unit_config(&cfg).ok_or_else(|| {
             anyhow::anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No scope configuration for {unit_name}."),
                 &[("unit_name", unit_name)]
@@ -282,7 +283,7 @@ mod tests {
     use prost::Message;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use sysa::proto::{ScopeConfig, UnitConfig};
+    use sysa::proto::UnitConfig;
     use sysa::worker_ipc::EventPublisher;
     use tokio::sync::{mpsc, oneshot};
 
@@ -297,27 +298,18 @@ mod tests {
     }
 
     fn config_with_pids(pids: Vec<u32>) -> Vec<u8> {
+        let mut directives = sysa::ir::ConfigMap::new();
+        let pid_strings: Vec<String> = pids.iter().map(u32::to_string).collect();
+        directives.insert("PIDs".to_string(), serde_json::json!(pid_strings));
+        directives.insert("TimeoutStopSec".to_string(), serde_json::json!(90));
+        directives.insert("RuntimeMaxSec".to_string(), serde_json::json!(0));
+        directives.insert("KillSignal".to_string(), serde_json::json!(""));
+        directives.insert("SendSIGHUP".to_string(), serde_json::json!(false));
+        directives.insert("Slice".to_string(), serde_json::json!("system.slice"));
         let cfg = UnitConfig {
             unit_name: "test.scope".to_string(),
-            description: String::new(),
-            cgroup_path: String::new(),
-            service: None,
-            socket: None,
-            mount: None,
-            automount: None,
-            timer: None,
-            device: None,
-            path: None,
-            socket_units: Vec::new(),
-            scope: Some(ScopeConfig {
-                pids,
-                timeout_stop_secs: 90,
-                runtime_max_secs: 0,
-                kill_signal: String::new(),
-                send_sighup: false,
-                controller: String::new(),
-                slice: "system.slice".to_string(),
-            }),
+            config_json: serde_json::to_vec(&directives).expect("encode directives"),
+            ..Default::default()
         };
         let mut buf = bytes::BytesMut::new();
         cfg.encode(&mut buf).expect("encode");

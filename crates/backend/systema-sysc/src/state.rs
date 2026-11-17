@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use sysa::proto::TimerConfig;
+use crate::config::TimerConfig;
 
 /// Runtime state of a `.timer` unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

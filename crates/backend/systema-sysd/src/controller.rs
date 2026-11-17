@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
-use sysa::proto::DeviceConfig;
+use crate::config::DeviceConfig;
 
 use crate::discovery::enumerate_devices;
 use crate::engine::{publish_unit, status_of, EngineShared};
@@ -102,7 +102,7 @@ impl UnitController for DeviceController {
             ));
         }
         let cfg = decode_unit_config(config)?;
-        let device_cfg = cfg.device.clone().ok_or_else(|| {
+        let device_cfg = DeviceConfig::from_unit_config(&cfg).ok_or_else(|| {
             anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No DeviceConfig for '{unit_name}'"),
                 &[("unit_name", &unit_name.to_string())]
@@ -155,7 +155,7 @@ impl UnitController for DeviceController {
             ));
         }
         let cfg = decode_unit_config(config)?;
-        let device_cfg = cfg.device.clone().ok_or_else(|| {
+        let device_cfg = DeviceConfig::from_unit_config(&cfg).ok_or_else(|| {
             anyhow!(sysa::l10n::fmt(
                 sysa::l10n::t_("No DeviceConfig for '{unit_name}'"),
                 &[("unit_name", &unit_name.to_string())]

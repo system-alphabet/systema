@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use sysa::proto::MountConfig;
+use systema_sysm_common::config::MountConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MountState {

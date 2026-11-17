@@ -31,3 +31,4 @@ nix = { version = "0.29", features = ["process", "signal", "user", "fs", "socket
 [dev-dependencies]
 prost.workspace = true
 bytes.workspace = true
+serde_json.workspace = true

@@ -154,25 +154,7 @@ fn power_unit_ir(unit_name: &str) -> Option<UnitIR> {
         unit_type: Some(UnitType::Power),
         description: Some(power_description(action)),
         source_format: Some("dynamic".to_string()),
-        source_path: None,
-        aliases: Vec::new(),
-        alias_of: None,
-        slice: None,
-        dependencies: None,
-        service: None,
-        mount: None,
-        automount: None,
-        timer: None,
-        socket: None,
-        path: None,
-        resource_control: None,
-        conditions: None,
-        asserts: None,
-        wanted_by: None,
-        required_by: None,
-        enabled: None,
-        unit_file_state: None,
-        template: None,
+        ..Default::default()
     })
 }
 

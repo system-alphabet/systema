@@ -5,14 +5,155 @@
 //! staging flows exchange: the model is serialized to JSON bytes and
 //! carried inside the protobuf `units_json` fields of the wire messages
 //! (`proto/common.proto`, `proto/workload.proto`, `proto/control.proto`).
-//! The transport itself stays model-agnostic — the two-plane boundary
-//! (`common.proto` as the only shared import) still applies, and the type
-//! contract is versioned as source text shared by the producer (System F)
-//! and its consumers (System A and the workers).
+//!
+//! Only the *common* fields are typed here.  The type-specific section
+//! (`[Service]`, `[Mount]`, `[Timer]`, ...) travels as a flattened directive
+//! map ([`UnitIR::config`]): keys are the directive names exactly as written
+//! in the unit file, values are JSON strings for single-valued directives and
+//! arrays of strings for repeated ones.  The owning section is implied by
+//! [`UnitIR::unit_type`], so no section name is part of the key.  Parsing and
+//! interpreting those directives belongs to the component that consumes
+//! them (the allocator, or the worker that owns the unit type).
 
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
+
+/// Type-specific unit directives, keyed by their unit-file names.
+///
+/// A single-valued directive (`Type=notify`) maps to a JSON string; a
+/// repeated directive (`ExecStartPre=...`) maps to an array of strings.
+/// Values keep the unit-file spelling (modifier prefixes included), so the
+/// consumer parses them the same way it would parse the file itself.
+pub type ConfigMap = serde_json::Map<String, serde_json::Value>;
+
+/// Typed accessors for [`ConfigMap`].
+///
+/// Consumers should never pattern-match JSON values by hand: these helpers
+/// accept both the string form a unit file uses and the JSON scalar form a
+/// producer may emit for numeric or boolean directives.
+pub mod config {
+    use anyhow::Context;
+    use serde_json::Value;
+
+    use super::ConfigMap;
+    use crate::error_code::{ErrorCode, SysError};
+
+    /// Decode a `config_json` payload into a directive map.
+    ///
+    /// An empty payload means "no type-specific configuration".
+    pub fn parse_json(bytes: &[u8]) -> anyhow::Result<ConfigMap> {
+        if bytes.is_empty() {
+            return Ok(ConfigMap::new());
+        }
+        serde_json::from_slice(bytes).context(SysError::new(ErrorCode::UnitConfigDecodeFailed))
+    }
+
+    /// Encode a directive map for the `config_json` wire field.
+    ///
+    /// A `serde_json::Value` map is always serializable, so the only failure
+    /// mode is an internal serialization bug; it degrades to an empty payload.
+    pub fn to_json_bytes(map: &ConfigMap) -> Vec<u8> {
+        serde_json::to_vec(map).unwrap_or_default()
+    }
+
+    fn as_string(value: &Value) -> Option<String> {
+        match value {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        }
+    }
+
+    /// A single directive value.  For a repeated directive this returns the
+    /// first element, which is what most scalar consumers want.
+    pub fn get_string(map: &ConfigMap, key: &str) -> Option<String> {
+        map.get(key).and_then(as_string)
+    }
+
+    /// A single directive value, falling back to `default` when absent.
+    pub fn get_string_or(map: &ConfigMap, key: &str, default: &str) -> String {
+        get_string(map, key).unwrap_or_else(|| default.to_string())
+    }
+
+    /// Every value of a directive, in file order.  A single-valued entry is
+    /// returned as a one-element vector.
+    pub fn get_strings(map: &ConfigMap, key: &str) -> Vec<String> {
+        match map.get(key) {
+            Some(Value::Array(values)) => values.iter().filter_map(as_string).collect(),
+            Some(value) => as_string(value).into_iter().collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// A boolean directive (`yes`/`no`, `true`/`false`, `1`/`0`, `on`/`off`).
+    ///
+    /// Absent or unparseable values are `false`, which matches the systemd
+    /// default for every boolean directive the IR carries.
+    pub fn get_bool(map: &ConfigMap, key: &str) -> bool {
+        match map.get(key) {
+            Some(Value::Bool(value)) => *value,
+            Some(value) => as_string(value)
+                .map(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "1" | "yes" | "true" | "on"
+                    )
+                })
+                .unwrap_or(false),
+            None => false,
+        }
+    }
+
+    /// An unsigned integer directive.  `None` distinguishes "absent" from
+    /// an explicit zero.
+    pub fn get_u32(map: &ConfigMap, key: &str) -> Option<u32> {
+        match map.get(key)? {
+            Value::Number(number) => number.as_u64().and_then(|value| value.try_into().ok()),
+            value => as_string(value)?.trim().parse().ok(),
+        }
+    }
+
+    /// An unsigned integer directive, falling back to `default`.
+    pub fn get_u32_or(map: &ConfigMap, key: &str, default: u32) -> u32 {
+        get_u32(map, key).unwrap_or(default)
+    }
+
+    /// A signed integer directive, falling back to `default`.
+    pub fn get_i32_or(map: &ConfigMap, key: &str, default: i32) -> i32 {
+        match map.get(key) {
+            Some(Value::Number(number)) => number
+                .as_i64()
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(default),
+            Some(value) => as_string(value)
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(default),
+            None => default,
+        }
+    }
+
+    /// A file-mode directive (`0755`, `0666`, ...), parsed as octal.
+    ///
+    /// A JSON number is taken as the already-resolved mode.
+    pub fn get_mode(map: &ConfigMap, key: &str) -> Option<u32> {
+        match map.get(key)? {
+            Value::Number(number) => number.as_u64().and_then(|value| value.try_into().ok()),
+            value => {
+                let text = as_string(value)?;
+                let text = text.trim();
+                let text = text
+                    .strip_prefix("0o")
+                    .or_else(|| text.strip_prefix("0O"))
+                    .unwrap_or(text);
+                u32::from_str_radix(text, 8)
+                    .ok()
+                    .or_else(|| text.parse().ok())
+            }
+        }
+    }
+}
 
 /// Unified unit type, abstracted across all init systems.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -85,225 +226,6 @@ pub struct DependencySet {
     pub default_dependencies: bool,
 }
 
-/// The command line and modifiers for an executable directive.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecCommand {
-    /// Full raw command string (with any format-specific prefixes).
-    pub raw: String,
-    /// Resolved executable path.
-    pub program: String,
-    /// Command-line arguments.
-    pub args: Vec<String>,
-    /// Ignore non-zero exit code.
-    pub ignore_failure: bool,
-    /// Run with elevated privileges.
-    pub privileged: bool,
-}
-
-/// Service-specific configuration in a unified form.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ServiceConfig {
-    /// `Type=` — the startup/readiness model (`simple`, `notify`,
-    /// `notify-reload`, `oneshot`, `dbus`, `forking`, `idle`).  Carried
-    /// verbatim from the definition: consumers must not re-derive it from
-    /// `ExecStart=`, because the notify/dbus types decide when a start job
-    /// completes (and `notify` additionally gets `$NOTIFY_SOCKET`).
-    #[serde(default)]
-    pub service_type: String,
-    /// `BusName=` required by `Type=dbus` and used to detect service readiness.
-    #[serde(default)]
-    pub bus_name: String,
-    pub exec_start: Vec<ExecCommand>,
-    pub exec_stop: Vec<ExecCommand>,
-    pub exec_reload: Vec<ExecCommand>,
-    pub exec_start_pre: Vec<ExecCommand>,
-    pub exec_start_post: Vec<ExecCommand>,
-    pub exec_stop_post: Vec<ExecCommand>,
-    pub working_directory: String,
-    pub user: String,
-    pub group: String,
-    pub pam_name: String,
-    pub environment: Vec<String>,
-    pub environment_file: Vec<String>,
-    /// `StateDirectory=` fragments (below /var/lib in the system domain);
-    /// the worker creates them, chowns them to the service user and exports
-    /// `$STATE_DIRECTORY` (colon-joined) — systemd.exec(5) directory
-    /// directives.  Mode 0 means "unset" → the worker's 0755 default.
-    pub state_directory: Vec<String>,
-    pub state_directory_mode: u32,
-    /// `LogsDirectory=` fragments (below /var/log) → `$LOGS_DIRECTORY`.
-    pub logs_directory: Vec<String>,
-    pub logs_directory_mode: u32,
-    /// `RuntimeDirectory=` fragments (below /run) → `$RUNTIME_DIRECTORY`.
-    pub runtime_directory: Vec<String>,
-    pub runtime_directory_mode: u32,
-    /// `ConfigurationDirectory=` fragments (below /etc) →
-    /// `$CONFIGURATION_DIRECTORY`.
-    pub configuration_directory: Vec<String>,
-    pub configuration_directory_mode: u32,
-    pub restart_policy: RestartPolicy,
-    pub restart_sec: u32,
-    pub timeout_start_sec: u32,
-    pub timeout_stop_sec: u32,
-    pub remain_after_exit: bool,
-    pub watchdog_sec: u32,
-    pub kill_signal: String,
-    pub kill_mode: String,
-    pub standard_input: String,
-    pub standard_output: String,
-    pub standard_error: String,
-    pub tty_path: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum RestartPolicy {
-    #[default]
-    No,
-    OnSuccess,
-    OnFailure,
-    OnAbnormal,
-    OnWatchdog,
-    OnAbort,
-    Always,
-}
-
-impl RestartPolicy {
-    pub fn as_str(&self) -> &str {
-        match self {
-            RestartPolicy::No => "no",
-            RestartPolicy::OnSuccess => "on-success",
-            RestartPolicy::OnFailure => "on-failure",
-            RestartPolicy::OnAbnormal => "on-abnormal",
-            RestartPolicy::OnWatchdog => "on-watchdog",
-            RestartPolicy::OnAbort => "on-abort",
-            RestartPolicy::Always => "always",
-        }
-    }
-}
-
-/// Mount-specific configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MountConfig {
-    pub what: String,
-    pub where_: String,
-    pub type_: String,
-    pub options: String,
-    pub timeout_sec: u32,
-}
-
-/// Automount-specific configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AutomountConfig {
-    pub where_: String,
-    pub extra_options: String,
-    pub timeout_idle_sec: u32,
-    pub directory_mode: String,
-}
-
-/// Timer-specific configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TimerConfig {
-    pub on_active_sec: Option<u32>,
-    pub on_boot_sec: Option<u32>,
-    pub on_startup_sec: Option<u32>,
-    pub on_unit_active_sec: Option<u32>,
-    pub on_unit_inactive_sec: Option<u32>,
-    pub on_calendar: Vec<String>,
-    pub accuracy_sec: u32,
-    pub randomized_delay_sec: u32,
-    pub unit: String,
-    pub persistent: bool,
-}
-
-/// Resource-control (cgroup) limits for a unit.
-///
-/// Mirrors `systemd.resource-control(5)`. String values are kept in their
-/// original unit-file form (e.g. `"50%"`, `"1G"`, `"100ms"`) so downstream
-/// consumers (System R, D-Bus) can parse them with the precision they need.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceControl {
-    /// CPU quota: `"50%"` of one CPU or an absolute time slice like `"100ms"`.
-    pub cpu_quota: String,
-    /// Period over which `CPUQuota` applies, e.g. `"100ms"`.
-    pub cpu_quota_period: String,
-    /// Relative CPU weight (default 100).
-    pub cpu_weight: u32,
-    /// CPU weight used during boot.
-    pub startup_cpu_weight: u32,
-    /// CPUs the unit's processes may be pinned to (`CPUSetCPUs=`).
-    pub cpu_set_cpus: String,
-    /// Memory nodes the unit's processes may be pinned to (`CPUSetMemoryNodes=`).
-    pub cpu_set_memory_nodes: String,
-    /// Hard floor on memory usage.
-    pub memory_min: String,
-    /// Gentle floor on memory usage.
-    pub memory_low: String,
-    /// Soft memory limit.
-    pub memory_high: String,
-    /// Hard memory limit, e.g. `"1G"`.
-    pub memory_max: String,
-    /// Swap usage limit.
-    pub memory_swap_max: String,
-    /// IO weight (default 100).
-    pub io_weight: u32,
-    /// IO weight used during boot.
-    pub startup_io_weight: u32,
-    /// Per-device IO weights, e.g. `"/dev/sda 100"`.
-    pub io_device_weight: Vec<String>,
-    /// Per-device read bandwidth limits, e.g. `"/dev/sda 1G"`.
-    pub io_read_bandwidth_max: Vec<String>,
-    /// Per-device write bandwidth limits.
-    pub io_write_bandwidth_max: Vec<String>,
-    /// Maximum number of tasks/threads in the unit's cgroup.
-    pub tasks_max: u32,
-    /// CPUs this unit may run on (`AllowedCPUs=`).
-    pub allowed_cpus: String,
-    /// Memory nodes this unit may use (`AllowedMemoryNodes=`).
-    pub allowed_memory_nodes: String,
-    /// The unit takes ownership of its cgroup subtree (`Delegate=`): the
-    /// cgroup is chowned to the unit's User=/Group= and marked delegated.
-    pub delegate: bool,
-    /// Controllers left enabled below the unit's cgroup when delegating
-    /// (`DelegateControllers=`); empty = all currently enabled ones.
-    pub delegate_controllers: Vec<String>,
-    /// Subdirectory created (and owned by the delegate) under the unit's
-    /// cgroup at delegation time (`DelegateSubgroup=`), e.g. `init.scope`.
-    pub delegate_subgroup: String,
-}
-
-/// Socket-specific configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SocketConfig {
-    pub listen_stream: Vec<String>,
-    pub listen_datagram: Vec<String>,
-    #[serde(default)]
-    pub listen_sequential_packet: Vec<String>,
-    pub listen_fifo: Vec<String>,
-    pub listen_netlink: Vec<String>,
-    pub accept: bool,
-    pub socket_mode: String,
-    pub socket_user: String,
-    pub socket_group: String,
-    pub backlog: u32,
-    pub service: String,
-    pub directory_mode: String,
-}
-
-/// Path-specific configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PathConfig {
-    pub path_exists: Vec<String>,
-    pub path_exists_glob: Vec<String>,
-    pub path_changed: Vec<String>,
-    pub path_modified: Vec<String>,
-    pub directory_not_empty: Vec<String>,
-    pub unit: String,
-    pub make_directory: bool,
-    pub directory_mode: String,
-    pub trigger_limit_interval_sec: u32,
-    pub trigger_limit_burst: u32,
-}
-
 /// Template metadata for a template definition or one of its instances.
 ///
 /// A template unit (`getty@.service`) is a definition, not a runnable unit:
@@ -340,8 +262,8 @@ pub struct TemplateInfo {
 /// Only `id` is mandatory.  Every other field is optional so a commit can be
 /// a *partial* update: when the unit already exists in System A's runtime
 /// cache, only the fields provided here are overwritten and everything else
-/// is left untouched (e.g. a mount-table commit carrying only `mount`
-/// config never clobbers the unit's `description`).  When the unit does not
+/// is left untouched (e.g. a mount-table commit carrying only `config`
+/// never clobbers the unit's `description`).  When the unit does not
 /// exist yet, a new one is created from the provided fields; missing
 /// required fields (`unit_type`) then cause an error returned to the worker
 /// that submitted the commit.
@@ -394,18 +316,19 @@ pub struct UnitIR {
     /// set replaces the previous one.
     pub dependencies: Option<DependencySet>,
 
-    // Optional section-specific configs.
-    pub service: Option<ServiceConfig>,
-    pub mount: Option<MountConfig>,
-    pub automount: Option<AutomountConfig>,
-    pub timer: Option<TimerConfig>,
-    pub socket: Option<SocketConfig>,
-    #[serde(default)]
-    pub path: Option<PathConfig>,
-
-    /// Resource-control (cgroup) limits parsed from the unit file.
-    #[serde(default)]
-    pub resource_control: Option<ResourceControl>,
+    /// Type-specific directives of the unit's own section, flattened.
+    ///
+    /// The section is implied by [`Self::unit_type`] (`Service` → `[Service]`,
+    /// `Mount` → `[Mount]`, ...).  Keys keep the systemd spelling and
+    /// capitalization; repeated directives are arrays of strings.  `None`
+    /// means "not reported" (a partial update leaves the previous map in
+    /// place); an empty map means "reported, but the section is empty".
+    ///
+    /// The IR deliberately does not type these directives: the component
+    /// that owns the unit type parses the keys it knows, so the wire contract
+    /// stays exactly as wide as the unit file itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<ConfigMap>,
 
     /// Conditions that must be met for the unit to start.
     pub conditions: Option<Vec<Condition>>,
@@ -538,18 +461,54 @@ impl DependencySet {
 
 #[cfg(test)]
 mod tests {
-    use super::ServiceConfig;
+    use super::config;
+    use super::{ConfigMap, UnitIR};
+    use serde_json::json;
+
+    fn sample_map() -> ConfigMap {
+        let mut map = ConfigMap::new();
+        map.insert("Type".to_string(), json!("notify"));
+        map.insert("ExecStart".to_string(), json!(["/usr/bin/a", "/usr/bin/b"]));
+        map.insert("TimeoutStartSec".to_string(), json!(90));
+        map.insert("RemainAfterExit".to_string(), json!(true));
+        map.insert("SocketMode".to_string(), json!("0666"));
+        map
+    }
 
     #[test]
-    fn service_config_defaults_bus_name_when_reading_legacy_ir() {
-        let mut value = serde_json::to_value(ServiceConfig::default()).unwrap();
-        value
-            .as_object_mut()
-            .unwrap()
-            .remove("bus_name")
-            .expect("serialized bus_name");
+    fn typed_accessors_read_both_strings_and_scalars() {
+        let map = sample_map();
+        assert_eq!(config::get_string(&map, "Type").as_deref(), Some("notify"));
+        assert_eq!(
+            config::get_strings(&map, "ExecStart"),
+            vec!["/usr/bin/a".to_string(), "/usr/bin/b".to_string()]
+        );
+        assert_eq!(config::get_u32(&map, "TimeoutStartSec"), Some(90));
+        assert!(config::get_bool(&map, "RemainAfterExit"));
+        assert_eq!(config::get_mode(&map, "SocketMode"), Some(0o666));
+        assert_eq!(config::get_strings(&map, "Missing"), Vec::<String>::new());
+    }
 
-        let config: ServiceConfig = serde_json::from_value(value).unwrap();
-        assert!(config.bus_name.is_empty());
+    #[test]
+    fn config_map_round_trips_through_json_bytes() {
+        let map = sample_map();
+        let bytes = config::to_json_bytes(&map);
+        let decoded = config::parse_json(&bytes).unwrap();
+        assert_eq!(decoded, map);
+    }
+
+    #[test]
+    fn empty_payload_means_empty_config() {
+        assert!(config::parse_json(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn unit_ir_without_config_omits_the_field() {
+        let ir = UnitIR {
+            id: "example.service".to_string(),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&ir).unwrap();
+        assert!(value.get("config").is_none());
     }
 }

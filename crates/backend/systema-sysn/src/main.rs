@@ -11,6 +11,7 @@
 //! - Report `method.result` and `unit.state_update` messages back to System A.
 
 mod backend;
+mod config;
 mod controller;
 mod engine;
 mod ipc;

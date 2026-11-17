@@ -8,4 +8,5 @@
 //! and the commit flow to System A — is identical and lives here so the
 //! two workers cannot drift apart.
 
+pub mod config;
 pub mod mount_table;

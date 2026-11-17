@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike};
-use sysa::proto::TimerConfig;
+use crate::config::TimerConfig;
 
 /// A parsed calendar component set: (year, month, day) for dates and
 /// (hour, minute, second) for times.  Empty set means "any".
@@ -823,7 +823,6 @@ mod tests {
             on_unit_active_sec: None,
             on_unit_inactive_sec: None,
             on_calendar: calendar,
-            accuracy_sec: 60,
             randomized_delay_sec: 0,
             unit: String::new(),
             persistent: false,

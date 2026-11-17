@@ -39,12 +39,14 @@ fn read_unit_name(args: &[u8]) -> Result<String> {
 ```rust
 use anyhow::Result;
 use libsystema_shared::controller::decode_unit_config;
+use libsystema_shared::ir::config;
 
 fn prepare_start(config_bytes: &[u8]) -> Result<()> {
     let config = decode_unit_config(config_bytes)?;
     println!("starting {}", config.unit_name);
-    if let Some(service) = config.service {
-        println!("exec_start = {}", service.exec_start);
+    let directives = config::parse_json(&config.config_json)?;
+    for command in config::get_strings(&directives, "ExecStart") {
+        println!("exec_start = {command}");
     }
     Ok(())
 }
@@ -53,5 +55,6 @@ fn prepare_start(config_bytes: &[u8]) -> Result<()> {
 ## 相关 API
 
 - [`UnitController`](./UnitController.md)：`start` / `restart` / `reload` 的 `config` 参数。
+- [`UnitIR`](../ir/UnitIR.md)：`config_json` 解码后的指令字典结构。
 - [`SysError`](../error_code/SysError.md)：底层错误类型。
 - [`ErrorCode`](../error_code/ErrorCode.md)：错误码 `UnitConfigDecodeFailed`。

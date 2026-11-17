@@ -62,25 +62,7 @@ pub fn user_slice_ir(unit_name: &str, description: &str) -> UnitIR {
         unit_type: Some(UnitType::Slice),
         description: Some(description.to_string()),
         source_format: Some("dynamic".to_string()),
-        source_path: None,
-        aliases: Vec::new(),
-        alias_of: None,
-        slice: None,
-        dependencies: None,
-        service: None,
-        mount: None,
-        automount: None,
-        timer: None,
-        socket: None,
-        path: None,
-        resource_control: None,
-        conditions: None,
-        asserts: None,
-        wanted_by: None,
-        required_by: None,
-        enabled: None,
-        unit_file_state: None,
-        template: None,
+        ..Default::default()
     }
 }
 
@@ -195,29 +177,13 @@ fn slice_ir_for(unit_name: &str, parent: &str) -> UnitIR {
         unit_type: Some(UnitType::Slice),
         description: slice_description(unit_name),
         source_format: Some("dynamic".to_string()),
-        source_path: None,
-        aliases: Vec::new(),
-        alias_of: None,
         slice: Some(parent.to_string()),
         dependencies: Some(DependencySet {
             requires: HashSet::from([parent.to_string()]),
             after: HashSet::from([parent.to_string()]),
             ..Default::default()
         }),
-        service: None,
-        mount: None,
-        automount: None,
-        timer: None,
-        socket: None,
-        path: None,
-        resource_control: None,
-        conditions: None,
-        asserts: None,
-        wanted_by: None,
-        required_by: None,
-        enabled: None,
-        unit_file_state: None,
-        template: None,
+        ..Default::default()
     }
 }
 

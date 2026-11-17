@@ -7,6 +7,7 @@
 //!   (`timer.fired`).
 //! - Report `method.result` and `unit.state_update` messages back to System A.
 
+mod config;
 mod controller;
 mod engine;
 mod ipc;

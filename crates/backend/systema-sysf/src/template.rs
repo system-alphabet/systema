@@ -148,7 +148,7 @@ impl<'a> Specifiers<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{DependencySet, ExecCommand, ServiceConfig};
+    use crate::ir::{ConfigMap, DependencySet};
 
     fn template() -> UnitIR {
         UnitIR {
@@ -165,24 +165,13 @@ mod tests {
                 wants: ["dev-%i.device".to_string()].into_iter().collect(),
                 ..Default::default()
             }),
-            service: Some(ServiceConfig {
-                exec_start: vec![ExecCommand {
-                    raw: "/sbin/agetty %i".to_string(),
-                    program: "/sbin/agetty".to_string(),
-                    args: vec!["%i".to_string()],
-                    ignore_failure: false,
-                    privileged: false,
-                }],
-                tty_path: "/dev/%i".to_string(),
-                environment: vec!["GETTY=%I".to_string()],
-                ..Default::default()
+            config: Some({
+                let mut map = ConfigMap::new();
+                map.insert("ExecStart".to_string(), serde_json::json!(["/sbin/agetty %i"]));
+                map.insert("TTYPath".to_string(), serde_json::json!("/dev/%i"));
+                map.insert("Environment".to_string(), serde_json::json!(["GETTY=%I"]));
+                map
             }),
-            mount: None,
-            automount: None,
-            timer: None,
-            socket: None,
-            path: None,
-            resource_control: None,
             conditions: None,
             asserts: None,
             wanted_by: None,
@@ -209,10 +198,19 @@ mod tests {
         assert_eq!(ir.template_parameters(), ["tty3"]);
 
         assert_eq!(ir.description.as_deref(), Some("Getty on tty3"));
-        let svc = ir.service.as_ref().expect("service config");
-        assert_eq!(svc.tty_path, "/dev/tty3");
-        assert_eq!(svc.exec_start[0].args, ["tty3"]);
-        assert_eq!(svc.environment, ["GETTY=tty3"]);
+        let config = ir.config.as_ref().expect("service directives");
+        assert_eq!(
+            config.get("TTYPath").and_then(|v| v.as_str()),
+            Some("/dev/tty3")
+        );
+        assert_eq!(
+            config.get("ExecStart").and_then(|v| v.as_array()),
+            Some(&vec![serde_json::json!("/sbin/agetty tty3")])
+        );
+        assert_eq!(
+            config.get("Environment").and_then(|v| v.as_array()),
+            Some(&vec![serde_json::json!("GETTY=tty3")])
+        );
 
         let deps = ir.dependencies.as_ref().expect("dependencies");
         assert_eq!(
@@ -229,10 +227,16 @@ mod tests {
     fn instantiate_unescapes_the_instance_for_wide_specifiers() {
         let params = vec!["dev-sda\\x2d1".to_string()];
         let ir = instantiate(&template(), "getty@dev-sda\\x2d1.service", &params);
-        let svc = ir.service.as_ref().unwrap();
+        let config = ir.config.as_ref().unwrap();
         // %i keeps the escaped form, %I is unescaped (mirrors systemd).
-        assert_eq!(svc.tty_path, "/dev/dev-sda\\x2d1");
-        assert_eq!(svc.environment, ["GETTY=dev-sda-1"]);
+        assert_eq!(
+            config.get("TTYPath").and_then(|v| v.as_str()),
+            Some("/dev/dev-sda\\x2d1")
+        );
+        assert_eq!(
+            config.get("Environment").and_then(|v| v.as_array()),
+            Some(&vec![serde_json::json!("GETTY=dev-sda-1")])
+        );
     }
 
     #[test]
@@ -242,7 +246,13 @@ mod tests {
         let params = vec!["a".to_string(), "b".to_string()];
         let ir = instantiate(&template(), "getty@a.service", &params);
         assert_eq!(ir.template_parameters(), ["a", "b"]);
-        assert_eq!(ir.service.as_ref().unwrap().tty_path, "/dev/a");
+        assert_eq!(
+            ir.config
+                .as_ref()
+                .and_then(|config| config.get("TTYPath"))
+                .and_then(|v| v.as_str()),
+            Some("/dev/a")
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! When every rule is unset the rule set is not satisfiable on its own; the
 //! caller treats those units as implicit — matched purely by unit name.
 
-use sysa::proto::DeviceConfig;
+use crate::config::DeviceConfig;
 
 use crate::discovery::DeviceMeta;
 

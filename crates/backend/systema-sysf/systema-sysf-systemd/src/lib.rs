@@ -6,6 +6,7 @@
 //! as well so the System Allocator can share the unit-file types it receives
 //! as IR; parsing itself stays here — System A never reads unit files.
 
+pub mod config_map;
 pub mod finder;
 pub mod loader;
 pub mod parser;

@@ -3,7 +3,7 @@ use std::os::unix::io::RawFd;
 use std::time::Duration;
 
 use anyhow::Result;
-use sysa::proto::{AutomountConfig, MountConfig};
+use systema_sysm_common::config::{AutomountConfig, MountConfig};
 use tokio::io::unix::AsyncFd;
 use tracing::{debug, info, warn};
 

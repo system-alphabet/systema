@@ -77,134 +77,6 @@ message AdminStagingResult {
     repeated StagingAreaEntry entries = 3;
 }
 
-// Configuration for a .socket unit, sent inside UnitConfig.
-message SocketConfig {
-    // Addresses to listen on — see SocketAddress below.
-    repeated SocketAddress listen = 1;
-    // Accept=yes -> per-connection service; Accept=no -> passive socket.
-    bool accept = 2;
-    // listen() backlog (kernel default if 0).
-    uint32 backlog = 3;
-    // Socket file mode (numeric, e.g. "0666").
-    string socket_mode = 4;
-    // Socket user/group for Unix sockets.
-    string socket_user = 5;
-    string socket_group = 6;
-    // Associated service unit name.
-    string service = 7;
-    // Permission mode for automatically created socket directories (e.g. "0755").
-    string directory_mode = 8;
-}
-
-// One listen address in a SocketConfig.
-message SocketAddress {
-    // ListenStream= address, e.g. "0.0.0.0:8080", "/run/foo.sock".
-    string stream = 1;
-    // ListenDatagram= address.
-    string datagram = 2;
-    // ListenSequentialPacket= address.
-    string sequential_packet = 3;
-    // ListenFIFO= path.
-    string fifo = 4;
-    // ListenNetlink= address, e.g. "kobject-uevent 1".
-    string netlink = 5;
-}
-
-// Configuration for a .mount unit, sent inside UnitConfig.
-message MountConfig {
-    // Device or remote filesystem to mount (What=).
-    string what = 1;
-    // Mount point path (Where=).
-    string where = 2;
-    // Filesystem type, e.g. "ext4", "nfs" (Type=).
-    string type = 3;
-    // Mount options passed to mount(8) (Options=).
-    string options = 4;
-    // Time to wait for the mount operation in seconds (TimeoutSec=).
-    uint32 timeout_sec = 5;
-    // Unmount lazily (LazyUnmount=).
-    bool lazy_unmount = 6;
-    // Force unmount even if busy (ForceUnmount=).
-    bool force_unmount = 7;
-    // Permission mode for the mount point directory (DirectoryMode=).
-    string directory_mode = 8;
-    // Ignore unknown mount options (SloppyOptions=).
-    bool sloppy_options = 9;
-}
-
-// Configuration for a .automount unit, sent inside UnitConfig.
-message AutomountConfig {
-    // Mount point path (Where=).
-    string where = 1;
-    // Extra mount options passed to the autofs mount (ExtraOptions=).
-    string extra_options = 2;
-    // Idle timeout in seconds after which the mount is unmounted (TimeoutIdleSec=).
-    uint32 timeout_idle_sec = 3;
-    // Permission mode for the mount point directory (DirectoryMode=).
-    string directory_mode = 4;
-}
-
-// Configuration for a .timer unit, sent inside UnitConfig.
-message TimerConfig {
-    // Monotonic triggers (seconds relative to an anchor); unset = disabled.
-    optional uint32 on_active_sec = 1;        // after this timer unit was activated
-    optional uint32 on_boot_sec = 2;          // after the machine booted
-    optional uint32 on_startup_sec = 3;        // after the service manager started
-    optional uint32 on_unit_active_sec = 4;    // periodically, after the trigger unit became active
-    optional uint32 on_unit_inactive_sec = 5;  // periodically, after the trigger unit became inactive
-    // Wall-clock triggers in systemd OnCalendar= syntax (repeat forever).
-    repeated string on_calendar = 6;
-    // Trigger tolerance (AccuracySec=), in seconds; default 60.
-    uint32 accuracy_sec = 7;
-    // Random delay added to each elapse (RandomizedDelaySec=), in seconds.
-    uint32 randomized_delay_sec = 8;
-    // Unit to activate when the timer fires (Unit=).  Defaults to the
-    // sibling ".service" unit with the same base name.
-    string unit = 9;
-    // Catch up on missed calendar elapses after (re)start (Persistent=).
-    bool persistent = 10;
-}
-
-// Configuration for a .device unit, sent inside UnitConfig.
-message DeviceConfig {
-    // Rule: the basename of the device node as seen in /dev,
-    // e.g. "sda"; DeviceName=.
-    string device_name = 1;
-    // Rule: a path in /dev, e.g. "/dev/sda"; DevicePath=.
-    string device_path = 2;
-    // Rule: a sysfs path of the device, e.g. "/sys/devices/.../sda"; SysfsPath=.
-    string sysfs_path = 3;
-    // Rule: sysfs attribute matches in "attr=value" form; Property=.
-    repeated string property = 4;
-}
-
-// Configuration for a .path unit, sent inside UnitConfig.
-message PathConfig {
-    // Activate when the path exists (PathExists=).
-    repeated string path_exists = 1;
-    // Activate when a path matching the glob exists (PathExistsGlob=).
-    repeated string path_exists_glob = 2;
-    // Activate when the path is created or modified (PathChanged=).
-    repeated string path_changed = 3;
-    // Activate when the path is modified (PathModified=).
-    repeated string path_modified = 4;
-    // Activate when the directory is non-empty (DirectoryNotEmpty=).
-    repeated string directory_not_empty = 5;
-    // Unit to activate when the path triggers (Unit=).  Defaults to the
-    // sibling ".service" unit with the same base name.
-    string unit = 6;
-    // Create watched directories before watching (MakeDirectory=).
-    bool make_directory = 7;
-    // Permission mode for auto-created directories (DirectoryMode=), e.g. "0755".
-    string directory_mode = 8;
-    // Trigger rate-limit interval in seconds (TriggerLimitIntervalSec=);
-    // 0 disables rate limiting.  Default 2.
-    uint32 trigger_limit_interval_sec = 9;
-    // Trigger rate-limit burst count (TriggerLimitBurst=); 0 disables rate
-    // limiting.  Default 200.
-    uint32 trigger_limit_burst = 10;
-}
-
 // ──────────────────────────────────────────────────────────────────
 // Resource control (System R)
 // ──────────────────────────────────────────────────────────────────
@@ -302,22 +174,17 @@ message ScopeAbandon {
 message UnitConfig {
     string unit_name = 1;
     string description = 2;
-    // For service units.
-    ServiceConfig service = 3;
-    // For socket units.
-    SocketConfig socket = 4;
-    // For mount units.
-    MountConfig mount = 5;
-    // For automount units.
-    AutomountConfig automount = 6;
-    // For timer units.
-    TimerConfig timer = 7;
-    // For device units.
-    DeviceConfig device = 8;
-    // For path units.
-    PathConfig path = 9;
-    // For scope units.
-    ScopeConfig scope = 10;
+    // Flattened directives of the unit's type-specific section, as a JSON
+    // object: keys are the directive names exactly as written in the unit
+    // file, a single-valued directive maps to a JSON string and a repeated
+    // one to an array of strings.  The owning section is implied by the
+    // unit's type (its name extension), so no section name appears in a key.
+    // Empty for unit types without configuration.
+    //
+    // The worker that owns the type parses the keys it knows; this message
+    // deliberately carries no typed section, so the wire contract stays as
+    // wide as the unit file itself.
+    bytes config_json = 3;
     // Socket units this unit depends on (Requires=/BindsTo= *.socket).
     // The service worker requests their listener fds (LISTEN_FDS) from the
     // socket worker when starting the process (socket activation).
@@ -326,81 +193,8 @@ message UnitConfig {
     // before exec (filled by System A after a successful `resource.prepare`
     // for Delegate= units; empty = no placement, cgroup untouched).
     string cgroup_path = 12;
-}
-
-message ServiceConfig {
-    string exec_start = 1;
-    string exec_stop = 2;
-    string exec_reload = 3;
-    string working_directory = 4;
-    string user = 5;
-    string group = 6;
-    repeated string environment = 7;
-    string restart_policy = 8;   // "no", "on-failure", "always"
-    uint32 restart_delay_secs = 9;
-    string service_type = 10;    // "simple", "forking", "oneshot", "notify"
-    string pid_file = 11;
-    uint32 timeout_start_secs = 12;
-    uint32 timeout_stop_secs = 13;
-    string standard_input = 14;
-    string standard_output = 15;
-    string standard_error = 16;
-    string tty_path = 17;
-    // RemainAfterExit=yes: the service stays "active" after its main process
-    // exits successfully (oneshot style), instead of going inactive.
-    bool remain_after_exit = 18;
-    // PAMName=: PAM service name whose session is opened before exec (used to
-    // set up the runtime environment, e.g. pam_systemd.so for user@.service).
-    string pam_name = 19;
-    // BusName=: D-Bus name whose acquisition marks a Type=dbus service as
-    // started (the worker waits for the name to be owned before the start
-    // job completes, like systemd's service_bus_name_owner_change()).
-    string bus_name = 20;
-    // Directory directives (systemd.exec(5)): the worker creates each
-    // fragment below the per-type base (/var/lib, /var/log, /run, /etc),
-    // applies the mode, chowns it to the service user and exports the
-    // corresponding colon-joined env var ($STATE_DIRECTORY,
-    // $LOGS_DIRECTORY, $RUNTIME_DIRECTORY, $CONFIGURATION_DIRECTORY).
-    // Mode 0 means "unset" (worker default 0755).  Fragments are
-    // whitespace-split at parse time.
-    repeated string state_directory = 21;
-    uint32 state_directory_mode = 22;
-    repeated string logs_directory = 23;
-    uint32 logs_directory_mode = 24;
-    repeated string runtime_directory = 25;
-    uint32 runtime_directory_mode = 26;
-    repeated string configuration_directory = 27;
-    uint32 configuration_directory_mode = 28;
-    // `ExecStartPre=` / `ExecStartPost=` command lines in file order, as raw
-    // command strings (modifier prefixes included, so the worker can honor
-    // `-`, `+` and `|`).  Each one runs to completion before (respectively
-    // after) the main ExecStart process, like systemd's start-pre/start-post
-    // phases; a failing command without the `-` prefix fails the start job.
-    repeated string exec_start_pre = 29;
-    repeated string exec_start_post = 30;
-}
-
-// Configuration for `.scope` units, sent to the System E worker.
-//
-// Scopes wrap externally-created processes (not spawned by systemd): the
-// caller passes the PIDs via the transient `PIDs=` property and the worker
-// attaches them to the scope's cgroup.  The scope runs until its cgroup
-// becomes empty, is stopped, or its controller abandons it.
-message ScopeConfig {
-    // Processes wrapped by the scope (`PIDs=`).
-    repeated uint32 pids = 1;
-    // Timeout for the scope in seconds (`TimeoutStopSec=`, default 90).
-    uint32 timeout_stop_secs = 2;
-    // Runtime timeout in seconds (`RuntimeMaxSec=`, 0 = unlimited).
-    uint32 runtime_max_secs = 3;
-    // Signal to send when stopping (`KillSignal=`, default SIGTERM).
-    string kill_signal = 4;
-    // Whether to send SIGHUP before SIGKILL (`SendSIGHUP=`).
-    bool send_sighup = 5;
-    // D-Bus name of the controller that created the scope.
-    string controller = 6;
-    // Parent slice from [Unit] Slice=; empty means the default (system.slice).
-    string slice = 7;
+    // Former typed section fields.  Their data now travels in `config_json`.
+    reserved 4 to 10;
 }
 
 // ---------------------------------------------------------------------------

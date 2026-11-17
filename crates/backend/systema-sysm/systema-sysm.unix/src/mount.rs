@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use sysa::proto::MountConfig;
+use systema_sysm_common::config::MountConfig;
 use tokio::process::Command;
 use tracing::{info, warn};
 
