@@ -348,21 +348,24 @@ impl ServiceController {
     /// given socket units, in order.  Each request is a `socket.request_fd`
     /// envelope; the matching fd arrives back on our fdpass channel.
     ///
-    /// A service that declares `Sockets=`/`Requires=*.socket` expects to be
-    /// spawned with those fds as `LISTEN_FDS`; starting it without them is
-    /// almost never recoverable (e.g. `dbus-daemon --address=systemd:` exits
-    /// silently with status 1), so every missing fd is logged with the service
-    /// it belongs to.
+    /// Returns the fds together with their `LISTEN_FDNAMES` names, in the
+    /// same order.  A service that declares `Sockets=`/`Requires=*.socket`
+    /// expects to be spawned with those fds as `LISTEN_FDS`; starting it
+    /// without them is almost never recoverable (e.g. `dbus-daemon
+    /// --address=systemd:` exits silently with status 1), and consumers such
+    /// as `systemd-udevd` look their sockets up by name, so every missing fd
+    /// is logged with the service it belongs to.
     #[cfg(unix)]
     async fn request_listener_fds(
         &self,
         unit_name: &str,
         socket_units: &[String],
-    ) -> Vec<std::os::unix::io::RawFd> {
+        socket_fd_names: &[String],
+    ) -> (Vec<std::os::unix::io::RawFd>, Vec<String>) {
         use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
         let requested: Vec<&String> = socket_units.iter().filter(|u| !u.is_empty()).collect();
         if requested.is_empty() {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         // One request/response round at a time: the fdpass stream has no
         // correlation IDs, so concurrent rounds could swap fds between
@@ -386,10 +389,11 @@ impl ServiceController {
                 "{}: no fd-pass channel; starting without listener fds for {:?}",
                 unit_name, requested
             );
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let mut fds: Vec<RawFd> = Vec::new();
-        for unit in socket_units {
+        let mut names: Vec<String> = Vec::new();
+        for (idx, unit) in socket_units.iter().enumerate() {
             if unit.is_empty() {
                 continue;
             }
@@ -401,7 +405,20 @@ impl ServiceController {
             )
             .await
             {
-                Ok(Ok(fd)) => fds.push(fd),
+                Ok(Ok(fd)) => {
+                    fds.push(fd);
+                    // `socket_fd_names` is parallel to `socket_units`: the
+                    // fd just received belongs to `unit`, so it takes that
+                    // entry's name (System A already defaulted it to the
+                    // unit name).
+                    names.push(
+                        socket_fd_names
+                            .get(idx)
+                            .filter(|n| !n.is_empty())
+                            .cloned()
+                            .unwrap_or_else(|| unit.clone()),
+                    );
+                }
                 Ok(Err(e)) => {
                     warn!("recv_fd for '{}' failed: {}", unit, e);
                     break;
@@ -421,7 +438,7 @@ impl ServiceController {
                 requested
             );
         }
-        fds
+        (fds, names)
     }
 
     fn status_of(&self, unit_name: &str) -> UnitStatus {
@@ -540,13 +557,20 @@ impl UnitController for ServiceController {
             return Ok(());
         }
         #[cfg(unix)]
-        let listen_fds = self
-            .request_listener_fds(unit_name, &cfg.socket_units)
+        let (listen_fds, listen_fd_names) = self
+            .request_listener_fds(unit_name, &cfg.socket_units, &cfg.socket_fd_names)
             .await;
         #[cfg(not(unix))]
-        let listen_fds = Vec::new();
+        let (listen_fds, listen_fd_names) = (Vec::new(), Vec::new());
         let svc = ServiceConfig::from_unit_config(&cfg).expect("non-noop service has a section");
-        let (_pid, child) = start_service(self.registry.clone(), &cfg, inv_id, listen_fds).await?;
+        let (_pid, child) = start_service(
+            self.registry.clone(),
+            &cfg,
+            inv_id,
+            listen_fds,
+            listen_fd_names,
+        )
+        .await?;
         {
             let mut reg = self.registry.lock();
             if let Some(inst) = reg.get_mut(unit_name) {
@@ -573,6 +597,7 @@ impl UnitController for ServiceController {
                 unit_name.to_string(),
                 self.event_pub.clone(),
                 child,
+                _pid,
             ));
             self.await_notify_start(unit_name, _pid, &cfg).await?;
             self.await_dbus_start(unit_name, _pid, &cfg).await?;
@@ -634,13 +659,20 @@ impl UnitController for ServiceController {
             Some(invocation_id.to_string())
         };
         #[cfg(unix)]
-        let listen_fds = self
-            .request_listener_fds(unit_name, &cfg.socket_units)
+        let (listen_fds, listen_fd_names) = self
+            .request_listener_fds(unit_name, &cfg.socket_units, &cfg.socket_fd_names)
             .await;
         #[cfg(not(unix))]
-        let listen_fds = Vec::new();
+        let (listen_fds, listen_fd_names) = (Vec::new(), Vec::new());
         let svc = ServiceConfig::from_unit_config(&cfg).expect("non-noop service has a section");
-        let (_pid, child) = start_service(self.registry.clone(), &cfg, inv_id, listen_fds).await?;
+        let (_pid, child) = start_service(
+            self.registry.clone(),
+            &cfg,
+            inv_id,
+            listen_fds,
+            listen_fd_names,
+        )
+        .await?;
         {
             let mut reg = self.registry.lock();
             if let Some(inst) = reg.get_mut(unit_name) {
@@ -659,6 +691,7 @@ impl UnitController for ServiceController {
                 unit_name.to_string(),
                 self.event_pub.clone(),
                 child,
+                _pid,
             ));
             self.await_notify_start(unit_name, _pid, &cfg).await?;
             self.await_dbus_start(unit_name, _pid, &cfg).await?;

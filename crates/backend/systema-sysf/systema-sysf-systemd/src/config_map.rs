@@ -149,6 +149,7 @@ fn put_socket(map: &mut ConfigMap, section: &SocketSection) {
     put_strings(map, "ListenSpecial", &section.listen_special);
     put_bool(map, "Accept", section.accept);
     put_str(map, "Service", &section.service);
+    put_str(map, "FileDescriptorName", &section.file_descriptor_name);
     put_str(map, "SocketUser", &section.socket_user);
     put_str(map, "SocketGroup", &section.socket_group);
     put_str(map, "SocketMode", &section.socket_mode);
@@ -410,6 +411,7 @@ fn apply_socket(section: &mut SocketSection, map: &ConfigMap) {
     apply_strings(map, "ListenSpecial", &mut section.listen_special);
     apply_bool(map, "Accept", &mut section.accept);
     apply_str(map, "Service", &mut section.service);
+    apply_str(map, "FileDescriptorName", &mut section.file_descriptor_name);
     apply_str(map, "SocketUser", &mut section.socket_user);
     apply_str(map, "SocketGroup", &mut section.socket_group);
     apply_str(map, "SocketMode", &mut section.socket_mode);

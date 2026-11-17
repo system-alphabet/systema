@@ -51,6 +51,65 @@ pub fn new_manager() -> SocketManager {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+/// Raw fd of a bound listener.
+fn listener_raw_fd(listener: &BoundSocket) -> RawFd {
+    match listener {
+        BoundSocket::Tcp(l) => l.as_raw_fd(),
+        BoundSocket::UnixStream(l) => l.as_raw_fd(),
+        BoundSocket::Udp(fd) | BoundSocket::Fifo(fd) | BoundSocket::Netlink(fd) => *fd,
+    }
+}
+
+/// Apply `PassCredentials=` / `PassSecurity=` to a listener, mirroring
+/// systemd's `socket_apply()`.
+///
+/// The kernel attaches `SCM_CREDENTIALS` / `SCM_SECURITY` to received
+/// messages only when the receiving socket enabled these options.
+/// `systemd-udevd` rejects credential-less uevents ("No sender credentials
+/// received, ignoring message."), so a passed netlink fd without
+/// `SO_PASSCRED` makes it sit idle and ignore every kernel device event.
+fn apply_pass_options(fd: RawFd, config: &SocketConfig, unit_name: &str) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        for (option, enabled, directive) in [
+            (
+                libc::SO_PASSCRED,
+                config.pass_credentials,
+                "PassCredentials",
+            ),
+            (libc::SO_PASSSEC, config.pass_security, "PassSecurity"),
+        ] {
+            if !enabled {
+                continue;
+            }
+            let one: libc::c_int = 1;
+            let rc = unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    option,
+                    (&one as *const libc::c_int).cast(),
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                )
+            };
+            if rc < 0 {
+                // Like systemd: a socket option that cannot be applied is a
+                // warning, not a reason to fail the unit.
+                warn!(
+                    "{}: cannot apply {}: {}",
+                    unit_name,
+                    directive,
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let _ = (fd, config, unit_name);
+    }
+}
+
 /// Start a socket unit: create, bind, and listen on all configured addresses.
 pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketConfig) -> Result<()> {
     let mut guard = manager.lock();
@@ -131,6 +190,12 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
             })?;
             listeners.push(BoundSocket::Netlink(fd));
         }
+    }
+
+    // Enable the ancillary-data options before any listener can be handed to
+    // a service (systemd's `socket_apply()` runs at the same point).
+    for listener in &listeners {
+        apply_pass_options(listener_raw_fd(listener), config, unit_name);
     }
 
     let any_address = config.listen.iter().any(|addr| {

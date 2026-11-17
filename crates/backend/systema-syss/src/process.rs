@@ -158,12 +158,16 @@ pub(crate) fn start_timeout_secs(config: &UnitConfig) -> u64 {
 /// systemd-style socket-activation fds: they are moved to 3..3+N,
 /// `LISTEN_FDS=N` / `LISTEN_PID=<child pid>` are set in the child, and the
 /// original descriptors are closed in the parent after `spawn()`.
+/// `listen_fd_names` names those fds in the same order and is exported as
+/// `LISTEN_FDNAMES`, which consumers such as `systemd-udevd` use to find
+/// their sockets (`varlink`, `systemd-udevd-kernel.socket`).
 #[cfg(unix)]
 pub async fn start_service(
     registry: ServiceRegistry,
     config: &UnitConfig,
     invocation_id: Option<String>,
     listen_fds: Vec<RawFd>,
+    listen_fd_names: Vec<String>,
 ) -> Result<(u32, Child)> {
     let unit_name = config.unit_name.clone();
     let svc = ServiceConfig::from_unit_config(config).ok_or_else(|| {
@@ -461,7 +465,21 @@ pub async fn start_service(
     // A non-empty UnitConfig.cgroup_path (Delegate= prepared by System R)
     // moves the child into its delegated cgroup while still root, and
     // User=/Group= credentials are applied last, in the child.
-    let sa_pre_exec = build_pre_exec(child_envs, &listen_fds, creds, config.cgroup_path.clone());
+    //
+    // LISTEN_FDNAMES is positional too: drop the names unless they line up
+    // exactly with the fds (a mismatch would name the wrong socket).
+    let listen_fd_names = if listen_fd_names.len() == listen_fds.len() {
+        listen_fd_names
+    } else {
+        Vec::new()
+    };
+    let sa_pre_exec = build_pre_exec(
+        child_envs,
+        &listen_fds,
+        &listen_fd_names,
+        creds,
+        config.cgroup_path.clone(),
+    );
     // Whether the TTY hook below acquires a new session for the child.  That
     // is mutually exclusive with `process_group(0)`: `setsid()` fails with
     // EPERM when the caller is already a process group leader, so the two
@@ -580,6 +598,7 @@ pub async fn start_service(
     _config: &UnitConfig,
     _invocation_id: Option<String>,
     _listen_fds: Vec<i32>,
+    _listen_fd_names: Vec<String>,
 ) -> Result<(u32, Child)> {
     bail!(sysa::l10n::t_(
         "Starting services is not supported on this platform."
@@ -731,7 +750,8 @@ async fn run_exec_commands(
             }
         }
 
-        if let Some(mut pre) = build_pre_exec(child_envs, &[], creds, cgroup_path.to_string()) {
+        if let Some(mut pre) = build_pre_exec(child_envs, &[], &[], creds, cgroup_path.to_string())
+        {
             unsafe {
                 cmd.pre_exec(move || pre());
             }
@@ -1319,43 +1339,44 @@ fn resolve_credentials(user: &str, group: &str) -> Result<Option<Creds>> {
 
     let mut gid: Option<Gid> = None;
     if let Some(g) = &group {
-        let gr = Group::from_name(g)
-            .with_context(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("lookup of group '{g}' failed"),
-                    &[("g", &g.to_string())],
-                )
-            })?
-            .ok_or_else(|| {
-                anyhow::anyhow!(sysa::l10n::fmt(
-                    sysa::l10n::t_("group '{g}' not found"),
-                    &[("g", &g.to_string())]
-                ))
-            })?;
+        // Numeric values are GIDs, not names (systemd's get_group_creds());
+        // a name lookup would return ENOENT and mask the numeric value.
+        let found = if let Ok(n) = g.parse::<u32>() {
+            Group::from_gid(Gid::from_raw(n))
+        } else {
+            Group::from_name(g)
+        }
+        .with_context(|| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("lookup of group '{g}' failed"),
+                &[("g", &g.to_string())],
+            )
+        })?;
+        let gr = found.ok_or_else(|| {
+            anyhow::anyhow!(sysa::l10n::fmt(
+                sysa::l10n::t_("group '{g}' not found"),
+                &[("g", &g.to_string())]
+            ))
+        })?;
         gid = Some(gr.gid);
     }
 
     let mut uid: Option<Uid> = None;
     if let Some(u) = &username {
-        let found = match User::from_name(u).with_context(|| {
-            sysa::l10n::fmt(
-                sysa::l10n::t_("lookup of user '{u}' failed"),
-                &[("u", &u.to_string())],
-            )
-        })? {
-            Some(usr) => Some(usr),
-            // Numeric UID (systemd resolves `User=1000` via getpwuid).
-            None => u.parse::<u32>().ok().and_then(|n| {
-                User::from_uid(Uid::from_raw(n))
-                    .with_context(|| {
-                        sysa::l10n::fmt(
-                            sysa::l10n::t_("lookup of uid '{n}' failed"),
-                            &[("n", &n.to_string())],
-                        )
-                    })
-                    .ok()
-                    .flatten()
-            }),
+        let found = if let Ok(n) = u.parse::<u32>() {
+            User::from_uid(Uid::from_raw(n)).with_context(|| {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("lookup of uid '{n}' failed"),
+                    &[("n", &n.to_string())],
+                )
+            })?
+        } else {
+            User::from_name(u).with_context(|| {
+                sysa::l10n::fmt(
+                    sysa::l10n::t_("lookup of user '{u}' failed"),
+                    &[("u", &u.to_string())],
+                )
+            })?
         };
         let usr = found.ok_or_else(|| {
             anyhow::anyhow!(sysa::l10n::fmt(
@@ -1405,8 +1426,9 @@ fn pid_is_zombie(_pid: u32) -> bool {
 /// socket-activation fds: each fd is dup2'ed to 3..3+N with CLOEXEC
 /// cleared, the originals are CLOEXEC-flagged (they must not leak past
 /// exec), sets `LISTEN_PID` / `LISTEN_FDS` (the pid is only known in the
-/// child; `sd_listen_fds()` verifies `LISTEN_PID` against `getpid()`),
-/// moves the process into `cgroup_path` (Delegate= placement; empty =
+/// child; `sd_listen_fds()` verifies `LISTEN_PID` against `getpid()`) and
+/// `LISTEN_FDNAMES` (colon-joined `listen_fd_names`, when there is one per
+/// fd), moves the process into `cgroup_path` (Delegate= placement; empty =
 /// untouched) while it is still root, and finally switches credentials
 /// (`initgroups`/`setgid`/`setuid`) when `creds` is set — mirroring
 /// systemd's `apply_credentials()`.
@@ -1425,10 +1447,18 @@ fn pid_is_zombie(_pid: u32) -> bool {
 fn build_pre_exec(
     child_envs: Vec<(CString, CString)>,
     listen_fds: &[RawFd],
+    listen_fd_names: &[String],
     creds: Option<Creds>,
     cgroup_path: String,
 ) -> Option<PreExecFn> {
     let fds = listen_fds.to_vec();
+    // Pre-build the `LISTEN_FDNAMES` value outside the hook: pre_exec must
+    // not allocate (it runs between fork and exec), and the value is fixed.
+    let fd_names = if fds.is_empty() || listen_fd_names.len() != fds.len() {
+        None
+    } else {
+        CString::new(listen_fd_names.join(":")).ok()
+    };
     Some(Box::new(move || {
         for (key, val) in &child_envs {
             unsafe {
@@ -1479,6 +1509,11 @@ fn build_pre_exec(
             })?;
             unsafe {
                 libc::setenv(c"LISTEN_FDS".as_ptr(), n_fds.as_ptr(), 1);
+            }
+            if let Some(names) = &fd_names {
+                unsafe {
+                    libc::setenv(c"LISTEN_FDNAMES".as_ptr(), names.as_ptr(), 1);
+                }
             }
         }
         // Delegate= placement: move this process into the unit's prepared,
@@ -3844,5 +3879,16 @@ mod stop_tests {
         assert!(run_exec_reload(registry, "reload-fail.service", &cfg, None)
             .await
             .is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn numeric_user_is_resolved_as_a_uid() {
+        // `User=0` must go through getpwuid, not a name lookup: nix returns
+        // ENOENT for the unknown *name* "0", which used to mask the numeric
+        // value entirely.
+        let creds = resolve_credentials("0", "").unwrap().expect("credentials");
+        assert_eq!(creds.uid, 0);
+        assert_eq!(creds.username.as_deref(), Some("root"));
     }
 }

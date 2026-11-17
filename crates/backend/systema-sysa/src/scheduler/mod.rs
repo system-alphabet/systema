@@ -2692,6 +2692,39 @@ fn build_unit_config(
         );
     }
 
+    let mut socket_units: Vec<String> = uf
+        .unit
+        .requires
+        .iter()
+        .chain(uf.unit.binds_to.iter())
+        .filter(|d| d.ends_with(".socket"))
+        .cloned()
+        .collect();
+    // Also include socket units from Sockets= (socket activation).
+    if let Some(svc) = &uf.service {
+        socket_units.extend(svc.sockets.iter().cloned());
+    }
+    socket_units.sort();
+    socket_units.dedup();
+
+    // Name every fd the service receives alongside `socket_units`, in that
+    // same order: the socket unit's `FileDescriptorName=`, or its own unit
+    // name (systemd's `socket_unit_default_fdname`).  Consumers such as
+    // `systemd-udevd` identify their sockets by these names ("varlink",
+    // "systemd-udevd-kernel.socket") and reject unnamed fds, so a
+    // positional-only handover leaves udev dead.
+    let socket_fd_names: Vec<String> = socket_units
+        .iter()
+        .map(|unit| {
+            all_units
+                .get(unit)
+                .and_then(|suf| suf.socket.as_ref())
+                .map(|s| s.file_descriptor_name.clone())
+                .filter(|n| !n.is_empty() && n.len() < 256 && !n.contains(':'))
+                .unwrap_or_else(|| unit.clone())
+        })
+        .collect();
+
     UnitConfig {
         unit_name: uf.name.clone(),
         description: uf.unit.description.clone(),
@@ -2700,23 +2733,8 @@ fn build_unit_config(
         // leave the spawned process's cgroup alone.
         cgroup_path: cgroup_path.to_string(),
         config_json: sysa::ir::config::to_json_bytes(&config),
-        socket_units: {
-            let mut deps: Vec<String> = uf
-                .unit
-                .requires
-                .iter()
-                .chain(uf.unit.binds_to.iter())
-                .filter(|d| d.ends_with(".socket"))
-                .cloned()
-                .collect();
-            // Also include socket units from Sockets= (socket activation).
-            if let Some(svc) = &uf.service {
-                deps.extend(svc.sockets.iter().cloned());
-            }
-            deps.sort();
-            deps.dedup();
-            deps
-        },
+        socket_units,
+        socket_fd_names,
     }
 }
 
@@ -3305,10 +3323,56 @@ mod tests {
         );
     }
 
+    /// `LISTEN_FDNAMES` names must be carried next to `socket_units` in the
+    /// same order: udevd's varlink fd is called "varlink" (its
+    /// `FileDescriptorName=`), the netlink fd keeps the socket unit's name.
+    #[test]
+    fn listener_fds_are_named_by_file_descriptor_name() {
+        use crate::unit::types::{ServiceSection, SocketSection, UnitFile};
+
+        let mut kernel = UnitFile::new("systemd-udevd-kernel.socket");
+        kernel.socket = Some(SocketSection {
+            listen_netlink: vec!["kobject-uevent 1".to_string()],
+            service: "systemd-udevd.service".to_string(),
+            ..Default::default()
+        });
+        let mut varlink = UnitFile::new("systemd-udevd-varlink.socket");
+        varlink.socket = Some(SocketSection {
+            listen_stream: vec!["/run/udev/io.systemd.Udev".to_string()],
+            file_descriptor_name: "varlink".to_string(),
+            service: "systemd-udevd.service".to_string(),
+            ..Default::default()
+        });
+        let mut service = UnitFile::new("systemd-udevd.service");
+        service.service = Some(ServiceSection {
+            sockets: vec![
+                "systemd-udevd-varlink.socket".to_string(),
+                "systemd-udevd-kernel.socket".to_string(),
+            ],
+            ..Default::default()
+        });
+
+        let units: HashMap<String, UnitFile> = [kernel, varlink, service]
+            .into_iter()
+            .map(|u| (u.name.clone(), u))
+            .collect();
+        let cfg = build_unit_config(&units["systemd-udevd.service"], &units, "");
+        assert_eq!(
+            cfg.socket_units,
+            [
+                "systemd-udevd-kernel.socket",
+                "systemd-udevd-varlink.socket"
+            ]
+        );
+        assert_eq!(
+            cfg.socket_fd_names,
+            ["systemd-udevd-kernel.socket", "varlink"]
+        );
+    }
+
     // =========================================================================
     // Template instantiation on the start path
     // =========================================================================
-
     #[tokio::test]
     async fn request_unit_definition_materializes_an_instance_from_the_ir_template() {
         use crate::state::Allocator;

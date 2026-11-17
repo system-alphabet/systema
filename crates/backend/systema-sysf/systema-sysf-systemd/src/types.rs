@@ -984,6 +984,10 @@ pub struct SocketSection {
     /// Service unit to activate on data arrival (`Service=`).  Empty means
     /// derive the name from the socket unit ("foo.socket" -> "foo.service").
     pub service: String,
+    /// Name the listening fds are exported under in `LISTEN_FDNAMES=`
+    /// (`FileDescriptorName=`).  Empty means the socket unit's own name,
+    /// matching systemd (`socket_unit_default_fdname`).
+    pub file_descriptor_name: String,
     /// User for socket file ownership (`SocketUser=`).
     pub socket_user: String,
     /// Group for socket file ownership (`SocketGroup=`).

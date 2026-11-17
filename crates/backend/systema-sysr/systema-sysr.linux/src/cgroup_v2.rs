@@ -395,48 +395,49 @@ fn resolve_owner(user: &str, group: &str) -> Result<(u32, u32), String> {
     let mut gid: u32 = 0;
 
     if !user.is_empty() {
-        let found = User::from_name(user).map_err(|e| {
+        // Numeric values are UIDs, not names: systemd's get_user_creds()
+        // parses them directly.  `User::from_name("128")` returns ENOENT for
+        // an unknown *name*, so resolving it as a name first would fail
+        // before the numeric fallback could ever run.
+        let found = if let Ok(n) = user.parse::<u32>() {
+            User::from_uid(Uid::from_raw(n))
+        } else {
+            User::from_name(user)
+        }
+        .map_err(|e| {
             sysa::l10n::fmt(
                 sysa::l10n::t_("lookup of user '{user}' failed: {e}"),
                 &[("user", &user.to_string()), ("e", &e.to_string())],
             )
         })?;
-        let usr = found
-            .or_else(|| {
-                user.parse::<u32>()
-                    .ok()
-                    .and_then(|n| User::from_uid(Uid::from_raw(n)).ok().flatten())
-            })
-            .ok_or_else(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("user '{user}' not found"),
-                    &[("user", &user.to_string())],
-                )
-            })?;
+        let usr = found.ok_or_else(|| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("user '{user}' not found"),
+                &[("user", &user.to_string())],
+            )
+        })?;
         uid = usr.uid.as_raw();
         gid = usr.gid.as_raw();
     }
 
     if !group.is_empty() {
-        let found = Group::from_name(group).map_err(|e| {
+        let found = if let Ok(n) = group.parse::<u32>() {
+            Group::from_gid(Gid::from_raw(n))
+        } else {
+            Group::from_name(group)
+        }
+        .map_err(|e| {
             sysa::l10n::fmt(
                 sysa::l10n::t_("lookup of group '{group}' failed: {e}"),
                 &[("group", &group.to_string()), ("e", &e.to_string())],
             )
         })?;
-        let grp = found
-            .or_else(|| {
-                group
-                    .parse::<u32>()
-                    .ok()
-                    .and_then(|n| Group::from_gid(Gid::from_raw(n)).ok().flatten())
-            })
-            .ok_or_else(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("group '{group}' not found"),
-                    &[("group", &group.to_string())],
-                )
-            })?;
+        let grp = found.ok_or_else(|| {
+            sysa::l10n::fmt(
+                sysa::l10n::t_("group '{group}' not found"),
+                &[("group", &group.to_string())],
+            )
+        })?;
         gid = grp.gid.as_raw();
     }
 

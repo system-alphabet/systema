@@ -21,6 +21,11 @@ pub struct SocketConfig {
     pub socket_mode: String,
     pub service: String,
     pub directory_mode: String,
+    /// `PassCredentials=`: enable `SO_PASSCRED` on every listener, so the
+    /// kernel attaches `SCM_CREDENTIALS` to received messages.
+    pub pass_credentials: bool,
+    /// `PassSecurity=`: enable `SO_PASSSEC` on every listener.
+    pub pass_security: bool,
 }
 
 impl SocketConfig {
@@ -74,6 +79,27 @@ impl SocketConfig {
             socket_mode: get_string(map, "SocketMode").unwrap_or_default(),
             service: get_string(map, "Service").unwrap_or_default(),
             directory_mode: get_string(map, "DirectoryMode").unwrap_or_default(),
+            pass_credentials: get_bool(map, "PassCredentials"),
+            pass_security: get_bool(map, "PassSecurity"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_pass_credentials_and_pass_security() {
+        let cfg = UnitConfig {
+            unit_name: "systemd-udevd-kernel.socket".to_string(),
+            config_json: br#"{"ListenNetlink":["kobject-uevent 1"],"PassCredentials":true,"PassSecurity":true}"#
+                .to_vec(),
+            ..Default::default()
+        };
+        let config = SocketConfig::from_unit_config(&cfg).unwrap();
+        assert!(config.pass_credentials);
+        assert!(config.pass_security);
+        assert_eq!(config.listen[0].netlink, "kobject-uevent 1");
     }
 }

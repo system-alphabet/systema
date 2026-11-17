@@ -114,15 +114,16 @@ pub(crate) async fn monitor_service(
     unit_name: String,
     event_pub: EventPublisher,
     mut child: tokio::process::Child,
+    pid: u32,
 ) {
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-        let state = {
+        let (state, current_pid) = {
             let reg = registry.lock();
             match reg.get(&unit_name) {
                 None => break,
-                Some(inst) => inst.state,
+                Some(inst) => (inst.state, inst.main_pid),
             }
         };
 
@@ -133,19 +134,18 @@ pub(crate) async fn monitor_service(
             break;
         }
 
+        // A restart may have replaced this activation while we slept.  This
+        // monitor still holds the old `Child`; waking up and calling
+        // `try_wait()` on it would return ECHILD (the reaper already collected
+        // it) and, worse, the failure branch below would mark the *new*
+        // activation failed.  Stop observing once the registry no longer
+        // points at our child.
+        if current_pid != Some(pid) {
+            break;
+        }
+
         match child.try_wait() {
             Ok(Some(status)) => {
-                // A fast-exiting service may already have been reaped by the
-                // SYSS reaper, in which case tokio's Child::id() is None;
-                // fall back to the registry's recorded PID instead of
-                // logging a misleading "PID 0".
-                let pid = {
-                    let reg_pid = registry
-                        .lock()
-                        .get(&unit_name)
-                        .and_then(|inst| inst.main_pid);
-                    child.id().or(reg_pid).unwrap_or(0)
-                };
                 info!(
                     "Service {} (PID {}) exited: code={:?}, success={}",
                     unit_name,
@@ -278,4 +278,53 @@ fn publish_service_state(registry: &ServiceRegistry, event_pub: &EventPublisher,
     };
     drop(reg);
     event_pub.publish_unit_state_update(vec![status], false);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A monitor whose activation was replaced by a restart must stop quietly:
+    /// it holds the old `Child`, and calling `try_wait()` on it after the
+    /// reaper collected it returns ECHILD, which used to mark the *new*
+    /// activation failed and trigger an endless restart loop.
+    #[tokio::test]
+    async fn stale_monitor_leaves_the_new_activation_alone() {
+        let registry = new_registry();
+        let child = tokio::process::Command::new("sleep")
+            .arg("5")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn sleep");
+        let child_pid = child.id().expect("child pid");
+
+        {
+            let mut reg = registry.lock();
+            let inst = reg.entry("restarted.service".to_string()).or_default();
+            inst.state = ServiceState::Running;
+            // The registry already points at a newer activation.
+            inst.main_pid = Some(child_pid + 1);
+        }
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let publisher = EventPublisher::new(tx, "test-worker", Arc::default(), Arc::default());
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            monitor_service(
+                registry.clone(),
+                "restarted.service".to_string(),
+                publisher,
+                child,
+                child_pid,
+            ),
+        )
+        .await
+        .expect("the stale monitor must return instead of failing the new activation");
+
+        let reg = registry.lock();
+        let inst = reg.get("restarted.service").unwrap();
+        assert_eq!(inst.state, ServiceState::Running);
+        assert_eq!(inst.main_pid, Some(child_pid + 1));
+    }
 }

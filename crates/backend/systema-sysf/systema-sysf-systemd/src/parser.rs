@@ -413,6 +413,7 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
                 }
                 copy_socket!("accept", accept);
                 copy_socket!("service", service);
+                copy_socket!("filedescriptorname", file_descriptor_name);
                 copy_socket!("socketuser", socket_user);
                 copy_socket!("socketgroup", socket_group);
                 copy_socket!("socketmode", socket_mode);
@@ -1581,6 +1582,7 @@ fn parse_timer_section(config: &Ini, tmr: &mut TimerSection, name: &str) -> Resu
 fn parse_socket_section(config: &Ini, sock: &mut SocketSection, name: &str) -> Result<()> {
     sock.accept = get_bool(config, "socket", "accept", false);
     sock.service = expand_specifiers(&get_str(config, "socket", "service"), name);
+    sock.file_descriptor_name = get_str(config, "socket", "filedescriptorname");
     sock.socket_user = get_str(config, "socket", "socketuser");
     sock.socket_group = get_str(config, "socket", "socketgroup");
     sock.socket_mode = get_str(config, "socket", "socketmode");
@@ -2314,15 +2316,18 @@ WantedBy=sockets.target
 
     #[test]
     fn test_parse_socket_service_directive() {
-        let content = "[Socket]\nListenNetlink=kobject-uevent\nService=my-udevd.service\n";
+        let content = "[Socket]\nListenNetlink=kobject-uevent\nService=my-udevd.service\nFileDescriptorName=varlink\n";
         let unit = parse_unit("udev.socket", content).unwrap();
         let sock = unit.socket.unwrap();
         assert_eq!(sock.listen_netlink, vec!["kobject-uevent"]);
         assert_eq!(sock.service, "my-udevd.service");
+        assert_eq!(sock.file_descriptor_name, "varlink");
 
         // Absent directive → empty string (caller derives from unit name).
         let plain = parse_unit("plain.socket", "[Socket]\nListenStream=99\n").unwrap();
-        assert_eq!(plain.socket.unwrap().service, "");
+        let plain = plain.socket.unwrap();
+        assert_eq!(plain.service, "");
+        assert_eq!(plain.file_descriptor_name, "");
     }
 
     #[test]
