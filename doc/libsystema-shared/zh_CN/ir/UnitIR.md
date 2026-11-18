@@ -69,7 +69,7 @@ pub struct UnitIR {
 
 ## 类型专属指令 `config`
 
-`config` 是一个 JSON 对象，结构完全对应单元文件：
+`config` 是一个 JSON 对象（[`ConfigMap`](./ConfigMap.md)），结构完全对应单元文件：
 
 - 键是指令名，保留 systemd 的拼写与大小写，例如 `ExecStart`、`Type`、
   `ListenStream`、`Delegate`；不写 section 名。
@@ -166,6 +166,13 @@ let patch = UnitIR {
 
 ## 相关 API
 
+- [`ConfigMap`](./ConfigMap.md)：`config` 的扁平指令字典及其编码约定。
+- [`parse_json`](./config/parse_json.md) / [`to_json_bytes`](./config/to_json_bytes.md)：
+  字节与字典互转。
+- [`get_string`](./config/get_string.md)、[`get_string_or`](./config/get_string_or.md)、
+  [`get_strings`](./config/get_strings.md)、[`get_bool`](./config/get_bool.md)、
+  [`get_u32`](./config/get_u32.md)、[`get_u32_or`](./config/get_u32_or.md)、
+  [`get_i32_or`](./config/get_i32_or.md)、[`get_mode`](./config/get_mode.md)：类型化取值。
 - [`UnitType`](./UnitType.md)：`unit_type` 的取值，同时隐含 `config` 所属 section。
 - [`DependencySet`](./DependencySet.md)：`dependencies` 字段。
 - [`TemplateInfo`](./TemplateInfo.md)：模板与实例元数据。

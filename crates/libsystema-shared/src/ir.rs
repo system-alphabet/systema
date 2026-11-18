@@ -66,8 +66,12 @@ pub mod config {
         }
     }
 
-    /// A single directive value.  For a repeated directive this returns the
-    /// first element, which is what most scalar consumers want.
+    /// A single directive value.
+    ///
+    /// A repeated directive (JSON array) and a missing key return `None` —
+    /// use [`get_strings`] for repeated directives.  Scalars are rendered as
+    /// text, so a producer that wrote `90` or `true` instead of a string is
+    /// still readable.
     pub fn get_string(map: &ConfigMap, key: &str) -> Option<String> {
         map.get(key).and_then(as_string)
     }
