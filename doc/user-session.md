@@ -27,7 +27,7 @@ OpenBSD / Termux 无此物），保持严格分离。
 ## 2. 决策记录
 
 | 议题 | 决策 |
-|------|------|
+| ------ | ------ |
 | 兼容性 | 原生 CLI `--user` 优先；**session-bus `sysw` 桥提前进 P1**（真实 `systemctl --user` 直接可用，2026-10-10 由"推后到 P2+"修订，见备注 11） |
 | 进程模型 | **直接复用**现有二进制（env 参数化的子集），不抽公共库 |
 | 生命周期 | 会话触发启动 + 登出停止：**P1 登录钩子，P2 PAM 模块** |
@@ -50,7 +50,7 @@ socket 默认值是**编译期常量**（`/run/systema/...`），用户实例必
 否则会碰系统域的 socket（EACCES 或互踩）。矩阵：
 
 | 变量 | 用户域取值 |
-|------|-----------|
+| ------ | ----------- |
 | `SYSTEMA_RUNSTATEDIR` | `${XDG_RUNTIME_DIR}/systema`（无 `XDG_RUNTIME_DIR` 时退化为 `/tmp/systema-<uid>`） |
 | `SYSTEMA_IPC_SOCKET` | `$SYSTEMA_RUNSTATEDIR/allocator.sock` |
 | `SYSTEMA_CONTROL_SOCKET` | `$SYSTEMA_RUNSTATEDIR/control.socket` |
@@ -189,7 +189,8 @@ P1 = 3.4 的 shell 钩子（尽力而为）；P2 = PAM 模块（确定性会话�
 2. **五目标矩阵 0 error / 0 warning**：x86_64-unknown-linux-gnu、FreeBSD release
    （两个 `--config`）、OpenBSD、aarch64-linux-android、x86_64-linux-android release
    （`+nightly-2026-10-04`）。构建前清理 `target/`；注意 shell 残留 Termux 变量：
-   `UNSET=$(env | grep -oE '^(SYSTEMA_|SYSTEMD_)[A-Za-z0-9_]+' | sed 's/^/-u /' | tr '\n' ' ')`，
+   `UNSET=$(env | grep -oE '^(SYSTEMA_|SYSTEMD_)[A-Za-z0-9_]+' |
+   sed 's/^/-u /' | tr '\n' ' ')`，
    **zsh 下必须 `env ${=UNSET}`**（普通 `$UNSET` 不分词）。按
    `~/Projects/openbsd-cross/README.cargo.md` / `~/Projects/freebsd-cross/README.cargo.md`
    执行；Linux 上不 `cargo run` / `cargo test`。
@@ -269,7 +270,7 @@ DBUS 变量引导失败）消失。
 ## 附：关键代码位置
 
 | 内容 | 位置 |
-|------|------|
+| ------ | ------ |
 | 路径运行时解析 / env 覆盖 | `crates/libsysa/src/paths.rs`（`compute_paths`、`builtin_defaults`、`debug_dump`） |
 | sysi 三阶段配方 | `crates/backend/systema-sysi/src/supervise.rs`（`control_phase` ~L705；notify 监听 ~L49；worker 集 `workers.rs:67`） |
 | sysa 单实例防护 / `system_uid()` | `crates/backend/systema-sysa/src/ipc/server.rs:45-54, 260` |
@@ -341,14 +342,15 @@ DBUS 变量引导失败）消失。
    总线定向经**命令行选项**而非环境变量（初稿的矩阵变量
    `DBUS_SYSTEM_BUS_ADDRESS` 语义不明——"指向会话总线的系统总线变量"，
    2026-10-10 定稿同日修订）：
-   - **`--bus-address <ADDR>`**：sysw 与 syss 各加一个可选参数，启动时
+
+- **`--bus-address <ADDR>`**：sysw 与 syss 各加一个可选参数，启动时
      解析为 `zbus::Address`（非法值 fail-fast 拒绝启动）；连接一律改经
      `Builder::address()`（sysw 的占名探针与服务端、syss 的 `Type=dbus`
      `BusName=` 轮询）。不传参时走 zbus 默认 `Address::system()`——
      系统域（sysi 不传参）行为一字不变，且仍合法尊重环境里真实的
      `DBUS_SYSTEM_BUS_ADDRESS`；worker 自身不感知 system/user 之分，
      域知识留在启动器。
-   - **启动器传参**：sysu spawn sysw 与 syss 时追加
+- **启动器传参**：sysu spawn sysw 与 syss 时追加
      `--bus-address <session_bus_address()>`（`envs.rs`），地址推导的
      优先级与 `sd_bus_open_user()` 一致：已设的 `DBUS_SESSION_BUS_ADDRESS`
      原样 → `$XDG_RUNTIME_DIR/bus` → `{user_runtime_dir}/bus`（死路兜底：
@@ -358,13 +360,13 @@ DBUS 变量引导失败）消失。
      矩阵（§3.1）因此保持纯 `SYSTEMA_*`：**服务进程不继承任何总线
      重定向**，与 `systemd --user` 的进程环境完全一致（初稿"实例全域
      注入"造成的 `Connection::system()` 偏离随之取消）。
-   - syss 的 `Type=dbus` `BusName=` 轮询经同一选项指向 session bus——
+- syss 的 `Type=dbus` `BusName=` 轮询经同一选项指向 session bus——
      与 `systemd --user` 对用户单元的语义一致（systemd 上游确认用户
      管理器看会话总线）。
-   - **就绪门不依赖 D-Bus**：sysw 的 `WORKER_READY=system-w-1` 由 sysa
+- **就绪门不依赖 D-Bus**：sysw 的 `WORKER_READY=system-w-1` 由 sysa
      在控制 `manager.hello`（worker_id 非空）时广播（`ipc/control.rs`），
      桥连不上总线也不会拖住启动。
-   - **systemctl 的传输层**（冒烟实测，systemd v262）：systemd ≥ v257
+- **systemctl 的传输层**（冒烟实测，systemd v262）：systemd ≥ v257
      （PR #34686）起 `systemctl --user` 默认直连管理器私有 socket
      `$XDG_RUNTIME_DIR/systemd/private`，该 socket 缺失时**不再回退**
      会话总线，直接报 "Failed to connect to user scope bus via
@@ -379,12 +381,13 @@ DBUS 变量引导失败）消失。
      中 systemd 保留 ENOMEDIUM 回退，裸 `systemctl --user` 直接可用。
      `busctl --user` 及任何 D-Bus 客户端**今天就直接可用**（sysw 面
      完整：ListUnits、unit 对象、JobRemoved 信号）。
-   - **名字冲突**：会话总线上已有 `org.freedesktop.systemd1`
+- **名字冲突**：会话总线上已有 `org.freedesktop.systemd1`
      （真实 `systemd --user` 在跑）时沿用 sysw 既有行为：告警 + 1s
      重连循环（进程存活，实例无扰，`systemctl` 落到既有管理器上）。
-   - **授权**：session bus 用户私有，`manager.*` 桥只带 `sender_pid`
+- **授权**：session bus 用户私有，`manager.*` 桥只带 `sender_pid`
      的旁路（§9 审计项）在用户域不构成跨用户风险；系统域入口仍须补。
-12. **全局日志方案改版（修订 §3.1 矩阵行、备注 3）**：所有组件统一走
+
+ 1. **全局日志方案改版（修订 §3.1 矩阵行、备注 3）**：所有组件统一走
    `libsysa::logging` 的同一套初始化，永远双写 **stderr + 日志文件**
    两个 sink，不再镜像 `/dev/console`（`SYSTEMA_CONSOLE`、
    `console-is-tty` 判断一并移除）。日志文件路径解析优先级
