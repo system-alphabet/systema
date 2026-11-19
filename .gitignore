@@ -28,4 +28,7 @@ target
 .freebuff/
 .cloud-attachments/
 
+# Obsidian
+.obsidian/
+
 .cargo/config.toml
