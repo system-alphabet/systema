@@ -39,5 +39,6 @@ async fn send_ping(path: &str) -> anyhow::Result<()> {
 ## 相关 API
 
 - [`frame_stream`](./frame_stream.md)：构造本类型。
-- [`send_envelope`](./send_envelope.md) / [`recv_envelope`](./recv_envelope.md)：读写 envelope。
+- [`send_envelope`](./send_envelope.md) / [`recv_envelope`](./recv_envelope.md)：
+  读写 envelope。
 - [`connect_control`](./connect_control.md)：连接控制端口。

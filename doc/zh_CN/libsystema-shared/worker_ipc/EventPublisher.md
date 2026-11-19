@@ -107,4 +107,5 @@ fn subscribe_all(publisher: &EventPublisher) {
 
 - [`WorkerIpc`](./WorkerIpc.md)：持有并注入本句柄。
 - [`UnitStatus`](../controller/UnitStatus.md)：状态更新的载荷模型。
-- [`ErrorCode`](../error_code/ErrorCode.md)：`CgroupQueryTimeout`、`RequestIdWraparound` 等。
+- [`ErrorCode`](../error_code/ErrorCode.md)：`CgroupQueryTimeout`、
+  `RequestIdWraparound` 等。

@@ -54,7 +54,8 @@ fn prepare_start(config_bytes: &[u8]) -> Result<()> {
 
 ## 相关 API
 
-- [`UnitController`](./UnitController.md)：`start` / `restart` / `reload` 的 `config` 参数。
+- [`UnitController`](./UnitController.md)：`start` / `restart` / `reload`
+  的 `config` 参数。
 - [`UnitIR`](../ir/UnitIR.md)：`config_json` 解码后的指令字典结构。
 - [`SysError`](../error_code/SysError.md)：底层错误类型。
 - [`ErrorCode`](../error_code/ErrorCode.md)：错误码 `UnitConfigDecodeFailed`。

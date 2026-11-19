@@ -14,14 +14,20 @@ Allocator（调度器）**、**System Worker** 与 **Controller** 之间的关�
 
 ## 项目定位
 
-System Alphabet 是一个**跨平台、事件驱动的系统资源管理器**。类似于 systemd PID1 ，但它以 **non-pid1 的 systemd shim** 的形态工作（不过它在设计哲学上也考虑作为其他服务管理器的shim层）：
+System Alphabet 是一个**跨平台、事件驱动的系统资源管理器**。类似于 systemd
+PID1 ，但它以 **non-pid1 的 systemd shim** 的形态工作（不过它在设计哲学上也
+考虑作为其他服务管理器的shim层）：
 
 - 把“引擎”拆成一组**单一职责、可替换的 System Worker**，每个 worker 只负责
   一类单元（服务、套接字、定时器、挂载……）；
-- 把“控制器”拆成一个**单一职责、可替换的 System Wrapper**，包装器会把systema的控制接口转换为其他系统资源管理器（如 systemd `systemctl`,  SysVInit `service`）可以操作的接口形式。
+- 把“控制器”拆成一个**单一职责、可替换的 System Wrapper**，包装器会把
+  systema的控制接口转换为其他系统资源管理器
+  （如 systemd `systemctl`,  SysVInit `service`）可以操作的接口形式。
 - 把“调度”的逻辑提取为一个各个服务管理器共识性的调度器，它根据依赖拓扑结构，给服务的启动排序以确保引擎的执行结果符合人类系统管理员期望的语义。
 - 既可以由 `systema-sysi` 作为 init 拉起整棵进程树，也可以让 System A 和各
-  worker 作为普通进程分别启动（这体现了 System Alphabet 组件的可替换性）；例如，系统会话用`systema-sysi`启动，而用户会话另有一套 `systema-sysu` 实例，而它们启动的systema二进制都是同样的。
+  worker 作为普通进程分别启动（这体现了 System Alphabet 组件的可替换性）；
+  例如，系统会话用`systema-sysi`启动，而用户会话另有一套 `systema-sysu`
+  实例，而它们启动的systema二进制都是同样的。
 
 ## 组成结构
 

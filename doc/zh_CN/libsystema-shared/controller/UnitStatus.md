@@ -89,4 +89,5 @@ fn status_of(name: &str) -> Result<UnitStatus> {
 ## 相关 API
 
 - [`UnitController`](./UnitController.md)：产生 `UnitStatus` 的 trait。
-- [`EventPublisher`](../worker_ipc/EventPublisher.md)：通过状态更新把 `UnitStatus` 推送给 System A。
+- [`EventPublisher`](../worker_ipc/EventPublisher.md)：通过状态更新把
+  `UnitStatus` 推送给 System A。
