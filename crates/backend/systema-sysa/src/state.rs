@@ -706,11 +706,41 @@ impl AllocatorState {
 
     /// Return the canonical name of `name`, resolving aliases to their target
     /// unit (identity for non-alias names).
+    ///
+    /// Aliases apply to template instances as well: when `autovt@.service` is
+    /// an alias of `getty@.service`, `autovt@tty3.service` names the same unit
+    /// as `getty@tty3.service`.  This mirrors systemd's
+    /// `unit_file_find_fragment()` / `unit_name_replace_instance()`.
     pub fn resolve_unit_name(&self, name: &str) -> String {
-        self.aliases
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_string())
+        if let Some(target) = self.aliases.get(name) {
+            return target.clone();
+        }
+        let Some(template) = sysa::unit_name::template_of(name) else {
+            return name.to_string();
+        };
+        let Some(target_template) = self
+            .aliases
+            .get(&template)
+            .filter(|target| sysa::unit_name::is_template(target))
+        else {
+            return name.to_string();
+        };
+        // Splice the raw instance text into the target template; going
+        // through `instance_of()` would unescape it, and the canonical name
+        // must stay usable as a unit name byte for byte.
+        let (Some((template_stem, template_suffix)), Some((target_stem, target_suffix))) =
+            (template.split_once('@'), target_template.split_once('@'))
+        else {
+            return name.to_string();
+        };
+        let Some(instance) = name
+            .strip_prefix(template_stem)
+            .and_then(|rest| rest.strip_prefix('@'))
+            .and_then(|rest| rest.strip_suffix(template_suffix))
+        else {
+            return name.to_string();
+        };
+        format!("{target_stem}@{instance}{target_suffix}")
     }
 
     /// Create a staging area for a given UID, or merge into an existing one.
@@ -843,7 +873,9 @@ impl AllocatorState {
         // is gone (or a real unit that appeared under the alias's name) drops
         // it.
         self.alias_records.retain(|alias, target| {
-            !self.units.contains_key(alias) && self.units.contains_key(target)
+            !self.units.contains_key(alias)
+                && !self.templates.contains_key(alias)
+                && (self.units.contains_key(target) || self.templates.contains_key(target))
         });
         self.aliases = self.alias_records.clone();
         // Collect declared aliases first to avoid borrow conflicts.  Group by
@@ -852,8 +884,31 @@ impl AllocatorState {
         let mut declared: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (name, unit) in &self.units {
             for alias in &unit.install.alias {
-                // A real unit's name is not an alias — the real unit wins.
-                if alias == name || self.units.contains_key(alias) {
+                // A real unit's name is not an alias — the real unit wins.  A
+                // template alias (`autovt@.service`) names another template,
+                // not this unit; those are owned by template definitions.
+                if alias == name
+                    || self.units.contains_key(alias)
+                    || sysa::unit_name::is_template(alias)
+                {
+                    continue;
+                }
+                declared
+                    .entry(alias.clone())
+                    .or_default()
+                    .insert(name.clone());
+            }
+        }
+        // Template definitions keep their own aliases (`[Install]
+        // Alias=autovt@.service` on `getty@.service` names another template):
+        // they resolve instances, e.g. `autovt@tty3.service` ->
+        // `getty@tty3.service`.
+        for (name, template) in &self.templates {
+            for alias in &template.aliases {
+                if alias == name
+                    || self.units.contains_key(alias)
+                    || self.templates.contains_key(alias)
+                {
                     continue;
                 }
                 declared
@@ -1221,7 +1276,7 @@ pub fn generate_invocation_id() -> String {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use systema_sysf::ir::{ConfigMap, DependencySet, UnitType};
+    use systema_sysf::ir::{ConfigMap, DependencySet, TemplateInfo, UnitType};
 
     fn mount_ir(id: &str, where_: &str) -> UnitIR {
         let mut config = ConfigMap::new();
@@ -1583,6 +1638,72 @@ mod tests {
             dependencies: Some(deps),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn resolve_unit_name_maps_an_instance_of_an_alias_template() {
+        let mut state = AllocatorState::new();
+        state
+            .aliases
+            .insert("autovt@.service".to_string(), "getty@.service".to_string());
+
+        // `autovt@tty3.service` names the same unit as `getty@tty3.service`.
+        assert_eq!(
+            state.resolve_unit_name("autovt@tty3.service"),
+            "getty@tty3.service"
+        );
+        // A canonical instance stays itself, and a different unit type is not
+        // retargeted by a `.service` alias.
+        assert_eq!(
+            state.resolve_unit_name("getty@tty3.service"),
+            "getty@tty3.service"
+        );
+        assert_eq!(
+            state.resolve_unit_name("autovt@tty3.socket"),
+            "autovt@tty3.socket"
+        );
+    }
+
+    #[test]
+    fn an_instance_cannot_own_a_template_alias() {
+        // A file named `getty@t.service` inherits the template's
+        // `[Install] Alias=autovt@.service`; the claim belongs to the template
+        // definition, not to that instance.
+        let mut state = AllocatorState::new();
+        let template = UnitIR {
+            id: "getty@.service".to_string(),
+            unit_type: Some(UnitType::Service),
+            aliases: vec!["autovt@.service".to_string()],
+            template: Some(TemplateInfo {
+                definition: true,
+                of: None,
+                parameters: Vec::new(),
+            }),
+            ..Default::default()
+        };
+        let instance = UnitIR {
+            id: "getty@t.service".to_string(),
+            unit_type: Some(UnitType::Service),
+            aliases: vec!["autovt@.service".to_string()],
+            template: Some(TemplateInfo {
+                definition: false,
+                of: Some("getty@.service".to_string()),
+                parameters: vec!["t".to_string()],
+            }),
+            ..Default::default()
+        };
+        state
+            .merge_units(&HashMap::from([
+                ("getty@.service".to_string(), template),
+                ("getty@t.service".to_string(), instance),
+            ]))
+            .unwrap();
+
+        assert_eq!(state.resolve_unit_name("autovt@.service"), "getty@.service");
+        assert_eq!(
+            state.resolve_unit_name("autovt@tty3.service"),
+            "getty@tty3.service"
+        );
     }
 
     #[test]

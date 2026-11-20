@@ -30,15 +30,21 @@ use crate::state::AllocatorHandle;
 /// nothing to instantiate from — a plain unit name, or an instance whose
 /// template was never reported.
 pub fn materialize(allocator: &AllocatorHandle, name: &str) -> Result<bool> {
-    let canonical = allocator.read().resolve_unit_name(name);
-    let template = {
+    let (canonical, template_name) = {
         let state = allocator.read();
+        let canonical = state.resolve_unit_name(name);
         if state.units.contains_key(&canonical) {
             return Ok(true);
         }
-        let Some(template_name) = sysa::unit_name::template_of(&canonical) else {
+        let Some(template) = sysa::unit_name::template_of(&canonical) else {
             return Ok(false);
         };
+        // The template can itself be an alias (`autovt@.service` is
+        // `getty@.service`); the definition lives under the canonical name.
+        (canonical, state.resolve_unit_name(&template))
+    };
+    let template = {
+        let state = allocator.read();
         match state.templates.get(&template_name) {
             Some(template) => template.clone(),
             None => return Ok(false),
@@ -177,6 +183,30 @@ mod tests {
         // The reported definition (with its own drop-in result) wins.
         assert_eq!(unit.unit.description, "Reported instance");
         assert_eq!(unit.service.as_ref().unwrap().tty_path, "/dev/custom");
+    }
+
+    #[test]
+    fn materialize_resolves_the_instance_of_an_alias_template() {
+        // `[Install] Alias=autovt@.service` on getty@.service: starting
+        // `autovt@tty3.service` must materialize the canonical
+        // `getty@tty3.service`.
+        let allocator = crate::state::Allocator::handle();
+        let mut template = template_ir();
+        template.aliases = vec!["autovt@.service".to_string()];
+        allocator
+            .write()
+            .merge_units(&HashMap::from([("getty@.service".to_string(), template)]))
+            .unwrap();
+
+        assert!(materialize(&allocator, "autovt@tty3.service").unwrap());
+
+        let state = allocator.read();
+        let unit = state
+            .units
+            .get("getty@tty3.service")
+            .expect("canonical instance materialized");
+        assert_eq!(unit.service.as_ref().unwrap().tty_path, "/dev/tty3");
+        assert!(!state.units.contains_key("autovt@tty3.service"));
     }
 
     #[test]

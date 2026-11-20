@@ -1790,7 +1790,11 @@ async fn prepare_batch_start(
 ) -> Result<BatchStart> {
     // A name without a definition (and without a registered template) cannot
     // be an anchor: report it alone instead of failing the whole batch.
-    crate::unit::template::ensure_defined(allocator, unit_name)?;
+    // `ensure_defined` also canonicalizes alias instances
+    // (`autovt@tty3.service` -> `getty@tty3.service`), and every later lookup
+    // must use that canonical name.
+    let canonical = crate::unit::template::ensure_defined(allocator, unit_name)?;
+    let unit_name = canonical.as_str();
 
     // --- Mode/type validation (manager_add_job_full) ---
     {

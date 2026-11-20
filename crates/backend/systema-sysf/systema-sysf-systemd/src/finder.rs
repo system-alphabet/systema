@@ -120,8 +120,24 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         unit_file_state: uf.file_state.clone(),
         // Aliases travel as `alias_of` records (see `emit_alias_records`): the
         // finder is the component that knows whether a name is backing a real
-        // file and which search-path directory wins.
-        aliases: Vec::new(),
+        // file and which search-path directory wins.  A template's aliases are
+        // the exception: they name another template (`autovt@.service` ->
+        // `getty@.service`) and have no unit of their own, so they stay on the
+        // definition and System A resolves instances of them
+        // (`autovt@tty3.service` -> `getty@tty3.service`).
+        aliases: if sysa::unit_name::is_template(&uf.name) {
+            uf.install
+                .alias
+                .iter()
+                .filter(|alias| {
+                    alias.as_str() != uf.name.as_str()
+                        && sysa::unit_name::is_template(alias.as_str())
+                })
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        },
         alias_of: None,
         template: convert_template_info(&uf.name),
     }
@@ -187,6 +203,14 @@ fn emit_alias_records(map: &mut HashMap<String, UnitIR>, files: &[UnitFile]) {
             continue; // shadowed duplicate at a lower-priority search path
         }
         for alias in &file.install.alias {
+            // A template alias names another template (`autovt@.service` for
+            // `getty@.service`), not a unit: it is carried on the template
+            // definition and must never become an alias record, even when an
+            // instance file (e.g. `getty@t.service`) inherits it from the
+            // template it links to.
+            if sysa::unit_name::is_template(alias) {
+                continue;
+            }
             let claim = (
                 u8::from(!file.alias_links.contains(alias)),
                 index,
@@ -405,6 +429,12 @@ mod tests {
     }
 
     #[test]
+    fn convert_unit_file_keeps_template_aliases_on_the_definition() {
+        let ir = convert_unit_file(&unit_file("getty@.service", &["autovt@.service"]));
+        assert_eq!(ir.aliases, vec!["autovt@.service".to_string()]);
+    }
+
+    #[test]
     fn convert_unit_file_reports_no_aliases_of_its_own() {
         let uf = linked_unit_file("lightdm.service", &["display-manager.service"]);
         let ir = convert_unit_file(&uf);
@@ -598,6 +628,16 @@ mod tests {
             map["display-manager.service"].alias_of.as_deref(),
             Some("lightdm.service")
         );
+    }
+
+    #[test]
+    fn a_template_alias_inherited_by_an_instance_is_not_an_alias_record() {
+        // A file named `getty@t.service` (typically a symlink to
+        // `getty@.service`) inherits `[Install] Alias=autovt@.service`.  That
+        // alias names a template, not this instance, so no record is emitted.
+        let files = vec![unit_file("getty@t.service", &["autovt@.service"])];
+        let map = build(&files);
+        assert!(!map.contains_key("autovt@.service"));
     }
 
     #[test]
