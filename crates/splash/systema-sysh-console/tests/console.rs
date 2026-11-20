@@ -17,6 +17,13 @@ fn scratch(tag: &str) -> PathBuf {
 fn spawn_console(socket: &Path) -> Child {
     Command::new(env!("CARGO_BIN_EXE_systema-sysh.console"))
         .env("SYSTEMA_NOTIFY_SOCKET", socket)
+        // The standard logging options must be accepted, exactly as System
+        // Init passes them when it spawns the console.  "-" keeps the
+        // console's stderr silent.
+        .arg("--log-level")
+        .arg("warn")
+        .arg("--log-file")
+        .arg("-")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

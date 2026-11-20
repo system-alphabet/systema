@@ -50,6 +50,7 @@ const ONE_SHOT_FINDER: &str = "#!/bin/sh\nexit 0\n";
 
 const DEFAULT_WORKERS: &[&str] = &[
     "systema-sysa",
+    "systema-sysh.console",
     "systema-syss",
     "systema-syse",
     "systema-syst",
@@ -98,7 +99,8 @@ fn default_shims(dir: &Path) {
     for worker in DEFAULT_WORKERS {
         write_shim(dir, worker, LONG_RUNNING);
     }
-    // The finder chain always runs and is one-shot.
+    // The splash console is best effort, and the finder chain is one-shot.
+    write_shim(dir, "systema-sysh.console", ONE_SHOT_FINDER);
     write_shim(dir, "systema-sysf", ONE_SHOT_FINDER);
 }
 
@@ -690,6 +692,43 @@ fn waits_for_allocator_before_any_worker() {
     let a = FakeA::new(&notify_dir);
     a.manager_ready();
     assert!(wait_for(&buf, "Spawned syss", 5));
+
+    send_term(&child);
+    let status = wait_timeout(&mut child, 8).expect("should exit after SIGTERM");
+    assert_eq!(status.code(), Some(0), "got {status:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn splash_starts_after_system_a_and_before_the_workers() {
+    let dir = shim_dir("splash-order");
+    default_shims(&dir);
+    let notify_dir = dir.join("notify");
+
+    let mut child = run_sysi(&dir, &notify_dir, &[]);
+    let buf = stderr_reader(&mut child);
+
+    // No notify socket yet: the splash console must not start either.
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        !buf.lock().unwrap().contains("Spawned sysh"),
+        "splash started before System A was ready"
+    );
+
+    let _a = FakeA::new(&notify_dir);
+    assert!(
+        wait_for(&buf, "Spawned sysh", 5),
+        "splash was never spawned"
+    );
+    assert!(wait_for(&buf, "Spawned syss", 5));
+
+    let stderr = buf.lock().unwrap().clone();
+    let splash = stderr.find("Spawned sysh").expect("splash spawn line");
+    let worker = stderr.find("Spawned syss").expect("worker spawn line");
+    assert!(
+        splash < worker,
+        "splash must start before the first worker: {stderr}"
+    );
 
     send_term(&child);
     let status = wait_timeout(&mut child, 8).expect("should exit after SIGTERM");

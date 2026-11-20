@@ -38,6 +38,11 @@
 # scan entirely.
 #Finder=systema-sysf.systemd
 
+# Splash — the boot-log console, started once System A is ready and before
+# any worker.  It is best effort: its exit does not abort the boot.  An
+# empty value disables it.
+#Splash=systema-sysh.console
+
 [Workers]
 
 # System S — service processes (fork/exec, lifecycle, readiness).

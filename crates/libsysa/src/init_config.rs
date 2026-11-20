@@ -1,7 +1,7 @@
 //! `/etc/systema/init.conf` — the System Init module selection.
 //!
 //! The file uses the systemd configuration syntax: `[Init]` holds the
-//! allocator and finder selection, `[Workers]` holds the supervised
+//! allocator, finder and splash selection, `[Workers]` holds the supervised
 //! modules, each with `Key=Value` assignments, `#`/`;` comment lines and
 //! blank lines.  A key is only accepted in the section it belongs to.
 //! The drop-in directory (`init.conf.d`, next to the main file) is read
@@ -21,9 +21,9 @@ use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
-/// The sections this file understands.  The allocator and the finder are
-/// not supervised workers, so they live in `[Init]`; the supervised
-/// modules live in `[Workers]`.
+/// The sections this file understands.  The allocator, the finder and the
+/// splash console are not supervised workers, so they live in `[Init]`; the
+/// supervised modules live in `[Workers]`.
 pub const SECTION_INIT: &str = "Init";
 pub const SECTION_WORKERS: &str = "Workers";
 pub const SECTIONS: &[&str] = &[SECTION_INIT, SECTION_WORKERS];
@@ -43,11 +43,14 @@ pub const KEY_WRAPPER: &str = "Wrapper";
 /// daemon-reload (e.g. `systema-sysf.systemd`), not the `systema-sysf`
 /// runner itself.
 pub const KEY_FINDER: &str = "Finder";
+/// The boot-log console frontend, started once System A is ready and
+/// before any worker.
+pub const KEY_SPLASH: &str = "Splash";
 
 /// The section a key belongs to.
 fn section_of(key: &str) -> &'static str {
     match key {
-        KEY_ALLOCATOR | KEY_FINDER => SECTION_INIT,
+        KEY_ALLOCATOR | KEY_FINDER | KEY_SPLASH => SECTION_INIT,
         _ => SECTION_WORKERS,
     }
 }
@@ -67,6 +70,7 @@ pub const KEYS: &[&str] = &[
     KEY_MOUNT,
     KEY_WRAPPER,
     KEY_FINDER,
+    KEY_SPLASH,
 ];
 
 /// The finder run when `Finder=` is not configured at all.
@@ -88,6 +92,7 @@ pub const ENV: &[(&str, &str)] = &[
     (KEY_MOUNT, "SYSTEMA_SYSM"),
     (KEY_WRAPPER, "SYSTEMA_SYSW"),
     (KEY_FINDER, "SYSTEMA_SYSF"),
+    (KEY_SPLASH, "SYSTEMA_SYSH"),
 ];
 
 /// The merged contents of the main file and its drop-ins, with optional

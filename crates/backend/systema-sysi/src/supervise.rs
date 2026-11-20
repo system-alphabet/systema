@@ -16,7 +16,6 @@
 //! spawns it on-demand when a daemon-reload is requested (via IPC or D-Bus).
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -851,14 +850,17 @@ pub async fn run(
     extra_flags: &HashMap<&'static str, Vec<String>>,
     power_ctl: power::PowerCtl,
 ) -> Result<i32> {
-    // Partition the resolved set: the allocator (System A) and the
-    // long-running workers.  The Finder (System F) is no longer run as
-    // a supervised process; System A spawns it on-demand via daemon-reload.
+    // Partition the resolved set: the allocator (System A), the splash
+    // console, and the long-running workers.  The Finder (System F) is not a
+    // supervised process; System A spawns it on-demand via daemon-reload.
     let mut allocator_specs: Vec<&ResolvedProcess> = Vec::new();
+    let mut splash_specs: Vec<&ResolvedProcess> = Vec::new();
     let mut workers: Vec<&ResolvedProcess> = Vec::new();
     for rp in resolved {
         if rp.spec.name == "sysa" {
             allocator_specs.push(rp);
+        } else if rp.spec.name == "sysh" {
+            splash_specs.push(rp);
         } else {
             workers.push(rp);
         }
@@ -918,6 +920,19 @@ pub async fn run(
         notify.shutdown();
         drop(reaper);
         return Ok(code);
+    }
+
+    // --- Splash: System A is ready, so the console can join its event
+    // stream before the first worker starts.  It is best effort: its exit
+    // is logged and does not abort the boot.
+    for rp in &splash_specs {
+        if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_target, extra_flags)
+        {
+            let code = shutdown(&procs, code, grace).await;
+            notify.shutdown();
+            drop(reaper);
+            return Ok(code);
+        }
     }
 
     // --- Phase 2: workers, serially, each gated on WORKER_READY. ---

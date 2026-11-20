@@ -48,8 +48,12 @@ struct ModuleDef {
     linux_binary: &'static str,
     /// Binary used on every other platform.
     unix_binary: &'static str,
-    /// Worker ID registered with System A (`None` for System A itself).
+    /// Worker ID registered with System A (`None` when the module does not
+    /// register as a worker).
     worker_id: Option<&'static str>,
+    /// Supervision kind.  The splash console is best effort: its exit must
+    /// not abort the boot.
+    kind: ProcessKind,
 }
 
 impl ModuleDef {
@@ -85,6 +89,17 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysa",
         unix_binary: "systema-sysa",
         worker_id: None,
+        kind: ProcessKind::LongRunning,
+    },
+    // Started after System A is ready and before any worker, so the boot log
+    // shows what the workers do from the first one on.
+    ModuleDef {
+        name: "sysh",
+        key: sysa::init_config::KEY_SPLASH,
+        linux_binary: "systema-sysh.console",
+        unix_binary: "systema-sysh.console",
+        worker_id: None,
+        kind: ProcessKind::OneShot,
     },
     ModuleDef {
         name: "syss",
@@ -92,6 +107,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-syss",
         unix_binary: "systema-syss",
         worker_id: Some("system-s-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "syse",
@@ -99,6 +115,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-syse",
         unix_binary: "systema-syse",
         worker_id: Some("system-e-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "syst",
@@ -106,6 +123,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-syst",
         unix_binary: "systema-syst",
         worker_id: Some("system-t-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "sysc",
@@ -113,6 +131,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysc",
         unix_binary: "systema-sysc",
         worker_id: Some("system-c-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "sysk",
@@ -120,6 +139,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysk",
         unix_binary: "systema-sysk",
         worker_id: Some("system-k-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "sysn",
@@ -127,6 +147,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysn",
         unix_binary: "systema-sysn",
         worker_id: Some("system-n-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "sysd",
@@ -134,6 +155,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysd",
         unix_binary: "systema-sysd",
         worker_id: Some("system-d-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "sysr",
@@ -141,6 +163,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysr",
         unix_binary: "systema-sysr",
         worker_id: Some("system-r-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "sysm",
@@ -148,6 +171,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysm.linux",
         unix_binary: "systema-sysm.unix",
         worker_id: Some("system-m-1"),
+        kind: ProcessKind::LongRunning,
     },
     ModuleDef {
         name: "sysw",
@@ -155,6 +179,7 @@ const MODULES: &[ModuleDef] = &[
         linux_binary: "systema-sysw.systemd",
         unix_binary: "",
         worker_id: Some("system-w-1"),
+        kind: ProcessKind::LongRunning,
     },
 ];
 
@@ -252,7 +277,7 @@ pub fn build_worker_set_for(
             name: module.name,
             binary: binary.clone(),
             worker_id: module.worker_id,
-            kind: ProcessKind::LongRunning,
+            kind: module.kind,
             args: &[],
         });
     }
@@ -367,12 +392,19 @@ mod tests {
         assert_eq!(
             names(&linux),
             vec![
-                "sysa", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr", "sysm",
-                "sysw"
+                "sysa", "sysh", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr",
+                "sysm", "sysw"
             ]
         );
-        assert_eq!(linux.len(), 11);
-        assert!(linux.iter().all(|s| s.kind == ProcessKind::LongRunning));
+        assert_eq!(linux.len(), 12);
+        // The splash console is best effort: its exit must not abort boot.
+        let splash = linux.iter().find(|s| s.name == "sysh").unwrap();
+        assert_eq!(splash.kind, ProcessKind::OneShot);
+        assert_eq!(splash.binary, "systema-sysh.console");
+        assert!(linux
+            .iter()
+            .filter(|s| s.name != "sysh")
+            .all(|s| s.kind == ProcessKind::LongRunning));
         fn binary_of<'a>(set: &'a [WorkerSpec], name: &'a str) -> &'a str {
             resolve_binary_call(set.iter().find(|s| s.name == name).unwrap())
         }
@@ -387,7 +419,10 @@ mod tests {
         let other = build_worker_set_for(Platform::Other, &[], &default).unwrap();
         assert_eq!(
             names(&other),
-            vec!["sysa", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr", "sysm"]
+            vec![
+                "sysa", "sysh", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr",
+                "sysm"
+            ]
         );
         // System M falls back to its Unix flavor; System W has no default
         // off Linux.
@@ -405,7 +440,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             names(&set),
-            vec!["sysa", "syss", "syse", "syst", "sysk", "sysn", "sysr", "sysm", "sysw"]
+            vec!["sysa", "sysh", "syss", "syse", "syst", "sysk", "sysn", "sysr", "sysm", "sysw"]
         );
     }
 
@@ -419,7 +454,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             names(&set),
-            vec!["sysa", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysr", "sysw"]
+            vec!["sysa", "sysh", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysr", "sysw"]
         );
     }
 
@@ -480,6 +515,17 @@ mod tests {
         )
         .unwrap();
         assert!(!names(&set).contains(&"sysd"));
+    }
+
+    #[test]
+    fn init_conf_can_disable_the_splash_console() {
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &[],
+            &config(&[(sysa::init_config::KEY_SPLASH, "")]),
+        )
+        .unwrap();
+        assert!(!names(&set).contains(&"sysh"));
     }
 
     #[test]
@@ -588,7 +634,8 @@ mod tests {
         let (resolved, missing) = resolve_set(&set, Some(&dir));
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].spec.name, "sysa");
-        assert_eq!(missing.len(), 10);
+        assert_eq!(missing.len(), 11);
+        assert!(missing.iter().any(|m| m.name == "sysh"));
         assert!(missing.iter().any(|m| m.name == "syss"));
         assert!(missing.iter().any(|m| m.name == "sysw"));
         let _ = fs::remove_dir_all(&dir);

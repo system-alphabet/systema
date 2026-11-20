@@ -21,7 +21,6 @@
 //! so this instance never touches the system domain's `/run/systema`.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;

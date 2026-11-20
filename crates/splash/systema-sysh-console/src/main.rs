@@ -60,6 +60,22 @@ const RED: &str = "\x1b[91m";
     about = "System H — boot-log console frontend"
 )]
 struct Args {
+    #[arg(long, short = 'D', help = "Enable debug-level logging")]
+    debug: bool,
+
+    #[arg(
+        long,
+        default_value = "warn",
+        help = "Log level (trace, debug, info, warn, error)"
+    )]
+    log_level: String,
+
+    #[arg(
+        long,
+        help = "Path of this process's log file (\"-\" writes to stderr only)"
+    )]
+    log_file: Option<std::path::PathBuf>,
+
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
 
@@ -76,6 +92,19 @@ fn build_args() -> Args {
     use clap::{CommandFactory, FromArgMatches};
     let cmd = Args::command()
         .about(sysa::l10n::t_("System H — boot-log console frontend"))
+        .mut_arg("debug", |a| {
+            a.help(sysa::l10n::t_("Enable debug-level logging."))
+        })
+        .mut_arg("log_level", |a| {
+            a.help(sysa::l10n::t_(
+                "Log level (trace, debug, info, warn, error).",
+            ))
+        })
+        .mut_arg("log_file", |a| {
+            a.help(sysa::l10n::t_(
+                "Path of this process's log file (\"-\" writes to stderr only).",
+            ))
+        })
         .mut_arg("version", |a| {
             a.help(sysa::l10n::t_("Print version information and exit."))
         })
@@ -100,6 +129,16 @@ fn main() {
         sysa::version::print_full_version();
         return;
     }
+
+    // Interactive-tool logging policy: no default file, stderr only with
+    // `--debug`; System Init passes `--log-file`, which adds the file sink.
+    let log_level = if args.debug { "debug" } else { &args.log_level };
+    sysa::logging::init_tool(
+        "systema-sysh.console",
+        args.log_file.clone(),
+        log_level,
+        args.debug,
+    );
 
     let notify_socket = sysa::paths::instance().notify_socket;
     let mut client = sysa::notify::NotifyClient::connect_waiting(notify_socket, || false)
