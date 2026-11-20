@@ -509,7 +509,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Runtime dir first (0700), so the notify listener and every socket
+    // Runtime dir first (0700), so the notify socket and every socket
     // land in a directory only this user can traverse (plan §3.2, step 1).
     ensure_runtime_dir()?;
 

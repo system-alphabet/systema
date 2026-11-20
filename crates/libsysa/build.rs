@@ -126,9 +126,9 @@ fn generate_paths() {
         "SYSTEMA_CONTROL_SOCKET",
         format!("{runstatedir}/systema/control.socket"),
     );
-    let notify_dir = get(
-        "SYSTEMA_NOTIFY_DIR",
-        format!("{runstatedir}/systema/notify"),
+    let notify_socket = get(
+        "SYSTEMA_NOTIFY_SOCKET",
+        format!("{runstatedir}/systema/notify.socket"),
     );
     let systemd_lib_unit_dir = get(
         "SYSTEMD_LIB_UNIT_DIR",
@@ -228,7 +228,7 @@ pub const CONTROL_SOCKET_PATH: &str = {control_socket:?};
 
 pub const RUNSTATEDIR: &str = {runstatedir:?};
 
-pub const NOTIFY_DIR: &str = {notify_dir:?};
+pub const NOTIFY_SOCKET: &str = {notify_socket:?};
 
 pub const SYSTEMA_SHELL_PATH: &str = {systema_shell_path:?};
 pub const SYSTEMA_SOCKET_HANDLER_PATH: &str = {systema_socket_handler_path:?};

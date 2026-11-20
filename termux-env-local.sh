@@ -53,7 +53,7 @@ export SYSTEMA_RUNSTATEDIR="${PREFIX}/var/run"
 export SYSTEMA_IPC_SOCKET="${PREFIX}/var/run/systema/allocator.sock"
 export SYSTEMA_FDPASS_SOCK="${PREFIX}/var/run/systema/fdpass.sock"
 export SYSTEMA_CONTROL_SOCKET="${PREFIX}/var/run/systema/control.socket"
-export SYSTEMA_NOTIFY_DIR="${PREFIX}/var/run/systema/notify"
+export SYSTEMA_NOTIFY_SOCKET="${PREFIX}/var/run/systema/notify.socket"
 export SYSTEMA_RELOAD_SOCKET="${PREFIX}/var/run/systema/sysf.sock"
 export SYSTEMA_FIRSTBOOT_FLAG_FILE="${PREFIX}/etc/systema-firstboot-flag"
 

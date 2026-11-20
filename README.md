@@ -115,7 +115,7 @@ explicit `--log-file`.
 |------|--------|-----------|----------|
 | `/run/systema/allocator.sock` | System A | workers, Finder | length-delimited protobuf `Envelope` |
 | `{runstatedir}/systema/control.socket` | System A | SysW bridge, SysAInit, both CLIs | length-delimited protobuf `Envelope` |
-| `{runstatedir}/systema/notify/*.sock` | — (directory of listeners) | System A broadcasts | sd_notify-style `key=value` datagrams; SysAInit binds `init.sock` |
+| `{runstatedir}/systema/notify.socket` | System A | SysAInit, System U, System H | `key=value` event stream, blank-line framed; connecting is the readiness signal |
 | `/run/systema/fdpass.sock` | System A | System S, System K | raw `SCM_RIGHTS` fd passing, no framing |
 | `/run/systema/sysf.sock` | `systema-sysf daemon-reload` | (System A spawns System F directly instead) | one-byte trigger + one-byte ack |
 

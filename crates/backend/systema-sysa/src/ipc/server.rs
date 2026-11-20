@@ -68,9 +68,12 @@ pub async fn run(allocator: AllocatorHandle) -> Result<()> {
         sysa::paths::instance().systema_fdpass_sock
     );
 
-    // IPC channels are up — announce allocator readiness on the notify
-    // channel so SysAInit can proceed past the first startup phase.
-    sysa::notify::broadcast(&[("MANAGER_READY", "1"), ("STATUS", "ipc-ready")]);
+    // IPC channels are up — System A has finished loading, so publish the
+    // notify socket.  SysAInit and the boot console treat a successful
+    // connection to it as the readiness signal.
+    if let Err(e) = sysa::notify::start() {
+        error!("Cannot start the notify channel: {e}");
+    }
 
     let fdpass_map: FdPassMap = Arc::new(Mutex::new(HashMap::new()));
     // Queue of workers waiting for a listener fd: requesters in FIFO order.

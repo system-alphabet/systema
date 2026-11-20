@@ -1,9 +1,10 @@
 //! systema-sysi — SysAInit
 //!
 //! The init process of System Alphabet.  It spawns System A first, waits
-//! for it to report ready on the notify channel, then starts the System
-//! Workers **serially** — each worker is only spawned after the previous
-//! one reported `WORKER_READY` — and supervises them until they exit.
+//! for its notify socket to accept a connection (the readiness signal),
+//! then starts the System Workers **serially** — each worker is only spawned
+//! after the previous one reported `WORKER_READY` — and supervises them
+//! until they exit.
 //! It can run as PID 1 (containers, bare metal without another init) or as
 //! a plain process inside a container.
 //!

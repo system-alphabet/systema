@@ -8,21 +8,16 @@
 //! [      5102] NetworkManager.service FAIL [      6118]
 //! ```
 //!
-//! # Why binding, not connecting
+//! # Joining the notify channel
 //!
-//! The notify channel has no subscription model (`sysa::notify`): System A
-//! sends every event as one `key=value` datagram to **every socket file**
-//! found in the notify directory.  `init.sock` there is SysAInit's own
-//! listener, not a server — nothing accepts connections and nothing
-//! forwards another listener's datagrams.  A new consumer therefore joins
-//! by binding its own path in that directory, which is what this frontend
-//! does (`<notify-dir>/console.sock`).
-//!
-//! System A creates the notify directory during its own startup, and the
-//! console may well be launched before that (from a getty, a service, or a
-//! boot hook).  Binding therefore retries every [`RETRY_INTERVAL`] until it
-//! works, and stays completely silent while it does: one warning per
-//! attempt would flood the very console this program writes to.
+//! System A publishes `/run/systema/notify.socket` once it has finished
+//! loading; every consumer joins by *connecting* to it
+//! ([`sysa::notify::NotifyClient`]).  Events arrive as `key=value` lines on
+//! that stream.  The console may well be launched before the socket exists
+//! (from a getty, a service, or a boot hook), so connecting retries every
+//! [`RETRY_INTERVAL`] until it works, and stays completely silent while it
+//! does: one warning per attempt would flood the very console this program
+//! writes to.
 //!
 //! # Output contract
 //!
@@ -39,22 +34,15 @@
 //! appears exactly once.
 
 use std::collections::HashMap;
-use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::MetadataExt;
-use std::os::unix::net::UnixDatagram;
-use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
 
-/// Name of this frontend's listener socket inside the notify directory.
-const SOCKET_NAME: &str = "console.sock";
-
-/// How long to wait between bind attempts while the notify directory (or
-/// permission to use it) is still missing.  Also used as the pause after an
-/// unexpected receive error so a broken descriptor cannot spin the CPU.
+/// How long to wait between connection attempts while the notify socket is
+/// still missing.  Also used as the pause after an unexpected receive error
+/// so a broken connection cannot spin the CPU.
 const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Width of the timestamp column, in characters.
@@ -113,18 +101,17 @@ fn main() {
         return;
     }
 
-    let notify_dir = sysa::paths::instance().notify_dir.clone();
-    let (listener, socket_file) = bind_listener(&notify_dir);
+    let notify_socket = sysa::paths::instance().notify_socket;
+    let mut client = sysa::notify::NotifyClient::connect_waiting(notify_socket, || false)
+        .expect("notify connect is never cancelled");
 
     let mut console = Console::new();
-    let mut buf = [0u8; 4096];
     loop {
-        match listener.recv(&mut buf) {
-            Ok(n) => {
-                let body = String::from_utf8_lossy(&buf[..n]);
+        match client.recv_event() {
+            Ok(Some(body)) => {
                 if sysa::notify::is_shutdown(&body) {
-                    // System A is exiting and waits for this listener to
-                    // close before it leaves.
+                    // System A is exiting and waits for this client to
+                    // disconnect before it leaves.
                     break;
                 }
                 if let Some(line) = console.on_datagram(&body, monotonic_ms()) {
@@ -135,84 +122,13 @@ fn main() {
                     let _ = io::stdout().flush();
                 }
             }
-            // A signal delivered while blocked in recv(2); just go again.
+            // System A closed the connection: nothing more will arrive.
+            Ok(None) => break,
+            // A signal delivered while blocked in read(2); just go again.
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            // Not expected on a datagram listener, and warnings are off by
-            // contract — pause so a persistently broken descriptor does not
-            // turn the loop into a busy spin.
+            // Warnings are off by contract — pause so a persistently broken
+            // connection does not turn the loop into a busy spin.
             Err(_) => thread::sleep(RETRY_INTERVAL),
-        }
-    }
-
-    // Close the listener (the FD first, then the socket file) before exiting
-    // so System A observes the closed channel.
-    drop(listener);
-    drop(socket_file);
-}
-
-// ---------------------------------------------------------------------------
-// Listener setup
-// ---------------------------------------------------------------------------
-
-/// Bind `<notify_dir>/console.sock`, retrying silently until it works.
-///
-/// Binding — not connecting — is how a notify consumer joins the channel;
-/// see the module documentation.  The returned guard removes the socket
-/// file on a clean exit so a later run does not have to reclaim it.
-fn bind_listener(notify_dir: &str) -> (UnixDatagram, SocketFile) {
-    let path = PathBuf::from(notify_dir).join(SOCKET_NAME);
-    loop {
-        if let Some(listener) = try_bind(&path) {
-            let guard = SocketFile::new(path);
-            return (listener, guard);
-        }
-        thread::sleep(RETRY_INTERVAL);
-    }
-}
-
-/// One bind attempt.  Failures are deliberately not logged.
-fn try_bind(path: &Path) -> Option<UnixDatagram> {
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    match UnixDatagram::bind(path) {
-        Ok(listener) => Some(listener),
-        Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
-            // The name is stale: a previous console was killed before it
-            // could unlink it, and nothing but a listener ever writes here,
-            // so the file cannot be serving anyone.  System A only reclaims
-            // it on the next broadcast, which may be hours away.
-            let _ = fs::remove_file(path);
-            UnixDatagram::bind(path).ok()
-        }
-        Err(_) => None,
-    }
-}
-
-/// The socket file this process created, unlinked on drop — but only while
-/// the path still names *our* socket: another console started in the
-/// meantime may have taken the name over.
-struct SocketFile {
-    path: PathBuf,
-    dev: u64,
-    ino: u64,
-}
-
-impl SocketFile {
-    fn new(path: PathBuf) -> Self {
-        let (dev, ino) = fs::symlink_metadata(&path)
-            .map(|md| (md.dev(), md.ino()))
-            .unwrap_or((0, 0));
-        SocketFile { path, dev, ino }
-    }
-}
-
-impl Drop for SocketFile {
-    fn drop(&mut self) {
-        if let Ok(md) = fs::symlink_metadata(&self.path) {
-            if md.dev() == self.dev && md.ino() == self.ino {
-                let _ = fs::remove_file(&self.path);
-            }
         }
     }
 }

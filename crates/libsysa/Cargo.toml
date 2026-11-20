@@ -18,6 +18,11 @@ anyhow.workspace = true
 gettext-rs.workspace = true
 libc = "0.2"
 
+# `notify` waits for the allocator's socket with an inotify watch on Linux;
+# every other platform falls back to polling (see src/notify.rs).
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+inotify = "0.10"
+
 [features]
 default = []
 l10n_debug = []

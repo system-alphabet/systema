@@ -45,10 +45,10 @@ pub struct Paths {
     /// `systema-sysf.systemd`) in these directories.
     pub finder_search_paths: Vec<String>,
     pub systema_bin_search_paths: Vec<String>,
-    /// Directory holding the notify listener sockets (SysAInit, boot
-    /// animation, ...).  System A broadcasts every boot/unit event to all
-    /// sockets found in this directory.
-    pub notify_dir: String,
+    /// Path of the allocator's notify socket.  System A creates it once it
+    /// has finished loading; SysAInit, System U and the boot console connect
+    /// to it.  A successful connection *is* the readiness signal.
+    pub notify_socket: &'static str,
     /// Unix socket path for the SysA → SysF reload notification protocol.
     /// System F listens here; System A connects to trigger a re-scan.
     pub reload_socket: &'static str,
@@ -95,7 +95,7 @@ fn compute_paths() -> Paths {
             "SYSTEMA_BIN_PATH",
             builtin::SYSTEMA_BIN_SEARCH_PATHS,
         ),
-        notify_dir: resolve("SYSTEMA_NOTIFY_DIR", builtin::NOTIFY_DIR).to_string(),
+        notify_socket: resolve("SYSTEMA_NOTIFY_SOCKET", builtin::NOTIFY_SOCKET),
         reload_socket: resolve("SYSTEMA_RELOAD_SOCKET", builtin::RELOAD_SOCKET),
     }
 }
@@ -148,7 +148,7 @@ pub fn builtin_defaults() -> Vec<(&'static str, String)> {
             builtin::CONTROL_SOCKET_PATH.to_string(),
         ),
         ("SYSTEMA_RUNSTATEDIR", builtin::RUNSTATEDIR.to_string()),
-        ("SYSTEMA_NOTIFY_DIR", builtin::NOTIFY_DIR.to_string()),
+        ("SYSTEMA_NOTIFY_SOCKET", builtin::NOTIFY_SOCKET.to_string()),
         (
             "SYSTEMA_SHELL_PATH",
             builtin::SYSTEMA_SHELL_PATH.to_string(),
@@ -225,7 +225,7 @@ pub fn debug_dump(log_file: &str) {
         ("SYSTEMA_FDPASS_SOCK", p.systema_fdpass_sock.to_string()),
         ("SYSTEMA_CONTROL_SOCKET", p.control_socket_path.to_string()),
         ("SYSTEMA_RUNSTATEDIR", p.runstatedir.to_string()),
-        ("SYSTEMA_NOTIFY_DIR", p.notify_dir.clone()),
+        ("SYSTEMA_NOTIFY_SOCKET", p.notify_socket.to_string()),
         ("SYSTEMA_SHELL_PATH", p.systema_shell_path.to_string()),
         (
             "SYSTEMA_SOCKET_HANDLER_PATH",

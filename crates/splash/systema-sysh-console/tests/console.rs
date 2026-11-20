@@ -1,10 +1,11 @@
-//! End-to-end check of the console frontend against a fake notify
-//! directory: it must retry silently while the directory is unusable, join
-//! the broadcast channel by binding `console.sock`, and print completed
-//! starts with the escape sequences intact even though stdout is a pipe.
+//! End-to-end check of the console frontend against a fake notify socket:
+//! it must retry silently while the socket is missing, join System A's
+//! event stream by connecting, and print completed starts with the escape
+//! sequences intact even though stdout is a pipe.
 
 use std::fs;
-use std::os::unix::net::UnixDatagram;
+use std::io::{Read, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -13,16 +14,16 @@ fn scratch(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("sysh-console-{}-{tag}", std::process::id()))
 }
 
-fn spawn_console(notify_dir: &Path) -> Child {
+fn spawn_console(socket: &Path) -> Child {
     Command::new(env!("CARGO_BIN_EXE_systema-sysh.console"))
-        .env("SYSTEMA_NOTIFY_DIR", notify_dir)
+        .env("SYSTEMA_NOTIFY_SOCKET", socket)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn console")
 }
 
-fn wait_for<F: Fn() -> bool>(cond: F, timeout: Duration) -> bool {
+fn wait_for<F: FnMut() -> bool>(mut cond: F, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if cond() {
@@ -33,9 +34,16 @@ fn wait_for<F: Fn() -> bool>(cond: F, timeout: Duration) -> bool {
     cond()
 }
 
-fn send_event(socket: &Path, body: &str) {
-    let sender = UnixDatagram::unbound().unwrap();
-    sender.send_to(body.as_bytes(), socket).unwrap();
+/// Bind the notify socket and accept the console's connection.
+fn accept_console(socket: &Path) -> UnixStream {
+    let listener = UnixListener::bind(socket).expect("bind fake notify socket");
+    listener.accept().expect("console never connected").0
+}
+
+fn send_event(stream: &mut UnixStream, body: &str) {
+    stream
+        .write_all(body.as_bytes())
+        .expect("write notify event");
 }
 
 /// Strip SGR sequences so the structure can be asserted as plain text.
@@ -77,37 +85,31 @@ fn parse_line(line: &str, unit: &str, status: &str) -> (u64, u64) {
 }
 
 #[test]
-fn joins_the_broadcast_channel_and_reports_completed_starts() {
+fn joins_the_event_stream_and_reports_completed_starts() {
     let dir = scratch("live");
     let _ = fs::remove_dir_all(&dir);
-    // Occupy the path with a regular file first: the console's bind (and
-    // its create_dir_all) then fails, which is exactly the silent-retry
-    // path.  Removing the file later is what lets it join.
+    // Occupy the parent path with a regular file first: connecting (and the
+    // inotify watch) then fails, which is exactly the silent-retry path.
+    // Removing the file later is what lets the console join.
     fs::write(&dir, b"blocker").unwrap();
 
-    let child = spawn_console(&dir);
+    let socket = dir.join("notify.socket");
+    let child = spawn_console(&socket);
     std::thread::sleep(Duration::from_millis(300));
 
     fs::remove_file(&dir).unwrap();
     fs::create_dir(&dir).unwrap();
-
-    let socket = dir.join("console.sock");
-    assert!(
-        wait_for(|| socket.exists(), Duration::from_secs(5)),
-        "console never bound {}",
-        socket.display()
-    );
+    let mut stream = accept_console(&socket);
 
     // A restart-style announcement, then the completion.
-    send_event(&socket, "UNIT_STARTING=slow.service\n");
+    send_event(&mut stream, "UNIT_STARTING=slow.service\n\n");
     std::thread::sleep(Duration::from_millis(30));
-    send_event(&socket, "UNIT_STARTED=slow.service\nRESULT=success\n");
+    send_event(&mut stream, "UNIT_STARTED=slow.service\nRESULT=success\n\n");
     // No announcement: the console joined too late, but the completion is
     // still reported.
-    send_event(&socket, "UNIT_STARTED=late.service\nRESULT=failed\n");
+    send_event(&mut stream, "UNIT_STARTED=late.service\nRESULT=failed\n\n");
     // Channel chatter that must not produce output.
-    send_event(&socket, "MANAGER_READY=1\n");
-    send_event(&socket, "UNIT_STOPPED=slow.service\nRESULT=success\n");
+    send_event(&mut stream, "UNIT_STOPPED=slow.service\nRESULT=success\n\n");
     std::thread::sleep(Duration::from_millis(200));
 
     let mut child = child;
@@ -145,78 +147,68 @@ fn joins_the_broadcast_channel_and_reports_completed_starts() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// System A's farewell: exit, and close (unlink) the notify socket before
-/// leaving so the allocator can finish its own exit.
+/// System A's farewell: the console closes its connection so the allocator
+/// can finish its own exit.
 #[test]
-fn shutdown_announcement_exits_and_removes_the_socket() {
+fn shutdown_announcement_closes_the_connection() {
     let dir = scratch("shutdown");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    let mut child = spawn_console(&dir);
-    let socket = dir.join("console.sock");
-    assert!(
-        wait_for(|| socket.exists(), Duration::from_secs(5)),
-        "console never bound {}",
-        socket.display()
+    let socket = dir.join("notify.socket");
+    let mut child = spawn_console(&socket);
+    let mut stream = accept_console(&socket);
+
+    send_event(&mut stream, "SHUTDOWN=1\n\n");
+
+    // EOF on the server side is what System A waits for.
+    let mut buf = [0u8; 16];
+    assert_eq!(
+        stream.read(&mut buf).expect("read after shutdown"),
+        0,
+        "console must close its connection on the shutdown announcement"
     );
 
-    send_event(&socket, "SHUTDOWN=1\n");
-
-    let mut exited = false;
-    for _ in 0..500 {
-        if child.try_wait().expect("try_wait").is_some() {
-            exited = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let exited = wait_for(
+        || child.try_wait().expect("try_wait").is_some(),
+        Duration::from_secs(5),
+    );
     assert!(exited, "console did not exit on the shutdown announcement");
-    assert!(
-        !socket.exists(),
-        "console must unlink its socket before exiting"
-    );
 
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn a_stale_socket_is_reclaimed_by_the_next_run() {
-    let dir = scratch("cleanup");
+fn retries_past_a_stale_socket_until_system_a_rebinds() {
+    let dir = scratch("stale");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("notify.socket");
 
-    let child = spawn_console(&dir);
-    let socket = dir.join("console.sock");
-    assert!(
-        wait_for(|| socket.exists(), Duration::from_secs(5)),
-        "console never bound {}",
-        socket.display()
+    // A dead listener leaves the file behind: connecting fails until System
+    // A rebinds it.
+    drop(UnixListener::bind(&socket).unwrap());
+    assert!(socket.exists());
+
+    let mut child = spawn_console(&socket);
+    std::thread::sleep(Duration::from_millis(200));
+
+    // Rebind at the same path; the console's wait must notice and connect.
+    fs::remove_file(&socket).unwrap();
+    let mut stream = accept_console(&socket);
+    send_event(
+        &mut stream,
+        "UNIT_STARTED=stale.service\nRESULT=success\n\n",
     );
+    std::thread::sleep(Duration::from_millis(200));
 
-    // SIGKILL: destructors never run, so the socket file survives.  System
-    // A would reclaim it on the next broadcast; this checks the faster path
-    // — a second console takes the name over at startup.
-    let mut child = child;
     child.kill().ok();
-    child.wait().ok();
+    let output = child.wait_with_output().expect("collect console output");
+    let stdout = plain(&String::from_utf8_lossy(&output.stdout));
     assert!(
-        socket.exists(),
-        "killed console should leave the file behind"
+        stdout.contains("stale.service OK"),
+        "console did not join the rebound socket: {stdout:?}"
     );
 
-    let mut second = spawn_console(&dir);
-    assert!(
-        wait_for(
-            || UnixDatagram::unbound()
-                .unwrap()
-                .send_to(b"", &socket)
-                .is_ok(),
-            Duration::from_secs(5)
-        ),
-        "second console could not take over a stale socket"
-    );
-    second.kill().ok();
-    second.wait().ok();
     let _ = fs::remove_dir_all(&dir);
 }

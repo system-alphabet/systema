@@ -6,8 +6,8 @@
 //!
 //! SysAInit starts System A first and only then the workers serially,
 //! gated on notify-channel readiness events.  The tests play the role of
-//! System A's notify sender: they write `MANAGER_READY` / `WORKER_READY`
-//! datagrams to the listener socket SysAInit binds in `SYSTEMA_NOTIFY_DIR`.
+//! System A's notify sender: the fake binds `notify.socket`, accepts
+//! SysAInit's connection, and writes framed `WORKER_READY` events to it.
 //! They also serve the fake System A control socket (`SYSTEMA_CONTROL_SOCKET`)
 //! for the control phase (`manager.daemon_reload` / `manager.start_units`).
 
@@ -15,7 +15,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -151,7 +151,7 @@ fn run_sysi(dir: &Path, notify_dir: &Path, extra: &[&str]) -> SysiChild {
         // `warn`: pin the level the harness parses.
         .arg("--log-level")
         .arg("info")
-        .env("SYSTEMA_NOTIFY_DIR", notify_dir)
+        .env("SYSTEMA_NOTIFY_SOCKET", notify_dir.join("notify.socket"))
         // The control phase talks to System A over the control socket;
         // point it at the fake listener below.
         .env("SYSTEMA_CONTROL_SOCKET", notify_dir.join("control.sock"))
@@ -215,39 +215,38 @@ impl Drop for SysiChild {
     }
 }
 
-/// The "System A" side of the notify channel: sends datagrams to the
-/// listener socket SysAInit binds at `<notify-dir>/init.sock`.
+/// The "System A" side of the notify channel: binds
+/// `<notify-dir>/notify.socket`, accepts SysAInit's connection, and writes
+/// framed events to it.
+#[derive(Clone)]
 struct FakeA {
-    sock: UnixDatagram,
-    target: PathBuf,
+    stream: Arc<Mutex<UnixStream>>,
 }
 
 impl FakeA {
     fn new(notify_dir: &Path) -> Self {
-        let target = notify_dir.join("init.sock");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !target.exists() {
-            if Instant::now() > deadline {
-                panic!("SysAInit never bound {}", target.display());
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
+        fs::create_dir_all(notify_dir).unwrap();
+        let target = notify_dir.join("notify.socket");
+        let listener = UnixListener::bind(&target).unwrap();
+        let (stream, _) = listener.accept().unwrap();
         FakeA {
-            sock: UnixDatagram::unbound().unwrap(),
-            target,
+            stream: Arc::new(Mutex::new(stream)),
         }
     }
 
     fn send(&self, body: &str) {
-        self.sock.send_to(body.as_bytes(), &self.target).unwrap();
+        let mut stream = self.stream.lock().unwrap();
+        // The client may already be gone (e.g. it exited on a failed start);
+        // the fake must not panic over a closed connection.
+        let _ = stream.write_all(body.as_bytes());
     }
 
-    fn manager_ready(&self) {
-        self.send("MANAGER_READY=1\nSTATUS=ipc-ready\n");
-    }
+    /// Kept as a marker for the phase boundary: a successful connection is
+    /// the readiness signal now, so there is no packet to publish.
+    fn manager_ready(&self) {}
 
     fn worker_ready(&self, worker_id: &str) {
-        self.send(&format!("WORKER_READY={worker_id}\n"));
+        self.send(&format!("WORKER_READY={worker_id}\n\n"));
     }
 }
 
@@ -378,10 +377,10 @@ fn fake_control(notify_dir: &Path, sent: Arc<Mutex<Vec<String>>>) {
 
 fn fake_power_worker(
     notify_dir: &Path,
+    notify: FakeA,
 ) -> (std::sync::mpsc::Sender<String>, Arc<Mutex<Vec<String>>>) {
     fs::create_dir_all(notify_dir).unwrap();
     let listener = UnixListener::bind(notify_dir.join("allocator.sock")).unwrap();
-    let target = notify_dir.join("init.sock");
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let events = Arc::new(Mutex::new(Vec::new()));
     let recorded = events.clone();
@@ -431,10 +430,7 @@ fn fake_power_worker(
             let env = Envelope::decode(frame.as_slice()).unwrap();
             match env.method.as_str() {
                 "worker.ready" => {
-                    UnixDatagram::unbound()
-                        .unwrap()
-                        .send_to(b"WORKER_READY=system-i-1\n", &target)
-                        .unwrap();
+                    notify.worker_ready("system-i-1");
                     recorded.lock().unwrap().push("ready".into());
                 }
                 "method.result" => {
@@ -562,8 +558,8 @@ fn boot_all_with(
 ) -> Arc<Mutex<Vec<String>>> {
     let sent = Arc::new(Mutex::new(Vec::new()));
     fake_control(notify_dir, sent.clone());
-    let _power = fake_power_worker(notify_dir);
     let a = FakeA::new(notify_dir);
+    let _power = fake_power_worker(notify_dir, a.clone());
     a.manager_ready();
     for (name, worker_id) in SHORT_NAMES.iter().zip(WORKER_IDS) {
         if skip.contains(name) {
@@ -740,7 +736,7 @@ fn allocator_timeout_exits_nonzero() {
     let mut child = run_sysi(&dir, &notify_dir, &[]);
     let _ = stderr_reader(&mut child);
 
-    // Never send MANAGER_READY: --ready-timeout 2 must abort the boot.
+    // Never publish the notify socket: --ready-timeout 2 must abort the boot.
     let status = wait_timeout(&mut child, 8).expect("should exit on timeout");
     assert_ne!(status.code(), Some(0), "got {status:?}");
 
@@ -807,9 +803,9 @@ fn control_phase_connection_failure_is_fatal() {
     let mut child = run_sysi(&dir, &notify_dir, &[]);
     let buf = stderr_reader(&mut child);
     // No fake control socket: the control phase cannot connect.
-    let _power = fake_power_worker(&notify_dir);
-
     let a = FakeA::new(&notify_dir);
+    let _power = fake_power_worker(&notify_dir, a.clone());
+
     a.manager_ready();
     for (name, worker_id) in SHORT_NAMES.iter().zip(WORKER_IDS) {
         assert!(wait_for(&buf, &format!("Spawned {name}"), 5));
@@ -826,11 +822,11 @@ fn power_worker_transition(method: &str, tag: &str) {
     let dir = shim_dir(tag);
     default_shims(&dir);
     let notify_dir = dir.join("notify");
-    let (commands, events) = fake_power_worker(&notify_dir);
     fake_control(&notify_dir, Arc::new(Mutex::new(Vec::new())));
     let mut child = run_sysi(&dir, &notify_dir, &["--powerctl=never"]);
     let buf = stderr_reader(&mut child);
     let a = FakeA::new(&notify_dir);
+    let (commands, events) = fake_power_worker(&notify_dir, a.clone());
     a.manager_ready();
     for (name, worker_id) in SHORT_NAMES.iter().zip(WORKER_IDS) {
         assert!(wait_for(&buf, &format!("Spawned {name}"), 5));

@@ -42,7 +42,7 @@ impl WorkerSpec {
 }
 
 /// The per-user process set, in spawn order: System A first (the launcher
-/// waits for its `MANAGER_READY`), then the workers serially, each gated
+/// waits for its notify connection), then the workers serially, each gated
 /// on `WORKER_READY=<id>` (System S, System T, then System W — System A
 /// broadcasts W's ready event when the bridge's control `manager.hello`
 /// carries `system-w-1`, so D-Bus availability never gates startup).

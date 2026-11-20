@@ -108,13 +108,12 @@ pub fn matrix() -> Vec<(&'static str, String)> {
         ("SYSTEMA_IPC_SOCKET", format!("{runtime}/allocator.sock")),
         ("SYSTEMA_CONTROL_SOCKET", paths::user_control_socket()),
         ("SYSTEMA_FDPASS_SOCK", format!("{runtime}/fdpass.sock")),
-        // NOT `{runtime}/notify`: syss's service sd_notify socket *is*
-        // `{runstatedir}/notify` (notify_socket_path()), and a path cannot
-        // be both this listener directory and that socket file.  The extra
-        // `/systema/` segment mirrors the system-domain construction
-        // (build.rs: `{runstatedir}/systema/notify`) that keeps the two
-        // apart there too.
-        ("SYSTEMA_NOTIFY_DIR", format!("{runtime}/systema/notify")),
+        // The allocator's notify socket.  Kept out of `{runtime}/notify`,
+        // which System S uses as the sd_notify socket of its services.
+        (
+            "SYSTEMA_NOTIFY_SOCKET",
+            format!("{runtime}/systema/notify.socket"),
+        ),
         ("SYSTEMA_RELOAD_SOCKET", format!("{runtime}/sysf.sock")),
         // The launcher's own log file — and the anchor the whole instance
         // derives from: every worker is spawned with
@@ -213,8 +212,8 @@ mod tests {
                     format!("{runtime}/fdpass.sock")
                 );
                 assert_eq!(
-                    get(&m, "SYSTEMA_NOTIFY_DIR"),
-                    format!("{runtime}/systema/notify")
+                    get(&m, "SYSTEMA_NOTIFY_SOCKET"),
+                    format!("{runtime}/systema/notify.socket")
                 );
                 assert_eq!(
                     get(&m, "SYSTEMA_RELOAD_SOCKET"),

@@ -16,7 +16,6 @@
 //! spawns it on-demand when a daemon-reload is requested (via IPC or D-Bus).
 
 use std::collections::{HashMap, HashSet};
-use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -40,98 +39,91 @@ use crate::power;
 use crate::power_worker::{self, PowerWorker};
 use crate::workers::{ProcessKind, ResolvedProcess};
 
-/// Default notify directory: `<runstatedir>/systema/notify` (`/run` by
-/// default), overridable with `SYSTEMA_NOTIFY_DIR`.  Derived from the
-/// runtime state dir rather than hardcoded.
-pub fn default_notify_dir() -> String {
-    sysa::paths::instance().notify_dir.clone()
+/// Path of System A's notify socket (`<runstatedir>/systema/notify.socket`,
+/// overridable with `SYSTEMA_NOTIFY_SOCKET`).  Derived from the runtime
+/// state dir rather than hardcoded.
+pub fn notify_socket_path() -> String {
+    sysa::paths::instance().notify_socket.to_string()
 }
 
-/// SysAInit's notify listener, `<notify-dir>/init.sock`.
+/// SysAInit's connection to System A's notify socket.
 ///
-/// Receiving runs on a dedicated thread that feeds the channel drained by
-/// [`WaitCtx`], so every early-boot wait still sees events that arrive
-/// before it starts polling.
+/// A dedicated thread waits for the socket to appear, connects, and feeds
+/// the channel drained by [`WaitCtx`].  A successful connection *is* the
+/// allocator-readiness signal, so the thread pushes [`CONNECTED_EVENT`] into
+/// the channel before it starts forwarding events; `wait_ready` then returns
+/// exactly as it did for the old `MANAGER_READY` datagram.
 ///
-/// The socket lives under the runstatedir, which means the runstatedir
-/// cannot be unmounted while this FD is open — unlinking `init.sock` is not
-/// enough, the descriptor itself has to go.  Every exit path therefore
-/// calls [`NotifyListener::shutdown`], and so does the power transition
-/// before it attempts the unmount.  In addition, the receive thread closes
-/// the socket on its own when System A announces its shutdown
-/// (`SHUTDOWN=1`): the allocator waits for that before it exits, and the
-/// main loop may not be draining the channel at that moment.
-struct NotifyListener {
-    sock_path: PathBuf,
+/// The connection lives under the runstatedir, so the runstatedir cannot be
+/// unmounted while it is open — every exit path calls
+/// [`NotifyConnection::shutdown`], and so does the power transition before
+/// it attempts the unmount.  The thread also closes the stream when System
+/// A announces its shutdown (`SHUTDOWN=1`): the allocator waits for that
+/// before it exits, and the main loop may not be draining the channel at
+/// that moment.
+struct NotifyConnection {
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
-impl NotifyListener {
+/// Synthetic in-process event reporting that the notify connection is up.
+/// It never travels over the wire.
+const CONNECTED_EVENT: &str = "NOTIFY_CONNECTED=1";
+
+impl NotifyConnection {
     /// How often the receive thread wakes to re-check [`Self::stop`].
     ///
     /// A read timeout is what lets the thread notice a shutdown request
-    /// without a wakeup datagram, so [`NotifyListener::shutdown`] cannot
+    /// without a wakeup event, so [`NotifyConnection::shutdown`] cannot
     /// block on the join forever.
     const POLL: Duration = Duration::from_millis(100);
 
-    /// Bind `<dir>/init.sock` and start forwarding datagrams to `tx`.
-    ///
-    /// Returns `None` after logging when the socket cannot be set up, which
-    /// the caller treats as fatal — readiness waits depend on this channel.
-    fn bind(dir: &str, tx: mpsc::UnboundedSender<String>) -> Option<Self> {
-        let sock_path = PathBuf::from(dir).join("init.sock");
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            error!("Cannot create notify directory {dir}: {e}");
-        }
-        let _ = std::fs::remove_file(&sock_path);
-        let listener = match UnixDatagram::bind(&sock_path) {
-            Ok(l) => l,
-            Err(e) => {
-                error!("Cannot bind notify listener {}: {e}", sock_path.display());
-                return None;
-            }
-        };
-        if let Err(e) = listener.set_read_timeout(Some(Self::POLL)) {
-            error!(
-                "Cannot time out notify listener {}: {e}",
-                sock_path.display()
-            );
-            return None;
-        }
-        info!("Notify listener bound at {}", sock_path.display());
-
+    /// Start connecting to `path` and forward events to `tx`.
+    fn connect(path: String, tx: mpsc::UnboundedSender<String>) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
-        let sock_for_thread = sock_path.clone();
         let thread = thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            while !stopped.load(Ordering::SeqCst) {
-                match listener.recv(&mut buf) {
-                    Ok(n) => {
-                        // Re-check: a shutdown requested while `recv` was
-                        // blocked must not forward a late datagram.
+            let mut client = match sysa::notify::NotifyClient::connect_waiting(&path, || {
+                stopped.load(Ordering::SeqCst)
+            }) {
+                Ok(client) => client,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => return,
+                Err(e) => {
+                    error!("Cannot connect to notify socket {path}: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = client.set_read_timeout(Some(Self::POLL)) {
+                error!("Cannot time out notify connection {path}: {e}");
+                return;
+            }
+            info!("Notify connection established with {path}");
+            let _ = tx.send(CONNECTED_EVENT.to_string());
+
+            loop {
+                if stopped.load(Ordering::SeqCst) {
+                    break;
+                }
+                match client.recv_event() {
+                    Ok(Some(body)) => {
+                        // Re-check: a shutdown requested while the read was
+                        // blocked must not forward a late event.
                         if stopped.load(Ordering::SeqCst) {
                             break;
                         }
-                        let body = String::from_utf8_lossy(&buf[..n]).into_owned();
                         let allocator_is_leaving = sysa::notify::is_shutdown(&body);
                         let _ = tx.send(body);
                         if allocator_is_leaving {
-                            // System A is exiting and waits for every notify
-                            // listener to close its socket.  Close it right
-                            // here: the main loop may be inside a power
-                            // transition and not draining this channel, and
-                            // closing the listener is all System Init does on
-                            // this event.  Dropping `listener` closes the FD;
-                            // unlinking the path is what System A observes.
-                            info!(
-                                "notify: allocator announced shutdown; closing {}",
-                                sock_for_thread.display()
-                            );
-                            let _ = std::fs::remove_file(&sock_for_thread);
+                            // System A is exiting and waits for every client
+                            // to disconnect; closing the stream right here is
+                            // all System Init does on this event.
+                            info!("notify: allocator announced shutdown; closing {path}");
                             break;
                         }
+                    }
+                    Ok(None) => {
+                        warn!("notify connection {path} closed by System A");
+                        break;
                     }
                     // Read timeout: nothing arrived, just re-check `stop`.
                     Err(e)
@@ -140,31 +132,26 @@ impl NotifyListener {
                             std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                         ) => {}
                     Err(e) => {
-                        warn!("notify listener error: {e}");
-                        thread::sleep(Duration::from_millis(100));
+                        warn!("notify connection error: {e}");
+                        break;
                     }
                 }
             }
         });
 
-        Some(Self {
-            sock_path,
+        Self {
             stop,
             thread: Some(thread),
-        })
+        }
     }
 
-    /// Stop receiving, release the socket FD and unlink `init.sock`.
-    ///
-    /// Closing the FD — not unlinking the path — is what makes the
-    /// runstatedir unmountable.  Idempotent, so shutdown paths may not
-    /// have to track whether it already ran.
+    /// Stop receiving and close the connection.  Idempotent, so shutdown
+    /// paths do not have to track whether it already ran.
     fn shutdown(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
-        let _ = std::fs::remove_file(&self.sock_path);
     }
 }
 
@@ -473,7 +460,7 @@ async fn power_down(
     action: &str,
     reaper_rx: &mut mpsc::UnboundedReceiver<ReaperEvent>,
     power_ctl: power::PowerCtl,
-    notify: &mut NotifyListener,
+    notify: &mut NotifyConnection,
 ) -> Result<i32> {
     let power_action = power::PowerAction::from_unit_name(action).ok_or_else(|| {
         anyhow::anyhow!(sysa::l10n::fmt(
@@ -877,11 +864,11 @@ pub async fn run(
         }
     }
 
-    // --- Bind the notify listener BEFORE spawning anything. ---
+    // --- Connect to the notify socket before spawning anything. ---
+    // The connection itself is System A's readiness signal; the connector
+    // thread waits for the socket to appear.
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<String>();
-    let Some(mut notify) = NotifyListener::bind(&default_notify_dir(), notify_tx) else {
-        return Ok(1);
-    };
+    let mut notify = NotifyConnection::connect(notify_socket_path(), notify_tx);
 
     let (reaper_tx, reaper_rx) = mpsc::unbounded_channel::<ReaperEvent>();
     let reaper = spawn_reaper(reaper_tx);
@@ -902,7 +889,7 @@ pub async fn run(
     let mut procs: Vec<Spawned> = Vec::with_capacity(resolved.len());
     let mut bootlog: Vec<String> = Vec::new();
 
-    // --- Phase 1: System A, then wait for MANAGER_READY. ---
+    // --- Phase 1: System A, then wait for the notify connection. ---
     let code = if let Some(rp) = allocator_specs.first() {
         if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_target, extra_flags)
         {
@@ -917,7 +904,9 @@ pub async fn run(
                 // `what` is interpolated only into `info!`/`error!` templates,
                 // which are not translated — keep it as a plain label.
                 "System Allocator",
-                |kv| kv.get("MANAGER_READY").is_some(),
+                // Connecting to the notify socket is the readiness signal:
+                // System A publishes it only after it has finished loading.
+                |kv| kv.get("NOTIFY_CONNECTED").is_some(),
             )
             .await?
         }
@@ -1058,6 +1047,7 @@ pub async fn run(
 mod tests {
     use super::*;
     use nix::sys::signal::Signal;
+    use std::path::PathBuf;
 
     #[test]
     fn status_code_passes_through_normal_exits() {
@@ -1096,7 +1086,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Notify listener lifecycle
+    // Notify connection lifecycle
     // =========================================================================
 
     /// Scratch directory for socket tests; removed first so a leftover from a
@@ -1104,61 +1094,84 @@ mod tests {
     fn scratch_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("systema-sysi-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
-    /// The bug this guards against: SysAInit used to unlink `init.sock` and
-    /// detach the receive thread, leaving the socket FD open — enough to make
-    /// `umount /run` fail with EBUSY until SysAInit itself exited.
+    /// A fake System A: accept one notify client and write the given framed
+    /// events.  Returns the join handle of the server thread.
+    fn fake_notify_server(sock: PathBuf, events: Vec<&'static str>) -> thread::JoinHandle<()> {
+        use std::io::Write;
+        use std::os::unix::net::UnixListener;
+
+        thread::spawn(move || {
+            let listener = UnixListener::bind(&sock).expect("bind fake notify socket");
+            let (mut stream, _) = listener.accept().expect("accept notify client");
+            for event in events {
+                if stream.write_all(event.as_bytes()).is_err() {
+                    return;
+                }
+            }
+            // Stay connected until the client closes, like the real hub.
+            let mut buf = [0u8; 16];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+        })
+    }
+
+    /// Connecting is the readiness signal, and a shutdown announcement makes
+    /// the receive thread close the connection by itself — during a power
+    /// transition the main loop is not draining the channel.
     #[test]
-    fn notify_listener_shutdown_closes_the_socket() {
+    fn notify_connection_reports_connect_and_closes_on_shutdown() {
         let dir = scratch_dir("notify");
+        let sock = dir.join("notify.socket");
+        let server = fake_notify_server(
+            sock.clone(),
+            vec!["UNIT_STARTED=a.service\n\n", "SHUTDOWN=1\n\n"],
+        );
+
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut listener =
-            NotifyListener::bind(dir.to_str().expect("utf-8 temp path"), tx).expect("bind");
-        let sock = dir.join("init.sock");
-        assert!(sock.exists());
+        let mut notify = NotifyConnection::connect(sock.to_str().unwrap().to_string(), tx);
 
-        let client = UnixDatagram::unbound().expect("client socket");
-        client.send_to(b"MANAGER_READY=1", &sock).expect("send");
-        assert_eq!(rx.blocking_recv().as_deref(), Some("MANAGER_READY=1"));
-
-        listener.shutdown();
-
-        // The receive thread has ended, so its end of the channel is closed —
-        // which is exactly the FD release the unmount depends on.
+        assert_eq!(
+            rx.blocking_recv().as_deref(),
+            Some(CONNECTED_EVENT),
+            "a successful connection is reported before any event"
+        );
+        assert_eq!(
+            rx.blocking_recv().as_deref(),
+            Some("UNIT_STARTED=a.service\n")
+        );
+        assert_eq!(rx.blocking_recv().as_deref(), Some("SHUTDOWN=1\n"));
+        // The thread closed its end, so the channel ends without anyone
+        // calling `shutdown()`.
         assert!(rx.blocking_recv().is_none());
-        assert!(!sock.exists());
 
-        // Idempotent: shutdown paths may call it again.
-        listener.shutdown();
-
+        // The regular shutdown path stays idempotent after the self-close.
+        notify.shutdown();
+        server.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// System A announces its exit and waits for the listener to close, so
-    /// the receive thread has to close the socket by itself — during a power
-    /// transition the main loop is not draining the channel.
+    /// A boot that times out must be able to cancel the wait for a socket
+    /// that never appears.
     #[test]
-    fn notify_listener_closes_itself_on_the_allocator_shutdown() {
-        let dir = scratch_dir("notify-shutdown");
+    fn notify_connection_shutdown_cancels_the_wait() {
+        let dir = scratch_dir("notify-cancel");
+        let sock = dir.join("notify.socket");
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut listener =
-            NotifyListener::bind(dir.to_str().expect("utf-8 temp path"), tx).expect("bind");
-        let sock = dir.join("init.sock");
-        assert!(sock.exists());
+        let mut notify = NotifyConnection::connect(sock.to_str().unwrap().to_string(), tx);
 
-        let client = UnixDatagram::unbound().expect("client socket");
-        client.send_to(b"SHUTDOWN=1\n", &sock).expect("send");
-
-        assert_eq!(rx.blocking_recv().as_deref(), Some("SHUTDOWN=1\n"));
-        // The receive thread closed its end, so the channel ends and the
-        // socket file is gone without anyone calling `shutdown()`.
+        std::thread::sleep(Duration::from_millis(100));
+        let started = std::time::Instant::now();
+        notify.shutdown();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "shutdown must not wait out a socket that never appears"
+        );
         assert!(rx.blocking_recv().is_none());
-        assert!(!sock.exists());
 
-        // The regular shutdown path stays idempotent after the self-close.
-        listener.shutdown();
+        notify.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
