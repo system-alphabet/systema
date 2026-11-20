@@ -30,18 +30,49 @@ use sysa::proto::{
 /// e.g. "nginx.service" → "nginx_2eservice"
 pub fn encode_unit_path(name: &str) -> String {
     let mut out = String::new();
-    for ch in name.chars() {
+    for byte in name.bytes() {
         // systemd's `sd_bus_path_encode` keeps only ASCII alphanumerics and
-        // escapes everything else (_ included) as `_XX`.  Escaping only a
-        // subset makes `status` (which computes the path client-side) look up
-        // a different object than the one registered here.
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
+        // escapes every other UTF-8 byte (underscore included) as `_XX`.
+        // Escaping only a subset makes `status` (which computes the path
+        // client-side) look up a different object than the one registered
+        // here.
+        if (byte as char).is_ascii_alphanumeric() {
+            out.push(byte as char);
         } else {
-            out.push_str(&format!("_{:02x}", ch as u32));
+            out.push_str(&format!("_{byte:02x}"));
         }
     }
     out
+}
+
+/// Inverse of [`encode_unit_path`]: decode a unit object path segment.
+///
+/// Returns `None` when the segment is not valid UTF-8 after unescaping.
+pub fn decode_unit_path(encoded: &str) -> Option<String> {
+    let bytes = encoded.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'_' {
+            let hi = hex_digit(*bytes.get(i + 1)?)?;
+            let lo = hex_digit(*bytes.get(i + 2)?)?;
+            out.push(hi * 16 + lo);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub fn unit_object_path(name: &str) -> OwnedObjectPath {
@@ -1583,6 +1614,28 @@ mod tests {
             encode_unit_path("proc-sys-fs-binfmt_misc.automount"),
             "proc_2dsys_2dfs_2dbinfmt_5fmisc_2eautomount"
         );
+    }
+
+    #[test]
+    fn decode_unit_path_inverts_the_encoding() {
+        for name in [
+            "nginx.service",
+            "-.slice",
+            "dev-sda1.mount",
+            "plain",
+            "proc-sys-fs-binfmt_misc.automount",
+            "modprobe@ntfs.service",
+            "vncserver@:1.service",
+        ] {
+            assert_eq!(
+                decode_unit_path(&encode_unit_path(name)).as_deref(),
+                Some(name)
+            );
+        }
+        // Invalid escapes and non-UTF-8 byte sequences are rejected.
+        assert_eq!(decode_unit_path("bad_2"), None);
+        assert_eq!(decode_unit_path("bad_zz"), None);
+        assert_eq!(decode_unit_path("bad_ff"), None);
     }
 
     #[test]

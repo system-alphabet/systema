@@ -52,6 +52,64 @@ fn box_dbus_error(err: zbus::Error) -> BoxDBusError {
     Box::new(fdo::Error::Failed(err.to_string()))
 }
 
+/// Fallback `org.freedesktop.DBus.Properties` for unit paths without an
+/// object yet.
+///
+/// `systemctl status <unit>` builds the object path client-side and calls
+/// `Properties.GetAll` without a prior `GetUnit`, so a unit whose object has
+/// not been registered (a template instance such as `modprobe@ntfs.service`,
+/// or a unit that appeared after startup) would otherwise get
+/// `UnknownObject`.  One instance serves every path below
+/// `/org/freedesktop/systemd1/unit`; the unit name comes from the message
+/// path.
+pub struct FallbackProperties {
+    pub ctx: Arc<BridgeContext>,
+}
+
+impl FallbackProperties {
+    /// Resolve `unit_name`, materialize it through System A when needed, and
+    /// register its exact object for subsequent calls.
+    async fn load(&self, unit_name: &str) -> Result<String, BoxDBusError> {
+        let canonical = super::resolve_canonical(&self.ctx, unit_name).await;
+        let loaded = self
+            .ctx
+            .mirror
+            .read()
+            .get(&canonical)
+            .map(|snapshot| snapshot.load_state == "loaded")
+            .unwrap_or(false);
+        if loaded {
+            super::ensure_unit_object(&self.ctx, &canonical).await;
+            return Ok(canonical);
+        }
+        match systema_sysw_common::client::calls::load_unit_snapshot(&self.ctx.client, &canonical)
+            .await
+        {
+            Ok((load, snapshot)) => {
+                self.ctx.mirror.write().upsert(snapshot);
+                super::ensure_unit_object(&self.ctx, &load.name).await;
+                Ok(load.name)
+            }
+            Err(_) => Err(Box::new(fdo::Error::UnknownObject(sysa::l10n::fmt(
+                sysa::l10n::t_("Unit {name} is not loaded."),
+                &[("name", &canonical.to_string())],
+            )))),
+        }
+    }
+}
+
+/// Split a unit object path into `(unit_name, path)`.
+fn unit_from_message(msg: &zbus::message::Message) -> Option<(String, String)> {
+    let header = msg.header();
+    let path = header.path()?.to_string();
+    let encoded = path.strip_prefix("/org/freedesktop/systemd1/unit/")?;
+    let name = super::manager::decode_unit_path(encoded)?;
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, path))
+}
+
 /// Replacement for `zbus::fdo::Properties` on per-unit object paths.
 pub struct Properties {
     pub ctx: Arc<BridgeContext>,
@@ -421,6 +479,170 @@ impl Interface for Properties {
     fn introspect_to_writer(&self, writer: &mut dyn Write, level: usize) {
         introspect_properties(writer, level);
     }
+}
+
+#[async_trait]
+impl Interface for FallbackProperties {
+    fn name() -> InterfaceName<'static>
+    where
+        Self: Sized,
+    {
+        InterfaceName::from_static_str_unchecked("org.freedesktop.DBus.Properties")
+    }
+
+    async fn get(
+        &self,
+        _property_name: &str,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<OwnedValue, BoxDBusError>> {
+        None
+    }
+
+    async fn get_all(
+        &self,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
+        Ok(HashMap::new())
+    }
+
+    async fn set_mut(
+        &mut self,
+        _property_name: &str,
+        _value: &zbus::Variant<'_>,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<(), BoxDBusError>> {
+        None
+    }
+
+    fn call<'call>(
+        &'call self,
+        server: &'call ObjectServer,
+        connection: &'call Connection,
+        msg: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> DispatchResult<'call> {
+        let Some((unit_name, path)) = unit_from_message(msg) else {
+            return DispatchResult::NotFound;
+        };
+        DispatchResult::Async(Box::pin(async move {
+            let unit_name = self.load(&unit_name).await?;
+            let emitter = SignalEmitter::new(connection, path).map_err(box_dbus_error)?;
+            let props = Properties {
+                ctx: self.ctx.clone(),
+                unit_name,
+            };
+            match name.as_str() {
+                "GetAll" => props
+                    .handle_get_all(server, connection, msg, &emitter)
+                    .await
+                    .map_err(box_dbus_error),
+                "Get" => props
+                    .handle_get(server, connection, msg, &emitter)
+                    .await
+                    .map_err(box_dbus_error),
+                "Set" => props
+                    .handle_set(connection, msg)
+                    .await
+                    .map_err(box_dbus_error),
+                _ => Ok(()),
+            }
+        }))
+    }
+
+    fn call_mut<'call>(
+        &'call mut self,
+        _server: &'call ObjectServer,
+        _connection: &'call Connection,
+        _msg: &'call zbus::message::Message,
+        _name: zbus::names::MemberName<'call>,
+    ) -> DispatchResult<'call> {
+        DispatchResult::NotFound
+    }
+
+    fn introspect_to_writer(&self, writer: &mut dyn Write, level: usize) {
+        introspect_properties(writer, level);
+    }
+}
+
+/// Placeholder interface that materialises the unit-prefix node, so zbus's
+/// built-in `Properties` can be removed from it before the fallback is
+/// installed. It stays registered: removing it prunes the node (and with it
+/// the fallback), because zbus only counts interfaces, not fallbacks, when it
+/// decides whether a node is empty.
+pub struct UnitPathMarker;
+
+#[async_trait]
+impl Interface for UnitPathMarker {
+    fn name() -> InterfaceName<'static>
+    where
+        Self: Sized,
+    {
+        InterfaceName::from_static_str_unchecked("org.freedesktop.systemd1.internal.UnitPath")
+    }
+
+    async fn get(
+        &self,
+        _property_name: &str,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<OwnedValue, BoxDBusError>> {
+        None
+    }
+
+    async fn get_all(
+        &self,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
+        Ok(HashMap::new())
+    }
+
+    async fn set_mut(
+        &mut self,
+        _property_name: &str,
+        _value: &zbus::Variant<'_>,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<(), BoxDBusError>> {
+        None
+    }
+
+    fn call<'call>(
+        &'call self,
+        _server: &'call ObjectServer,
+        _connection: &'call Connection,
+        _msg: &'call zbus::message::Message,
+        _name: zbus::names::MemberName<'call>,
+    ) -> DispatchResult<'call> {
+        DispatchResult::NotFound
+    }
+
+    fn call_mut<'call>(
+        &'call mut self,
+        _server: &'call ObjectServer,
+        _connection: &'call Connection,
+        _msg: &'call zbus::message::Message,
+        _name: zbus::names::MemberName<'call>,
+    ) -> DispatchResult<'call> {
+        DispatchResult::NotFound
+    }
+
+    fn introspect_to_writer(&self, _writer: &mut dyn Write, _level: usize) {}
 }
 
 /// Custom `org.freedesktop.DBus.Properties` for the manager object.

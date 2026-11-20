@@ -303,6 +303,48 @@ pub async fn run_dbus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection
         }
     }
 
+    // `systemctl status` computes a unit's object path client-side and calls
+    // `Properties.GetAll` without a prior `GetUnit`.  Units that have no
+    // object yet (template instances such as `modprobe@ntfs.service`, or units
+    // that appeared after startup) would otherwise get `UnknownObject`; the
+    // fallback materializes them on demand and answers the property calls.
+    //
+    // zbus installs its built-in `Properties` (plus `Peer`/`Introspectable`)
+    // on every node, and `at_fallback` refuses a name that already exists, so
+    // the prefix node must exist with the built-in `Properties` removed
+    // first.  The marker interface only materialises that node; it must stay,
+    // because removing it prunes the node and the fallback with it.
+    let unit_prefix = "/org/freedesktop/systemd1/unit";
+    let props_name =
+        zbus::names::InterfaceName::from_static_str_unchecked("org.freedesktop.DBus.Properties");
+    if let Err(e) = conn
+        .object_server()
+        .at(unit_prefix, properties::UnitPathMarker)
+        .await
+    {
+        warn!("Failed to create unit path node: {}", e);
+    }
+    if let Err(e) = conn
+        .object_server()
+        .remove_named(unit_prefix, props_name)
+        .await
+    {
+        warn!(
+            "Failed to remove default Properties from the unit path node: {}",
+            e
+        );
+    }
+    let fallback = properties::FallbackProperties { ctx: ctx.clone() };
+    match conn
+        .object_server()
+        .at_fallback(unit_prefix, fallback)
+        .await
+    {
+        Ok(None) => {}
+        Ok(Some(_)) => warn!("Unit Properties fallback is already registered"),
+        Err(e) => warn!("Failed to register unit Properties fallback: {}", e),
+    }
+
     let _ = ctx.conn.set(conn.clone());
     info!("System Wrapper D-Bus server running");
 
