@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use zbus::interface;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use super::manager::job_object_path;
 use super::BridgeContext;

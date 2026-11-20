@@ -12,10 +12,11 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use zbus::message::Header;
 use zbus::names::InterfaceName;
-use zbus::object_server::{DispatchResult, Interface, SignalContext};
-use zbus::{fdo, Connection, ObjectServer};
-use zvariant::OwnedValue;
+use zbus::object_server::{DispatchResult, Interface, SignalEmitter};
+use zbus::OwnedVariant as OwnedValue;
+use zbus::{fdo, BoxDBusError, Connection, ObjectServer};
 
 use super::manager::ManagerInterface;
 use super::mount_obj::MountObject;
@@ -25,6 +26,31 @@ use super::slice_obj::SliceObject;
 use super::socket_obj::SocketObject;
 use super::unit_obj::UnitObject;
 use super::BridgeContext;
+
+/// Object path each custom `Properties` interface answers on.
+trait PropertiesPath {
+    fn object_path(&self) -> String;
+}
+
+impl PropertiesPath for Properties {
+    fn object_path(&self) -> String {
+        format!(
+            "/org/freedesktop/systemd1/unit/{}",
+            super::manager::encode_unit_path(&self.unit_name)
+        )
+    }
+}
+
+impl PropertiesPath for ManagerProperties {
+    fn object_path(&self) -> String {
+        "/org/freedesktop/systemd1".to_string()
+    }
+}
+
+/// Render a zbus error as the boxed D-Bus error the `Interface` trait expects.
+fn box_dbus_error(err: zbus::Error) -> BoxDBusError {
+    Box::new(fdo::Error::Failed(err.to_string()))
+}
 
 /// Replacement for `zbus::fdo::Properties` on per-unit object paths.
 pub struct Properties {
@@ -45,6 +71,9 @@ impl Properties {
     async fn props_for_interface(
         &self,
         iface_name: &str,
+        server: &ObjectServer,
+        connection: &Connection,
+        emitter: &SignalEmitter<'_>,
     ) -> Option<fdo::Result<HashMap<String, OwnedValue>>> {
         let kind = self.kind();
         match iface_name {
@@ -53,41 +82,41 @@ impl Properties {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                Some(obj.get_all().await)
+                Some(Interface::get_all(&obj, server, connection, None, emitter).await)
             }
             "org.freedesktop.systemd1.Service" if kind == "service" => {
                 let obj = ServiceObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                Some(obj.get_all().await)
+                Some(Interface::get_all(&obj, server, connection, None, emitter).await)
             }
             "org.freedesktop.systemd1.Socket" if kind == "socket" => {
                 let obj = SocketObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                Some(obj.get_all().await)
+                Some(Interface::get_all(&obj, server, connection, None, emitter).await)
             }
             "org.freedesktop.systemd1.Mount" if kind == "mount" => {
                 let obj = MountObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                Some(obj.get_all().await)
+                Some(Interface::get_all(&obj, server, connection, None, emitter).await)
             }
             "org.freedesktop.systemd1.Slice" if kind == "slice" => {
                 let obj = SliceObject {
                     unit_name: self.unit_name.clone(),
                 };
-                Some(obj.get_all().await)
+                Some(Interface::get_all(&obj, server, connection, None, emitter).await)
             }
             "org.freedesktop.systemd1.Scope" if kind == "scope" => {
                 let obj = ScopeObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                Some(obj.get_all().await)
+                Some(Interface::get_all(&obj, server, connection, None, emitter).await)
             }
             "org.freedesktop.DBus.Properties"
             | "org.freedesktop.DBus.Peer"
@@ -97,13 +126,18 @@ impl Properties {
         }
     }
 
-    async fn all_props(&self) -> HashMap<String, OwnedValue> {
+    async fn all_props(
+        &self,
+        server: &ObjectServer,
+        connection: &Connection,
+        emitter: &SignalEmitter<'_>,
+    ) -> HashMap<String, OwnedValue> {
         let mut result = HashMap::new();
         let unit_obj = UnitObject {
             ctx: self.ctx.clone(),
             unit_name: self.unit_name.clone(),
         };
-        if let Ok(props) = unit_obj.get_all().await {
+        if let Ok(props) = Interface::get_all(&unit_obj, server, connection, None, emitter).await {
             result.extend(props);
         }
         match self.kind().as_str() {
@@ -112,7 +146,8 @@ impl Properties {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                if let Ok(props) = obj.get_all().await {
+                if let Ok(props) = Interface::get_all(&obj, server, connection, None, emitter).await
+                {
                     result.extend(props);
                 }
             }
@@ -121,7 +156,8 @@ impl Properties {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                if let Ok(props) = obj.get_all().await {
+                if let Ok(props) = Interface::get_all(&obj, server, connection, None, emitter).await
+                {
                     result.extend(props);
                 }
             }
@@ -130,7 +166,8 @@ impl Properties {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                if let Ok(props) = obj.get_all().await {
+                if let Ok(props) = Interface::get_all(&obj, server, connection, None, emitter).await
+                {
                     result.extend(props);
                 }
             }
@@ -141,9 +178,12 @@ impl Properties {
 
     async fn handle_get_all(
         &self,
+        server: &ObjectServer,
         connection: &Connection,
         msg: &zbus::message::Message,
+        emitter: &SignalEmitter<'_>,
     ) -> zbus::Result<()> {
+        let header = msg.header();
         let body = msg.body();
         let (iface_name,): (String,) = match body.deserialize() {
             Ok(r) => r,
@@ -157,12 +197,15 @@ impl Properties {
             }
         };
         if iface_name.is_empty() {
-            let props = self.all_props().await;
-            connection.reply(msg, &props).await?;
+            let props = self.all_props(server, connection, emitter).await;
+            connection.reply(&header, &props).await?;
         } else {
-            match self.props_for_interface(&iface_name).await {
+            match self
+                .props_for_interface(&iface_name, server, connection, emitter)
+                .await
+            {
                 Some(Ok(props)) => {
-                    connection.reply(msg, &props).await?;
+                    connection.reply(&header, &props).await?;
                 }
                 Some(Err(e)) => {
                     connection.reply_dbus_error(&msg.header(), e).await?;
@@ -181,9 +224,12 @@ impl Properties {
 
     async fn handle_get(
         &self,
+        server: &ObjectServer,
         connection: &Connection,
         msg: &zbus::message::Message,
+        emitter: &SignalEmitter<'_>,
     ) -> zbus::Result<()> {
+        let header = msg.header();
         let body = msg.body();
         let (iface_name, prop_name): (String, String) = match body.deserialize() {
             Ok(r) => r,
@@ -203,41 +249,41 @@ impl Properties {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                obj.get(&prop_name).await
+                Interface::get(&obj, &prop_name, server, connection, None, emitter).await
             }
             "org.freedesktop.systemd1.Service" if kind == "service" => {
                 let obj = ServiceObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                obj.get(&prop_name).await
+                Interface::get(&obj, &prop_name, server, connection, None, emitter).await
             }
             "org.freedesktop.systemd1.Socket" if kind == "socket" => {
                 let obj = SocketObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                obj.get(&prop_name).await
+                Interface::get(&obj, &prop_name, server, connection, None, emitter).await
             }
             "org.freedesktop.systemd1.Mount" if kind == "mount" => {
                 let obj = MountObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                obj.get(&prop_name).await
+                Interface::get(&obj, &prop_name, server, connection, None, emitter).await
             }
             "org.freedesktop.systemd1.Slice" if kind == "slice" => {
                 let obj = SliceObject {
                     unit_name: self.unit_name.clone(),
                 };
-                obj.get(&prop_name).await
+                Interface::get(&obj, &prop_name, server, connection, None, emitter).await
             }
             "org.freedesktop.systemd1.Scope" if kind == "scope" => {
                 let obj = ScopeObject {
                     ctx: self.ctx.clone(),
                     unit_name: self.unit_name.clone(),
                 };
-                obj.get(&prop_name).await
+                Interface::get(&obj, &prop_name, server, connection, None, emitter).await
             }
             "org.freedesktop.DBus.Properties"
             | "org.freedesktop.DBus.Peer"
@@ -255,8 +301,8 @@ impl Properties {
 
         match value {
             Some(Ok(v)) => {
-                let v: zvariant::Value<'_> = v.into();
-                connection.reply(msg, &v).await?;
+                let v: zbus::Variant<'_> = v.into();
+                connection.reply(&header, &v).await?;
             }
             Some(Err(e)) => {
                 connection.reply_dbus_error(&msg.header(), e).await?;
@@ -293,44 +339,71 @@ impl Interface for Properties {
         InterfaceName::from_static_str_unchecked("org.freedesktop.DBus.Properties")
     }
 
-    async fn get(&self, _property_name: &str) -> Option<fdo::Result<OwnedValue>> {
+    async fn get(
+        &self,
+        _property_name: &str,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<OwnedValue, BoxDBusError>> {
         None
     }
 
-    async fn get_all(&self) -> fdo::Result<HashMap<String, OwnedValue>> {
+    async fn get_all(
+        &self,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
         Ok(HashMap::new())
     }
 
     async fn set_mut(
         &mut self,
         _property_name: &str,
-        _value: &zvariant::Value<'_>,
-        _ctxt: &SignalContext<'_>,
-    ) -> Option<fdo::Result<()>> {
+        _value: &zbus::Variant<'_>,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<(), BoxDBusError>> {
         None
     }
 
     fn call<'call>(
         &'call self,
-        _server: &'call ObjectServer,
+        server: &'call ObjectServer,
         connection: &'call Connection,
         msg: &'call zbus::message::Message,
         name: zbus::names::MemberName<'call>,
     ) -> DispatchResult<'call> {
+        let Ok(emitter) = SignalEmitter::new(connection, self.object_path()) else {
+            return DispatchResult::NotFound;
+        };
         match name.as_str() {
-            "GetAll" => DispatchResult::Async(Box::pin(async move {
-                self.handle_get_all(connection, msg).await
-            })),
+            "GetAll" => {
+                let emitter = emitter.clone();
+                DispatchResult::Async(Box::pin(async move {
+                    self.handle_get_all(server, connection, msg, &emitter)
+                        .await
+                        .map_err(box_dbus_error)
+                }))
+            }
             "Get" => {
-                DispatchResult::Async(Box::pin(
-                    async move { self.handle_get(connection, msg).await },
-                ))
+                let emitter = emitter.clone();
+                DispatchResult::Async(Box::pin(async move {
+                    self.handle_get(server, connection, msg, &emitter)
+                        .await
+                        .map_err(box_dbus_error)
+                }))
             }
-            "Set" => {
-                DispatchResult::Async(Box::pin(
-                    async move { self.handle_set(connection, msg).await },
-                ))
-            }
+            "Set" => DispatchResult::Async(Box::pin(async move {
+                self.handle_set(connection, msg)
+                    .await
+                    .map_err(box_dbus_error)
+            })),
             _ => DispatchResult::NotFound,
         }
     }
@@ -356,16 +429,24 @@ pub struct ManagerProperties {
 }
 
 impl ManagerProperties {
-    async fn manager_iface_props(&self) -> fdo::Result<HashMap<String, OwnedValue>> {
+    async fn manager_iface_props(
+        &self,
+        server: &ObjectServer,
+        connection: &Connection,
+        emitter: &SignalEmitter<'_>,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
         let obj = ManagerInterface::new(self.ctx.clone());
-        obj.get_all().await
+        Interface::get_all(&obj, server, connection, None, emitter).await
     }
 
     async fn handle_get_all(
         &self,
+        server: &ObjectServer,
         connection: &Connection,
         msg: &zbus::message::Message,
+        emitter: &SignalEmitter<'_>,
     ) -> zbus::Result<()> {
+        let header = msg.header();
         let body = msg.body();
         let (iface_name,): (String,) = match body.deserialize() {
             Ok(r) => r,
@@ -379,20 +460,22 @@ impl ManagerProperties {
             }
         };
         match iface_name.as_str() {
-            "" | "org.freedesktop.systemd1.Manager" => match self.manager_iface_props().await {
-                Ok(props) => {
-                    connection.reply(msg, &props).await?;
+            "" | "org.freedesktop.systemd1.Manager" => {
+                match self.manager_iface_props(server, connection, emitter).await {
+                    Ok(props) => {
+                        connection.reply(&header, &props).await?;
+                    }
+                    Err(e) => {
+                        connection.reply_dbus_error(&msg.header(), e).await?;
+                    }
                 }
-                Err(e) => {
-                    connection.reply_dbus_error(&msg.header(), e).await?;
-                }
-            },
+            }
             "org.freedesktop.DBus.Properties"
             | "org.freedesktop.DBus.Peer"
             | "org.freedesktop.DBus.Introspectable"
             | "org.freedesktop.DBus.ObjectManager" => {
                 let empty: HashMap<String, OwnedValue> = HashMap::new();
-                connection.reply(msg, &empty).await?;
+                connection.reply(&header, &empty).await?;
             }
             _ => {
                 let err = fdo::Error::UnknownInterface(sysa::l10n::fmt(
@@ -407,9 +490,12 @@ impl ManagerProperties {
 
     async fn handle_get(
         &self,
+        server: &ObjectServer,
         connection: &Connection,
         msg: &zbus::message::Message,
+        emitter: &SignalEmitter<'_>,
     ) -> zbus::Result<()> {
+        let header = msg.header();
         let body = msg.body();
         let (iface_name, prop_name): (String, String) = match body.deserialize() {
             Ok(r) => r,
@@ -431,10 +517,10 @@ impl ManagerProperties {
             return Ok(());
         }
         let obj = ManagerInterface::new(self.ctx.clone());
-        match obj.get(&prop_name).await {
+        match Interface::get(&obj, &prop_name, server, connection, None, emitter).await {
             Some(Ok(v)) => {
-                let v: zvariant::Value<'_> = v.into();
-                connection.reply(msg, &v).await?;
+                let v: zbus::Variant<'_> = v.into();
+                connection.reply(&header, &v).await?;
             }
             Some(Err(e)) => {
                 connection.reply_dbus_error(&msg.header(), e).await?;
@@ -471,44 +557,71 @@ impl Interface for ManagerProperties {
         InterfaceName::from_static_str_unchecked("org.freedesktop.DBus.Properties")
     }
 
-    async fn get(&self, _property_name: &str) -> Option<fdo::Result<OwnedValue>> {
+    async fn get(
+        &self,
+        _property_name: &str,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<OwnedValue, BoxDBusError>> {
         None
     }
 
-    async fn get_all(&self) -> fdo::Result<HashMap<String, OwnedValue>> {
+    async fn get_all(
+        &self,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
         Ok(HashMap::new())
     }
 
     async fn set_mut(
         &mut self,
         _property_name: &str,
-        _value: &zvariant::Value<'_>,
-        _ctxt: &SignalContext<'_>,
-    ) -> Option<fdo::Result<()>> {
+        _value: &zbus::Variant<'_>,
+        _server: &ObjectServer,
+        _connection: &Connection,
+        _header: Option<&Header<'_>>,
+        _emitter: &SignalEmitter<'_>,
+    ) -> Option<Result<(), BoxDBusError>> {
         None
     }
 
     fn call<'call>(
         &'call self,
-        _server: &'call ObjectServer,
+        server: &'call ObjectServer,
         connection: &'call Connection,
         msg: &'call zbus::message::Message,
         name: zbus::names::MemberName<'call>,
     ) -> DispatchResult<'call> {
+        let Ok(emitter) = SignalEmitter::new(connection, self.object_path()) else {
+            return DispatchResult::NotFound;
+        };
         match name.as_str() {
-            "GetAll" => DispatchResult::Async(Box::pin(async move {
-                self.handle_get_all(connection, msg).await
-            })),
+            "GetAll" => {
+                let emitter = emitter.clone();
+                DispatchResult::Async(Box::pin(async move {
+                    self.handle_get_all(server, connection, msg, &emitter)
+                        .await
+                        .map_err(box_dbus_error)
+                }))
+            }
             "Get" => {
-                DispatchResult::Async(Box::pin(
-                    async move { self.handle_get(connection, msg).await },
-                ))
+                let emitter = emitter.clone();
+                DispatchResult::Async(Box::pin(async move {
+                    self.handle_get(server, connection, msg, &emitter)
+                        .await
+                        .map_err(box_dbus_error)
+                }))
             }
-            "Set" => {
-                DispatchResult::Async(Box::pin(
-                    async move { self.handle_set(connection, msg).await },
-                ))
-            }
+            "Set" => DispatchResult::Async(Box::pin(async move {
+                self.handle_set(connection, msg)
+                    .await
+                    .map_err(box_dbus_error)
+            })),
             _ => DispatchResult::NotFound,
         }
     }

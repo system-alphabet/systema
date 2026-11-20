@@ -59,7 +59,7 @@ impl ActivatorInterface {
     /// fails immediately instead of waiting out `service_start_timeout`.
     #[zbus(signal)]
     pub async fn activation_failure(
-        ctxt: &zbus::SignalContext<'_>,
+        ctxt: &zbus::object_server::SignalEmitter<'_>,
         name: String,
         error_name: String,
         error_message: String,
@@ -72,16 +72,13 @@ impl ActivatorInterface {
 /// interface from anyone else is not honoured.
 fn activation_request_rule() -> zbus::OwnedMatchRule {
     zbus::MatchRule::builder()
-        .msg_type(zbus::MessageType::Signal)
+        .msg_type(zbus::message::Type::Signal)
         .sender(BUS_DAEMON)
-        .expect("static well-known bus name")
         .path(ACTIVATION_REQUEST_PATH)
-        .expect("static object path")
         .interface("org.freedesktop.systemd1.Activator")
-        .expect("static interface name")
         .member("ActivationRequest")
-        .expect("static member name")
         .build()
+        .expect("static activation request rule")
         .into()
 }
 
@@ -160,7 +157,7 @@ async fn emit_activation_failure(
     ) else {
         return;
     };
-    let Ok(ctxt) = zbus::SignalContext::new(conn, ACTIVATOR_PATH) else {
+    let Ok(ctxt) = zbus::object_server::SignalEmitter::new(conn, ACTIVATOR_PATH) else {
         return;
     };
     let ctxt = ctxt.set_destination(destination);
@@ -273,7 +270,7 @@ mod tests {
     fn activation_request_rule_pins_every_field_dbus_daemon_sends() {
         let rule = activation_request_rule();
 
-        assert_eq!(rule.msg_type(), Some(zbus::MessageType::Signal));
+        assert_eq!(rule.msg_type(), Some(zbus::message::Type::Signal));
         assert_eq!(
             rule.sender().map(|s| s.to_string()),
             Some(BUS_DAEMON.to_string())
@@ -288,7 +285,7 @@ mod tests {
         );
         // `path()`, unlike its siblings, is only exposed as a `PathSpec`.
         assert!(
-            matches!(rule.path_spec(), Some(zbus::MatchRulePathSpec::Path(p))
+            matches!(rule.path_spec(), Some(zbus::match_rule::PathSpec::Path(p))
                 if p.as_str() == ACTIVATION_REQUEST_PATH),
             "expected an exact path match, got {:?}",
             rule.path_spec()
@@ -358,7 +355,6 @@ mod tests {
             "org.freedesktop.systemd1.Activator",
             "ActivationRequest",
         )
-        .expect("valid signal header")
         .build(&("upower.service",))
         .expect("valid signal body");
 
@@ -378,7 +374,6 @@ mod tests {
             "org.freedesktop.systemd1.Activator",
             "ActivationRequest",
         )
-        .expect("valid signal header")
         .build(&(42_u32,))
         .expect("valid signal body");
 

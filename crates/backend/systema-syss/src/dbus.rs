@@ -108,10 +108,11 @@ impl DbusWaiter {
             return Some(conn.clone());
         }
         let attempt = match &self.address {
-            Some(addr) => match zbus::connection::Builder::address(addr.clone()) {
-                Ok(builder) => builder.build().await,
-                Err(e) => Err(e),
-            },
+            Some(addr) => {
+                zbus::connection::Builder::address(addr.clone())
+                    .build()
+                    .await
+            }
             None => Connection::system().await,
         };
         match attempt {

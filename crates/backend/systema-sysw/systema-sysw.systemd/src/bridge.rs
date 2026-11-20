@@ -7,7 +7,7 @@ use anyhow::Result;
 use prost::Message as ProstMessage;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use systema_sysw_common::event::{ControlEvent, ControlEventKind};
 use systema_sysw_common::ControlClient;
@@ -31,7 +31,8 @@ async fn seed(ctx: &Arc<dbus::BridgeContext>) -> Result<()> {
 
 /// Emit a Manager signal for a control event (best effort).
 async fn emit_signals(conn: &zbus::Connection, event: &ControlEvent) {
-    let Ok(signal_ctx) = zbus::SignalContext::new(conn, "/org/freedesktop/systemd1") else {
+    let Ok(signal_ctx) = zbus::object_server::SignalEmitter::new(conn, "/org/freedesktop/systemd1")
+    else {
         return;
     };
     match event.kind {

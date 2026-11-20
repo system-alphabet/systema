@@ -56,7 +56,10 @@ pub struct InotifyBackend {
 impl InotifyBackend {
     pub fn new() -> anyhow::Result<Self> {
         let inotify = Inotify::init()?;
-        let inotify = AsyncFd::new(InotifyHandle(Mutex::new(inotify)))?;
+        // SAFETY: `InotifyHandle` owns the inotify descriptor; it is not
+        // duplicated elsewhere and lives as long as the `AsyncFd`.
+        let inotify = unsafe { AsyncFd::register(InotifyHandle(Mutex::new(inotify))) }
+            .map_err(|e| anyhow::anyhow!("inotify registration failed: {e}"))?;
         Ok(InotifyBackend {
             inotify,
             by_wd: Mutex::new(HashMap::new()),

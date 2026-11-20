@@ -81,8 +81,8 @@ impl BridgeContext {
 /// passes one, so its behavior is unchanged byte-for-byte).
 fn bus_builder(ctx: &BridgeContext) -> zbus::Result<Builder<'static>> {
     match &ctx.bus_address {
-        Some(addr) => Builder::address(addr.clone()),
-        None => Builder::system(),
+        Some(addr) => Ok(Builder::address(addr.clone())),
+        None => Ok(Builder::system()),
     }
 }
 
@@ -270,8 +270,8 @@ pub async fn run_dbus(ctx: &Arc<BridgeContext>) -> zbus::Result<zbus::Connection
     let conn = tokio::time::timeout(
         BUS_CONNECT_TIMEOUT,
         bus_builder(ctx)?
-            .name(BUS_NAME)?
-            .serve_at("/org/freedesktop/systemd1", manager)?
+            .name(BUS_NAME)
+            .serve_at("/org/freedesktop/systemd1", manager)
             .build(),
     )
     .await

@@ -12,7 +12,7 @@ use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use tracing::{debug, info};
 use zbus::interface;
-use zvariant::{OwnedObjectPath, OwnedValue};
+use zbus::{OwnedObjectPath, OwnedVariant as OwnedValue};
 
 use super::BridgeContext;
 
@@ -185,17 +185,17 @@ fn pid_from_pidfd(raw: std::os::fd::RawFd) -> std::io::Result<Option<u32>> {
 /// so the server's `prop_strings` / `prop_u32s` bag readers reconstruct the
 /// list (systemd `a(sv)` list semantics).
 fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedValue) {
-    let value: zvariant::Value = match value.try_clone() {
+    let value: zbus::Variant = match value.try_clone() {
         Ok(v) => v.into(),
         Err(_) => return,
     };
     match value {
-        zvariant::Value::Array(array) => {
-            let sig = array.element_signature().as_str().to_string();
+        zbus::Variant::Array(array) => {
+            let sig = array.element_signature().to_string();
             for item in array.inner() {
                 match sig.as_str() {
                     "s" => {
-                        if let zvariant::Value::Str(s) = item {
+                        if let zbus::Variant::Str(s) = item {
                             push_prop_entry(
                                 out,
                                 key,
@@ -204,7 +204,7 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                         }
                     }
                     "u" => {
-                        if let zvariant::Value::U32(u) = item {
+                        if let zbus::Variant::U32(u) = item {
                             push_prop_entry(
                                 out,
                                 key,
@@ -213,12 +213,12 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                         }
                     }
                     "t" => {
-                        if let zvariant::Value::U64(u) = item {
+                        if let zbus::Variant::U64(u) = item {
                             push_prop_entry(out, key, sysa::proto::manager_value::Value::U(*u));
                         }
                     }
                     "b" => {
-                        if let zvariant::Value::Bool(b) = item {
+                        if let zbus::Variant::Bool(b) = item {
                             push_prop_entry(out, key, sysa::proto::manager_value::Value::B(*b));
                         }
                     }
@@ -227,7 +227,7 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                         // processes by pidfd.  The control protocol has no
                         // file-descriptor type, so resolve each descriptor to
                         // the PID it refers to while it is still open here.
-                        if let zvariant::Value::Fd(fd) = item {
+                        if let zbus::Variant::Fd(fd) = item {
                             match pid_from_pidfd(fd.as_raw_fd()) {
                                 Ok(Some(pid)) => push_prop_entry(
                                     out,
@@ -255,7 +255,7 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                         // Dropping them (the previous behavior) left a
                         // transient timer/path with an empty configuration,
                         // which its worker reports as a failure with no log.
-                        if let zvariant::Value::Structure(st) = item {
+                        if let zbus::Variant::Structure(st) = item {
                             if let Some((k, v)) = struct_string_pair(st) {
                                 push_prop_entry(out, &k, sysa::proto::manager_value::Value::S(v));
                             }
@@ -264,7 +264,7 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                     "(st)" => {
                         // `TimersMonotonic` (`a(st)`: timer base + usec) — the
                         // modern spelling of the `OnBootSec=`-style triggers.
-                        if let zvariant::Value::Structure(st) = item {
+                        if let zbus::Variant::Structure(st) = item {
                             if let Some((k, usec)) = struct_usec_pair(st) {
                                 push_prop_entry(
                                     out,
@@ -277,7 +277,7 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
                     "(sasb)" => {
                         // `ExecStart=` (and friends) — one command element per
                         // struct: (argv[0], argv, ignore_failure).
-                        if let zvariant::Value::Structure(st) = item {
+                        if let zbus::Variant::Structure(st) = item {
                             match exec_of_struct(st) {
                                 Some(ex) => push_prop_entry(
                                     out,
@@ -298,26 +298,26 @@ fn push_prop_value(out: &mut Vec<TransientProperty>, key: &str, value: &OwnedVal
 
 /// Decode one `(ss)` struct element into `(key, value)` — the element shape of
 /// `Paths` (path type + path) and `TimersCalendar` ("OnCalendar" + spec).
-fn struct_string_pair(st: &zvariant::Structure) -> Option<(String, String)> {
+fn struct_string_pair(st: &zbus::Structure) -> Option<(String, String)> {
     let fields = st.fields();
     if fields.len() != 2 {
         return None;
     }
     match (&fields[0], &fields[1]) {
-        (zvariant::Value::Str(k), zvariant::Value::Str(v)) => Some((k.to_string(), v.to_string())),
+        (zbus::Variant::Str(k), zbus::Variant::Str(v)) => Some((k.to_string(), v.to_string())),
         _ => None,
     }
 }
 
 /// Decode one `(st)` struct element into `(key, usec)` — the element shape of
 /// `TimersMonotonic` (timer base + microsecond count).
-fn struct_usec_pair(st: &zvariant::Structure) -> Option<(String, u64)> {
+fn struct_usec_pair(st: &zbus::Structure) -> Option<(String, u64)> {
     let fields = st.fields();
     if fields.len() != 2 {
         return None;
     }
     match (&fields[0], &fields[1]) {
-        (zvariant::Value::Str(k), zvariant::Value::U64(usec)) => Some((k.to_string(), *usec)),
+        (zbus::Variant::Str(k), zbus::Variant::U64(usec)) => Some((k.to_string(), *usec)),
         _ => None,
     }
 }
@@ -334,21 +334,21 @@ fn push_prop_entry(
 }
 
 /// Decode one `(s a(s) b)` exec struct (the element type of `ExecStart=`).
-fn exec_of_struct(st: &zvariant::Structure) -> Option<sysa::proto::Exec> {
+fn exec_of_struct(st: &zbus::Structure) -> Option<sysa::proto::Exec> {
     let fields = st.fields();
     if fields.len() != 3 {
         return None;
     }
     let path = fields.first().and_then(|f| match f {
-        zvariant::Value::Str(s) => Some(s.to_string()),
+        zbus::Variant::Str(s) => Some(s.to_string()),
         _ => None,
     })?;
     let args = match fields.get(1) {
-        Some(zvariant::Value::Array(arr)) => {
+        Some(zbus::Variant::Array(arr)) => {
             let mut args = Vec::with_capacity(arr.inner().len());
             for a in arr.inner() {
                 match a {
-                    zvariant::Value::Str(s) => args.push(s.to_string()),
+                    zbus::Variant::Str(s) => args.push(s.to_string()),
                     _ => return None,
                 }
             }
@@ -357,7 +357,7 @@ fn exec_of_struct(st: &zvariant::Structure) -> Option<sysa::proto::Exec> {
         _ => return None,
     };
     let ignore_failure = match fields.get(2) {
-        Some(zvariant::Value::Bool(b)) => *b,
+        Some(zbus::Variant::Bool(b)) => *b,
         _ => return None,
     };
     Some(sysa::proto::Exec {
@@ -382,14 +382,14 @@ fn aux_units_to_proto(
         .collect()
 }
 
-fn push_scalar_entry(out: &mut Vec<TransientProperty>, key: &str, value: zvariant::Value) {
+fn push_scalar_entry(out: &mut Vec<TransientProperty>, key: &str, value: zbus::Variant) {
     let v = match value {
-        zvariant::Value::Str(s) => sysa::proto::manager_value::Value::S(s.to_string()),
-        zvariant::Value::Bool(b) => sysa::proto::manager_value::Value::B(b),
-        zvariant::Value::U64(u) => sysa::proto::manager_value::Value::U(u),
-        zvariant::Value::U32(u) => sysa::proto::manager_value::Value::U(u as u64),
-        zvariant::Value::I64(i) => sysa::proto::manager_value::Value::I(i),
-        zvariant::Value::I32(i) => sysa::proto::manager_value::Value::I(i as i64),
+        zbus::Variant::Str(s) => sysa::proto::manager_value::Value::S(s.to_string()),
+        zbus::Variant::Bool(b) => sysa::proto::manager_value::Value::B(b),
+        zbus::Variant::U64(u) => sysa::proto::manager_value::Value::U(u),
+        zbus::Variant::U32(u) => sysa::proto::manager_value::Value::U(u as u64),
+        zbus::Variant::I64(i) => sysa::proto::manager_value::Value::I(i),
+        zbus::Variant::I32(i) => sysa::proto::manager_value::Value::I(i as i64),
         _ => return,
     };
     push_prop_entry(out, key, v);
@@ -457,7 +457,9 @@ impl ManagerInterface {
         let Some(conn) = super::connection(&self.ctx) else {
             return;
         };
-        if let Ok(signal_ctx) = zbus::SignalContext::new(conn, "/org/freedesktop/systemd1") {
+        if let Ok(signal_ctx) =
+            zbus::object_server::SignalEmitter::new(conn, "/org/freedesktop/systemd1")
+        {
             let _ = ManagerInterface::reloading(&signal_ctx).await;
         }
     }
@@ -467,7 +469,7 @@ impl ManagerInterface {
     }
 
     /// Resolve the PID of the process owning the given unique bus name.
-    async fn sender_pid(&self, header: zbus::MessageHeader<'_>) -> Option<u32> {
+    async fn sender_pid(&self, header: zbus::message::Header<'_>) -> Option<u32> {
         let conn = match super::connection(&self.ctx) {
             Some(c) => c.clone(),
             None => return None,
@@ -487,7 +489,7 @@ impl ManagerInterface {
 
     #[zbus(signal)]
     pub async fn job_new(
-        ctxt: &zbus::SignalContext<'_>,
+        ctxt: &zbus::object_server::SignalEmitter<'_>,
         id: u32,
         job: OwnedObjectPath,
         unit: String,
@@ -495,7 +497,7 @@ impl ManagerInterface {
 
     #[zbus(signal)]
     pub async fn job_removed(
-        ctxt: &zbus::SignalContext<'_>,
+        ctxt: &zbus::object_server::SignalEmitter<'_>,
         id: u32,
         job: OwnedObjectPath,
         unit: String,
@@ -504,13 +506,13 @@ impl ManagerInterface {
 
     #[zbus(signal)]
     pub async fn unit_removed(
-        ctxt: &zbus::SignalContext<'_>,
+        ctxt: &zbus::object_server::SignalEmitter<'_>,
         unit: String,
         job: OwnedObjectPath,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    pub async fn reloading(ctxt: &zbus::SignalContext<'_>) -> zbus::Result<()>;
+    pub async fn reloading(ctxt: &zbus::object_server::SignalEmitter<'_>) -> zbus::Result<()>;
 
     // ------------------------------------------------------------------
     // Unit lookup methods
@@ -563,7 +565,7 @@ impl ManagerInterface {
         }
     }
 
-    async fn get_unit_by_pidfd(&self, fd: zvariant::OwnedFd) -> zbus::fdo::Result<OwnedObjectPath> {
+    async fn get_unit_by_pidfd(&self, fd: zbus::OwnedFd) -> zbus::fdo::Result<OwnedObjectPath> {
         debug!("D-Bus GetUnitByPIDFD");
         let raw = fd.as_raw_fd();
         let pid = match pid_from_pidfd(raw) {
@@ -776,7 +778,7 @@ impl ManagerInterface {
 
     async fn start_transient_unit(
         &self,
-        #[zbus(header)] header: zbus::MessageHeader<'_>,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         name: &str,
         mode: &str,
         properties: Vec<(String, OwnedValue)>,
@@ -808,7 +810,7 @@ impl ManagerInterface {
 
     async fn start_transient_unit_many(
         &self,
-        #[zbus(header)] header: zbus::MessageHeader<'_>,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         units: Vec<(String, Vec<(String, OwnedValue)>)>,
         mode: &str,
         _aux_units: Vec<(String, Vec<(String, OwnedValue)>)>,
@@ -1667,7 +1669,7 @@ mod tests {
 
     #[test]
     fn properties_to_bag_flattens_string_arrays() {
-        use zvariant::Value;
+        use zbus::Variant as Value;
         let s = |v: &str| OwnedValue::try_from(Value::new(v)).unwrap();
         let arr = OwnedValue::try_from(Value::new(vec!["a", "b", "c"])).unwrap();
         let props = vec![
@@ -1699,23 +1701,27 @@ mod tests {
     /// its worker reports the unit failed (`lastoreAutoCheck.timer`).
     #[test]
     fn properties_to_bag_flattens_container_trigger_properties() {
-        use zvariant::Value;
+        use zbus::Variant as Value;
 
-        let monotonic_struct = zvariant::StructureBuilder::new()
+        let monotonic_struct = zbus::wire::StructureBuilder::new()
             .add_field("OnBootSec")
             .add_field(90_000_000u64)
-            .build();
-        let mut monotonic = zvariant::Array::new(zvariant::Signature::from_str_unchecked("(st)"));
+            .build()
+            .expect("(st) structure");
+        let st_sig: zbus::Signature = "(st)".parse().expect("(st) signature");
+        let mut monotonic = zbus::Array::new(&st_sig);
         monotonic
             .append(Value::Structure(monotonic_struct))
             .expect("(st) element");
         let monotonic = OwnedValue::try_from(Value::Array(monotonic)).unwrap();
 
-        let paths_struct = zvariant::StructureBuilder::new()
+        let paths_struct = zbus::wire::StructureBuilder::new()
             .add_field("PathModified")
             .add_field("/var/lib/lastore/status.json")
-            .build();
-        let mut paths = zvariant::Array::new(zvariant::Signature::from_str_unchecked("(ss)"));
+            .build()
+            .expect("(ss) structure");
+        let ss_sig: zbus::Signature = "(ss)".parse().expect("(ss) signature");
+        let mut paths = zbus::Array::new(&ss_sig);
         paths
             .append(Value::Structure(paths_struct))
             .expect("(ss) element");
@@ -1780,10 +1786,11 @@ mod tests {
     #[test]
     fn properties_to_bag_resolves_pidfds_into_pids() {
         let own = pidfd_for(std::process::id());
-        let mut arr = zvariant::Array::new(zvariant::Signature::from_str_unchecked("h"));
-        arr.append(zvariant::Value::Fd(zvariant::Fd::Owned(own)))
+        let h_sig: zbus::Signature = "h".parse().expect("h signature");
+        let mut arr = zbus::Array::new(&h_sig);
+        arr.append(zbus::Variant::Fd(zbus::Fd::Owned(own)))
             .expect("h element inside ah array");
-        let pidfd_list = OwnedValue::try_from(zvariant::Value::Array(arr)).expect("owned array");
+        let pidfd_list = OwnedValue::try_from(zbus::Variant::Array(arr)).expect("owned array");
 
         let bag = properties_to_bag(&[("PIDFDs".to_string(), pidfd_list)]).expect("bag");
         let resolved: Vec<_> = bag
@@ -1804,10 +1811,11 @@ mod tests {
     #[test]
     fn properties_to_bag_drops_non_pidfd_handles() {
         let file = std::fs::File::open("/proc/self").expect("open /proc/self");
-        let mut arr = zvariant::Array::new(zvariant::Signature::from_str_unchecked("h"));
-        arr.append(zvariant::Value::Fd(zvariant::Fd::Owned(file.into())))
+        let h_sig: zbus::Signature = "h".parse().expect("h signature");
+        let mut arr = zbus::Array::new(&h_sig);
+        arr.append(zbus::Variant::Fd(zbus::Fd::Owned(file.into())))
             .expect("h element inside ah array");
-        let value = OwnedValue::try_from(zvariant::Value::Array(arr)).expect("owned array");
+        let value = OwnedValue::try_from(zbus::Variant::Array(arr)).expect("owned array");
 
         let bag = properties_to_bag(&[("PIDFDs".to_string(), value)]).expect("bag");
         assert!(bag.properties.iter().all(|p| p.key != "PIDFDs"));

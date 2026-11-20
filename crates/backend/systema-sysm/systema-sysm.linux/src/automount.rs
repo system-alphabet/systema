@@ -622,7 +622,9 @@ async fn automount_pipe_reader(
     unit_name: String,
     trigger_tx: tokio::sync::mpsc::UnboundedSender<AutomountTrigger>,
 ) {
-    let async_fd = match AsyncFd::new(read_fd) {
+    // SAFETY: `read_fd` is the owned read end of the automount pipe and stays
+    // open for as long as this reader polls it; nothing else closes it.
+    let async_fd = match unsafe { AsyncFd::register(read_fd) } {
         Ok(fd) => fd,
         Err(e) => {
             warn!("Failed to create AsyncFd for automount pipe: {}", e);
