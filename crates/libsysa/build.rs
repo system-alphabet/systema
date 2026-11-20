@@ -151,6 +151,11 @@ fn generate_paths() {
     );
     let locale_dir = get("SYSTEMA_LOCALE_DIR", "/usr/share/locale".to_string());
     let log_dir = get("SYSTEMA_LOG_DIR", "/var/log/systema".to_string());
+    let init_conf = get("SYSTEMA_INIT_CONF", "/etc/systema/init.conf".to_string());
+    let init_conf_dir = get(
+        "SYSTEMA_INIT_CONF_DIR",
+        "/etc/systema/init.conf.d".to_string(),
+    );
     let reload_socket = get(
         "SYSTEMA_RELOAD_SOCKET",
         "/run/systema/sysf.sock".to_string(),
@@ -227,6 +232,11 @@ pub const NOTIFY_DIR: &str = {notify_dir:?};
 
 pub const SYSTEMA_SHELL_PATH: &str = {systema_shell_path:?};
 pub const SYSTEMA_SOCKET_HANDLER_PATH: &str = {systema_socket_handler_path:?};
+// System Init module selection (`systema-sysi`), plus the drop-in directory
+// read after it.
+pub const INIT_CONF_FILE: &str = {init_conf:?};
+pub const INIT_CONF_DIR: &str = {init_conf_dir:?};
+
 
 pub const LOCALE_DIR: &str = {locale_dir:?};
 

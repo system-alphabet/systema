@@ -27,6 +27,7 @@ pub use libsystema_sysa::ipc;
 pub mod errors;
 pub mod event_bus;
 pub mod firstboot;
+pub mod init_config;
 pub mod l10n;
 pub mod logging;
 pub mod mounts;

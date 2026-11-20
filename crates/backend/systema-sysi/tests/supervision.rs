@@ -157,6 +157,10 @@ fn run_sysi(dir: &Path, notify_dir: &Path, extra: &[&str]) -> SysiChild {
         .env("SYSTEMA_CONTROL_SOCKET", notify_dir.join("control.sock"))
         .env("SYSTEMA_IPC_SOCKET", notify_dir.join("allocator.sock"))
         .env("SYSTEMA_RUNSTATEDIR", notify_dir.join("runstate"))
+        // Keep the harness independent of the host's init configuration:
+        // these paths do not exist, so the built-in defaults apply.
+        .env("SYSTEMA_INIT_CONF", dir.join("init.conf"))
+        .env("SYSTEMA_INIT_CONF_DIR", dir.join("init.conf.d"))
         .args(extra)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

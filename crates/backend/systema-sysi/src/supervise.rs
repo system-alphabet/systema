@@ -615,7 +615,7 @@ fn spawn_process(
     // beats any inherited SYSTEMA_LOG_FILE); "-" propagates a
     // stderr-only parent.
     cmd.arg("--log-file")
-        .arg(log_target.child_file(rp.spec.binary));
+        .arg(log_target.child_file(&rp.spec.binary));
 
     match cmd.spawn() {
         Ok(child) => {

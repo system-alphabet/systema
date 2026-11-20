@@ -1,0 +1,75 @@
+# /etc/systema/init.conf — System Init (systema-sysi) module selection.
+#
+# Syntax follows systemd's system.conf: assignments live in a section;
+# blank lines and lines starting with '#' or ';' are ignored.  [Init]
+# selects the allocator and the finder; [Workers] selects the supervised
+# modules.
+#
+# A key that is missing keeps the built-in default shown below (commented
+# out).  An EMPTY value disables the module:
+#
+#     Device=
+#
+# A value is either a plain executable name or an absolute path.  Plain
+# names are looked up in SysAInit's own directory first and then in PATH
+# (`--bin-dir` replaces both); use an absolute path for anything else:
+#
+#     Service=/opt/systema/libexec/systema-syss
+#
+# Drop-ins: every /etc/systema/init.conf.d/*.conf file is read after this
+# file, in lexicographic order; a later assignment overrides an earlier one.
+# Copy this file to /etc/systema/init.conf to start overriding.
+#
+# Precedence, lowest to highest:
+#   built-in defaults
+#   < /etc/systema/init.conf
+#   < /etc/systema/init.conf.d/*.conf
+#   < SYSTEMA_SYSA / SYSTEMA_SYSS / ... / SYSTEMA_SYSF environment variables
+#   < command line (systema-sysi --worker Key=Value, systema-sysa --finder)
+
+[Init]
+
+# System A — the allocator/scheduler.  Disabling it leaves the workers
+# without a control plane.
+#Allocator=systema-sysa
+
+# Finder — the executable System F runs on daemon-reload to discover units.
+# The default is systema-sysf.systemd.  An empty value disables the unit
+# scan entirely.
+#Finder=systema-sysf.systemd
+
+[Workers]
+
+# System S — service processes (fork/exec, lifecycle, readiness).
+#Service=systema-syss
+
+# System E — .scope units wrapping externally created processes.
+#External=systema-syse
+
+# System T — .target activation.
+#Target=systema-syst
+
+# System C — .timer units (monotonic and calendar schedules).
+#Cron=systema-sysc
+
+# System K — .socket units and socket activation.
+#Socket=systema-sysk
+
+# System N — .path units.
+#Path=systema-sysn
+
+# System D — .device units.
+#Device=systema-sysd
+
+# System R — cgroup v2 resource control.
+#Resource=systema-sysr
+
+# System M — .mount / .automount units.
+# The built-in default is platform-specific: systema-sysm.linux on Linux,
+# systema-sysm.unix elsewhere.
+#Mount=systema-sysm.linux
+
+# System W — the org.freedesktop.systemd1 D-Bus surface.
+# Part of the default set only on Linux; set it explicitly to run it on
+# another platform.
+#Wrapper=systema-sysw.systemd

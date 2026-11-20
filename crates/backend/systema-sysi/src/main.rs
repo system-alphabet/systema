@@ -7,11 +7,11 @@
 //! It can run as PID 1 (containers, bare metal without another init) or as
 //! a plain process inside a container.
 //!
-//! Binaries are searched for in an explicit `--bin-dir` (when given), the
-//! directory of the SysAInit executable itself, then the canonical systema
-//! install directories, then `PATH`.  By default a missing executable is
-//! fatal; `--no-strict` downgrades that to an ERROR log and skips the
-//! process.
+//! Binaries are looked up in an explicit `--bin-dir` (when given), otherwise
+//! in the SysAInit executable's own directory and then in `PATH`;
+//! `init.conf` may name a module by an absolute path when it is installed
+//! elsewhere.  By default a missing executable is fatal; `--no-strict`
+//! downgrades that to an ERROR log and skips the process.
 //!
 //! Deliberately out of scope: restarts, hostname, dbus-daemon (the system
 //! bus must be provided externally), journaling.  API filesystem mounts
@@ -57,6 +57,13 @@ struct Args {
         help = "Search for the systema-* binaries only in this directory (default: the executable directory, then PATH)"
     )]
     bin_dir: Option<PathBuf>,
+
+    #[arg(
+        long = "worker",
+        value_name = "KEY=VALUE",
+        help = "Override one module from the command line (Key=Value; an empty value disables it)"
+    )]
+    worker: Vec<String>,
 
     #[arg(
         long,
@@ -201,6 +208,32 @@ fn env_flags(name: &str) -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
+/// Parse `--worker Key=Value` overrides into configuration pairs.
+///
+/// This is the command-line layer: it is applied after the files and the
+/// environment, so it wins over both.  `Finder` is rejected because System
+/// A, not System Init, owns it.
+fn parse_worker_overrides(raw: &[String]) -> Result<Vec<(String, String)>> {
+    let mut pairs = Vec::with_capacity(raw.len());
+    for entry in raw {
+        let Some((key, value)) = entry.split_once('=') else {
+            bail!(sysa::l10n::fmt(
+                sysa::l10n::t_("expected Key=Value in --worker, got '{value}'"),
+                &[("value", entry)]
+            ));
+        };
+        let key = key.trim();
+        if !workers::is_worker_key(key) {
+            bail!(sysa::l10n::fmt(
+                sysa::l10n::t_("unknown module key '{key}' in --worker"),
+                &[("key", key)]
+            ));
+        }
+        pairs.push((key.to_string(), value.trim().to_string()));
+    }
+    Ok(pairs)
+}
+
 /// Resolve the effective extra flags for one worker.  Precedence:
 /// `--<name>-flags` > `SYSTEMA_SYS<NAME>_FLAGS` > `--worker-flags` >
 /// `SYSTEMA_WORKERS_FLAGS`.
@@ -300,7 +333,12 @@ async fn main() -> Result<()> {
             })
             .mut_arg("bin_dir", |a| {
                 a.help(sysa::l10n::t_(
-                    "Search for the systema-* binaries only in this directory.",
+                    "Search for the systema-* binaries only in this directory (default: the executable directory, then PATH).",
+                ))
+            })
+            .mut_arg("worker", |a| {
+                a.help(sysa::l10n::t_(
+                    "Override one module from the command line (Key=Value; an empty value disables it).",
                 ))
             })
             .mut_arg("no_strict", |a| {
@@ -395,7 +433,11 @@ async fn main() -> Result<()> {
         std::process::id()
     );
 
-    let set = workers::build_worker_set(&args.skip_workers)?;
+    // Configuration precedence: built-in defaults < init.conf <
+    // init.conf.d/*.conf < SYSTEMA_SYS* environment < command line.
+    let mut init_config = sysa::init_config::InitConfig::load_with_env();
+    init_config.apply_pairs(parse_worker_overrides(&args.worker)?);
+    let set = workers::build_worker_set(&args.skip_workers, &init_config)?;
     let summary = set.iter().map(|s| s.name).collect::<Vec<_>>().join(", ");
     info!(
         "Supervised processes ({count}): {summary}",
@@ -405,7 +447,7 @@ async fn main() -> Result<()> {
     let (resolved, missing) = workers::resolve_set(&set, args.bin_dir.as_deref());
     for spec in &missing {
         error!(
-            "Missing executable for '{name}' ({binary}): not found in --bin-dir, the SysAInit executable directory, or PATH",
+            "Missing executable for '{name}' ({binary}): not found in --bin-dir, the SysAInit executable directory, or PATH (use an absolute path in init.conf for a module installed elsewhere)",
             name = spec.name,
             binary = spec.binary
         );
@@ -525,5 +567,27 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let args = Args::parse_from(["systema-sysi", "--log-file", "-"]);
         assert!(resolve_flags(&args, "sysd").is_empty());
+    }
+
+    #[test]
+    fn parse_worker_overrides_accepts_key_value() {
+        let pairs =
+            parse_worker_overrides(&["Service=/opt/syss".to_string(), "Device=".to_string()])
+                .unwrap();
+        assert_eq!(
+            pairs,
+            vec![
+                ("Service".to_string(), "/opt/syss".to_string()),
+                ("Device".to_string(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_worker_overrides_rejects_bad_input() {
+        assert!(parse_worker_overrides(&["Service".to_string()]).is_err());
+        assert!(parse_worker_overrides(&["Nope=1".to_string()]).is_err());
+        // Finder belongs to System A, not to SysAInit.
+        assert!(parse_worker_overrides(&["Finder=systema-sysf.systemd".to_string()]).is_err());
     }
 }

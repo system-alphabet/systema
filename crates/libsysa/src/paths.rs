@@ -29,6 +29,11 @@ pub struct Paths {
     /// to force, delete to restore normal boot classification).
     pub firstboot_flag_file: &'static str,
     pub locale_dir: &'static str,
+    /// System Init module selection (`systema-sysi`): the main configuration
+    /// file and the drop-in directory read after it.  System A reads the
+    /// same files for its `Finder=` selection.
+    pub init_conf_file: &'static str,
+    pub init_conf_dir: &'static str,
     /// Base directory for runtime state (e.g. `/run`).  The System Wrapper
     /// (sysw.systemd flavor) creates `systemd/system` under this path at
     /// startup so that units can reference `/run/systemd/system`.
@@ -77,6 +82,8 @@ fn compute_paths() -> Paths {
         systemd_lib_unit_dir: resolve("SYSTEMD_LIB_UNIT_DIR", builtin::SYSTEMD_LIB_UNIT_DIR),
         firstboot_flag_file: resolve("SYSTEMA_FIRSTBOOT_FLAG_FILE", builtin::FIRSTBOOT_FLAG_FILE),
         locale_dir: resolve("SYSTEMA_LOCALE_DIR", builtin::LOCALE_DIR),
+        init_conf_file: resolve("SYSTEMA_INIT_CONF", builtin::INIT_CONF_FILE),
+        init_conf_dir: resolve("SYSTEMA_INIT_CONF_DIR", builtin::INIT_CONF_DIR),
         runstatedir: resolve("SYSTEMA_RUNSTATEDIR", builtin::RUNSTATEDIR),
         unit_search_paths: resolve_list("SYSTEMA_UNIT_PATH", builtin::UNIT_SEARCH_PATHS),
         generator_search_paths: resolve_list(
@@ -152,6 +159,8 @@ pub fn builtin_defaults() -> Vec<(&'static str, String)> {
         ),
         ("SYSTEMA_LOCALE_DIR", builtin::LOCALE_DIR.to_string()),
         ("SYSTEMA_LOG_DIR", builtin::LOG_DIR.to_string()),
+        ("SYSTEMA_INIT_CONF", builtin::INIT_CONF_FILE.to_string()),
+        ("SYSTEMA_INIT_CONF_DIR", builtin::INIT_CONF_DIR.to_string()),
         ("SYSTEMA_RELOAD_SOCKET", builtin::RELOAD_SOCKET.to_string()),
         ("SYSTEMA_UNIT_PATH", list(builtin::UNIT_SEARCH_PATHS)),
         (
@@ -224,6 +233,8 @@ pub fn debug_dump(log_file: &str) {
         ),
         ("SYSTEMA_LOCALE_DIR", p.locale_dir.to_string()),
         ("SYSTEMA_LOG_FILE", log_file.to_string()),
+        ("SYSTEMA_INIT_CONF", p.init_conf_file.to_string()),
+        ("SYSTEMA_INIT_CONF_DIR", p.init_conf_dir.to_string()),
         ("SYSTEMA_RELOAD_SOCKET", p.reload_socket.to_string()),
         ("SYSTEMA_UNIT_PATH", list(&p.unit_search_paths)),
         ("SYSTEMA_GENERATOR_PATH", list(&p.generator_search_paths)),

@@ -9,9 +9,26 @@
 
 use anyhow::Result;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::state::AllocatorHandle;
+
+/// Pick the finder executable System F should run.
+///
+/// Precedence: the `--finder` command line, then `Finder=` from
+/// `init.conf`/`init.conf.d`/the environment, then
+/// [`sysa::init_config::DEFAULT_FINDER`].  `None` means the selected value
+/// is empty: the unit scan is disabled.
+fn select_finder(config: &sysa::init_config::InitConfig, cli: Option<&str>) -> Option<String> {
+    if let Some(finder) = cli {
+        return (!finder.is_empty()).then(|| finder.to_string());
+    }
+    match config.get(sysa::init_config::KEY_FINDER) {
+        Some("") => None,
+        Some(finder) => Some(finder.to_string()),
+        None => Some(sysa::init_config::DEFAULT_FINDER.to_string()),
+    }
+}
 
 /// Requests that flow through the reload pipeline.
 pub enum ReloadRequest {
@@ -30,21 +47,29 @@ pub struct ReloadTask;
 
 impl ReloadTask {
     /// Spawn the reload task and return the producer handle + join handle.
+    ///
+    /// `finder_override` is System A's `--finder`: the highest-priority
+    /// layer of the finder selection.
     pub fn spawn(
         allocator: AllocatorHandle,
+        finder_override: Option<String>,
     ) -> (mpsc::Sender<ReloadRequest>, tokio::task::JoinHandle<()>) {
         let (tx, rx) = mpsc::channel(16);
-        let handle = tokio::spawn(Self::run(allocator, rx));
+        let handle = tokio::spawn(Self::run(allocator, finder_override, rx));
         (tx, handle)
     }
 
     /// Main loop: process reload requests until the channel closes.
-    async fn run(allocator: AllocatorHandle, mut rx: mpsc::Receiver<ReloadRequest>) {
+    async fn run(
+        allocator: AllocatorHandle,
+        finder_override: Option<String>,
+        mut rx: mpsc::Receiver<ReloadRequest>,
+    ) {
         info!("ReloadTask started");
         while let Some(req) = rx.recv().await {
             match req {
                 ReloadRequest::ByTrigger(reply) => {
-                    Self::handle_trigger(&allocator, reply).await;
+                    Self::handle_trigger(&allocator, finder_override.as_deref(), reply).await;
                 }
                 ReloadRequest::FromCommit => {
                     Self::handle_commit(&allocator);
@@ -56,9 +81,13 @@ impl ReloadTask {
 
     /// Spawn System F as a subprocess, wait for it to discover and commit
     /// units, then apply default dependencies + sync workers.
-    async fn handle_trigger(allocator: &AllocatorHandle, reply: oneshot::Sender<()>) {
+    async fn handle_trigger(
+        allocator: &AllocatorHandle,
+        finder_override: Option<&str>,
+        reply: oneshot::Sender<()>,
+    ) {
         info!("ReloadTask: spawning System F for re-scan");
-        match Self::spawn_sysf().await {
+        match Self::spawn_sysf(finder_override).await {
             Ok(()) => {
                 Self::apply_after_commit(allocator);
                 info!("ReloadTask: daemon-reload complete");
@@ -91,18 +120,30 @@ impl ReloadTask {
     ///
     /// System F discovers format-specific finders (e.g. `systema-sysf.systemd`),
     /// runs them all concurrently to stage discovered units, then commits the
-    /// staging area into System A's active set via IPC.
+    /// staging area into System A's active set via IPC.  The finder selection
+    /// (`--finder` > `Finder=` > the built-in default) narrows the run to one
+    /// executable; an empty value skips the scan entirely.
     ///
     /// # Errors
     /// Returns an error if the binary cannot be found or exits with a
     /// non-zero status.
-    async fn spawn_sysf() -> Result<()> {
+    async fn spawn_sysf(finder_override: Option<&str>) -> Result<()> {
+        let config = sysa::init_config::InitConfig::load_with_env();
+        let Some(finder) = select_finder(&config, finder_override) else {
+            warn!("System F scan skipped: the finder selection is empty");
+            return Ok(());
+        };
         let sysf_path = Self::find_sysf_binary()?;
-        info!("ReloadTask: running {}", sysf_path.display());
+        info!(
+            "ReloadTask: running {} (finder '{finder}')",
+            sysf_path.display()
+        );
 
         let status = tokio::process::Command::new(&sysf_path)
             .arg("--name")
             .arg("systema-sysf/reload")
+            .arg("--finder")
+            .arg(&finder)
             // Same log directory as ours; "-" when this process has no
             // file sink (see the logging module).
             .arg("--log-file")
@@ -151,6 +192,33 @@ impl ReloadTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sysa::init_config::{InitConfig, DEFAULT_FINDER, KEY_FINDER};
+
+    #[test]
+    fn finder_selection_follows_the_init_configuration() {
+        assert_eq!(
+            select_finder(&InitConfig::default(), None),
+            Some(DEFAULT_FINDER.to_string())
+        );
+        assert_eq!(
+            select_finder(&InitConfig::from_pairs([(KEY_FINDER, "my-finder")]), None),
+            Some("my-finder".to_string())
+        );
+        assert_eq!(
+            select_finder(&InitConfig::from_pairs([(KEY_FINDER, "")]), None),
+            None
+        );
+    }
+
+    #[test]
+    fn command_line_finder_outranks_the_configuration() {
+        let config = InitConfig::from_pairs([(KEY_FINDER, "from-conf")]);
+        assert_eq!(
+            select_finder(&config, Some("from-cli")),
+            Some("from-cli".to_string())
+        );
+        assert_eq!(select_finder(&config, Some("")), None);
+    }
 
     /// Verify that `find_sysf_binary` searches the configured paths.
     /// This test only passes if `systema-sysf` is built and on PATH.

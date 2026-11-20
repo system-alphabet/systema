@@ -46,6 +46,12 @@ struct Args {
     )]
     name: String,
 
+    #[arg(
+        long,
+        help = "Run only the finder executable with this file name (default: every finder found)"
+    )]
+    finder: Option<String>,
+
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
 
@@ -95,6 +101,11 @@ async fn main() -> Result<()> {
             .mut_arg("name", |a| {
                 a.help(sysa::l10n::t_("Name for the staging area."))
             })
+            .mut_arg("finder", |a| {
+                a.help(sysa::l10n::t_(
+                    "Run only the finder executable with this file name (default: every finder found).",
+                ))
+            })
             .mut_subcommand("commit", |cmd| {
                 cmd.about(sysa::l10n::t_("Commit the UID-bound staging area."))
             })
@@ -132,8 +143,8 @@ async fn main() -> Result<()> {
     match args.command {
         Some(Command::Commit) => run_commit(&args.name).await,
         Some(Command::Query) => run_query(&args.name).await,
-        Some(Command::DaemonReload) => run_daemon_reload(&args.name).await,
-        None => run_finders(&args.name).await,
+        Some(Command::DaemonReload) => run_daemon_reload(&args.name, args.finder.as_deref()).await,
+        None => run_finders(&args.name, args.finder.as_deref()).await,
     }
 }
 
@@ -141,10 +152,15 @@ async fn main() -> Result<()> {
 ///
 /// Every regular file with the executable bit set is considered a finder
 /// executable.  Directories are visited in search-path order; within a
-/// directory, entries are sorted for determinism.
-fn discover_finders() -> Vec<PathBuf> {
+/// directory, entries are sorted for determinism.  When `filter` is set,
+/// only the file with that name is kept.
+fn discover_finders(filter: Option<&str>) -> Vec<PathBuf> {
+    discover_finders_in(&paths::instance().finder_search_paths, filter)
+}
+
+fn discover_finders_in(dirs: &[String], filter: Option<&str>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
-    for dir in &paths::instance().finder_search_paths {
+    for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
@@ -158,6 +174,9 @@ fn discover_finders() -> Vec<PathBuf> {
             .collect();
         names.sort();
         for name in names {
+            if filter.is_some_and(|filter| filter != name) {
+                continue;
+            }
             out.push(PathBuf::from(dir).join(name));
         }
     }
@@ -177,16 +196,23 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
-/// Run every finder executable concurrently, then commit the staging area.
+/// Run every selected finder executable concurrently, then commit the
+/// staging area.
 ///
 /// Each finder receives `--name` so all of them stage into the same
 /// UID-bound staging area.  All finders are spawned before any is awaited;
 /// the commit runs only after every finder has exited.
-async fn run_finders(name: &str) -> Result<()> {
+async fn run_finders(name: &str, filter: Option<&str>) -> Result<()> {
     info!("System F running finder executables (name='{name}')");
 
-    let finders = discover_finders();
+    let finders = discover_finders(filter);
     if finders.is_empty() {
+        if let Some(filter) = filter {
+            anyhow::bail!(sysa::l10n::fmt(
+                sysa::l10n::t_("Finder '{name}' not found in the finder search paths."),
+                &[("name", filter)]
+            ));
+        }
         warn!("No finder executables found in finder search paths");
     }
 
@@ -293,7 +319,7 @@ async fn run_query(name: &str) -> Result<()> {
 ///
 /// The socket file lives in `/run` (tmpfs) and is removed when this
 /// function returns (on SIGTERM / signal-driven shutdown from SysI).
-async fn run_daemon_reload(name: &str) -> Result<()> {
+async fn run_daemon_reload(name: &str, finder: Option<&str>) -> Result<()> {
     let socket_path = paths::instance().reload_socket;
     let socket_path_owned = std::path::PathBuf::from(socket_path);
 
@@ -322,14 +348,18 @@ async fn run_daemon_reload(name: &str) -> Result<()> {
     );
 
     // The result of the loop is the exit code; clean up the socket on return.
-    let result = run_daemon_reload_loop(&listener, name).await;
+    let result = run_daemon_reload_loop(&listener, name, finder).await;
     let _ = std::fs::remove_file(&socket_path_owned);
     info!("Reload socket cleaned up: {}", socket_path_owned.display());
     result
 }
 
 /// Inner loop: accept connections, process triggers, send acks.
-async fn run_daemon_reload_loop(listener: &tokio::net::UnixListener, name: &str) -> Result<()> {
+async fn run_daemon_reload_loop(
+    listener: &tokio::net::UnixListener,
+    name: &str,
+    finder: Option<&str>,
+) -> Result<()> {
     loop {
         let (mut stream, addr) = match listener.accept().await {
             Ok(pair) => pair,
@@ -356,8 +386,8 @@ async fn run_daemon_reload_loop(listener: &tokio::net::UnixListener, name: &str)
             }
         }
 
-        // Run all finders and commit the staging area.
-        match run_finders(name).await {
+        // Run all selected finders and commit the staging area.
+        match run_finders(name, finder).await {
             Ok(()) => {
                 // Send ack byte back to System A.
                 if let Err(e) = stream.write_all(&[1u8]).await {
@@ -372,5 +402,63 @@ async fn run_daemon_reload_loop(listener: &tokio::net::UnixListener, name: &str)
                 let _ = stream.write_all(&[0u8]).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("systema-sysf-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn discover_finders_filters_by_file_name() {
+        let dir = temp_dir("filter");
+        for name in ["a-finder", "b-finder"] {
+            let path = dir.join(name);
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+
+        assert_eq!(discover_finders_in(&dirs, None).len(), 2);
+        assert_eq!(
+            discover_finders_in(&dirs, Some("b-finder")),
+            vec![dir.join("b-finder")]
+        );
+        assert!(discover_finders_in(&dirs, Some("missing")).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn discover_finders_visits_search_paths_in_order() {
+        let first = temp_dir("order-first");
+        let second = temp_dir("order-second");
+        for dir in [&first, &second] {
+            let path = dir.join("finder");
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let dirs = vec![
+            first.to_string_lossy().into_owned(),
+            second.to_string_lossy().into_owned(),
+        ];
+
+        // Within the filter the first search path wins, matching how a
+        // finder name shadows a lower-priority copy.
+        assert_eq!(
+            discover_finders_in(&dirs, Some("finder")),
+            vec![first.join("finder"), second.join("finder")]
+        );
+
+        let _ = std::fs::remove_dir_all(&first);
+        let _ = std::fs::remove_dir_all(&second);
     }
 }

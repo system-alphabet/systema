@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-11-07 12:02+0800\n"
+        "POT-Creation-Date: 2026-11-20 14:20+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -764,6 +764,10 @@ msgstr  "本进程日志文件的路径（\"-\" 表示仅写 stderr）。"
 msgid   "Log level (trace, debug, info, warn, error)."
 msgstr  "日志级别（trace、debug、info、warn、error）。"
 #
+# File: ../crates/backend/systema-sysa/src/main.rs, line: 90
+msgid   "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan)."
+msgstr  "daemon-reload 时要运行的 finder 可执行文件（默认：init.conf 中的 Finder=；空值禁用扫描）。"
+#
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 68
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 98
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 70
@@ -815,6 +819,10 @@ msgstr  "System F — 系统查找器工作进程"
 msgid   "Name for the staging area."
 msgstr  "暂存区的名称。"
 #
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 106
+msgid   "Run only the finder executable with this file name (default: every finder found)."
+msgstr  "只运行文件名为此值的查找器可执行文件（默认：运行找到的全部查找器）。"
+#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 78
 msgid   "Commit the UID-bound staging area."
 msgstr  "提交绑定到 UID 的暂存区。"
@@ -826,6 +834,11 @@ msgstr  "查询绑定到 UID 的暂存区。"
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 85
 msgid   "Listen for reload notifications from System A."
 msgstr  "监听来自 System A 的重新加载通知。"
+#
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 212
+#, rust-format
+msgid   "Finder '{name}' not found in the finder search paths."
+msgstr  "在查找器搜索路径中未找到查找器“{name}”。"
 #
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 164
 #, rust-format
@@ -1297,14 +1310,6 @@ msgstr  "{unit_name} 的单元类型未知"
 msgid   "System M — System Mount Worker"
 msgstr  "System M — 系统挂载工作进程"
 #
-# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 32
-msgid   "mkdir -p for mount point failed"
-msgstr  "为挂载点执行 mkdir -p 失败"
-#
-# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 38
-msgid   "chmod for mount point failed"
-msgstr  "为挂载点执行 chmod 失败"
-#
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 280
 #, rust-format
 msgid   "Mount point {mount_point} remained mounted after umount."
@@ -1523,15 +1528,15 @@ msgstr  "查找组“{g}”失败"
 msgid   "group '{g}' not found"
 msgstr  "未找到组“{g}”"
 #
-# File: ../crates/backend/systema-syss/src/process.rs, line: 595
-#, rust-format
-msgid   "lookup of user '{u}' failed"
-msgstr  "查找用户“{u}”失败"
-#
 # File: ../crates/backend/systema-syss/src/process.rs, line: 605
 #, rust-format
 msgid   "lookup of uid '{n}' failed"
 msgstr  "查找 UID“{n}”失败"
+#
+# File: ../crates/backend/systema-syss/src/process.rs, line: 595
+#, rust-format
+msgid   "lookup of user '{u}' failed"
+msgstr  "查找用户“{u}”失败"
 #
 # File: ../crates/backend/systema-syss/src/process.rs, line: 615
 #, rust-format
@@ -1895,55 +1900,6 @@ msgstr  "{path} 处的 cgroup2 挂载不可写，正在撤销：{err}"
 msgid   "unknown worker name '{unknown}'"
 msgstr  "未知的工作进程名“{unknown}”"
 #
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 177
-# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 173
-#, rust-format
-msgid   "IPC version exchange with System A failed: {e}"
-msgstr  ""
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 188
-msgid   "System A closed the connection during hello"
-msgstr  "System A 在 hello 期间关闭了连接"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 193
-#, rust-format
-msgid   "unexpected reply '{method}' to manager.hello"
-msgstr  "manager.hello 收到意外的应答“{method}”"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 209
-msgid   "System A closed the connection"
-msgstr  "System A 关闭了连接"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 253
-#, rust-format
-msgid   "SysAInit reaper error: {e}"
-msgstr  "SysAInit reaper 错误：{e}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 358
-#, rust-format
-msgid   "cannot install SIGHUP handler: {e}"
-msgstr  "无法安装 SIGHUP 处理程序：{e}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 440
-#, rust-format
-msgid   "System Init received an unknown power action: {action}"
-msgstr  "System Init 收到未知的电源操作：{action}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 734
-#, rust-format
-msgid   "manager.daemon_reload failed: {message}"
-msgstr  "manager.daemon_reload 失败：{message}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 757
-#, rust-format
-msgid   "manager.register_power_units failed: {message}"
-msgstr  "manager.register_power_units 失败：{message}"
-#
-# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 780
-#, rust-format
-msgid   "manager.list_units failed: {message}"
-msgstr  "manager.list_units 失败：{message}"
-#
 # File: ../crates/backend/systema-sysi/src/power.rs, line: 70
 #, rust-format
 msgid   "unknown powerctl policy: {s} (expected auto, always, never)"
@@ -1993,6 +1949,16 @@ msgstr  "电源操作“{action}”的 reboot(2) 失败：{err}（我们是以 r
 msgid   "power action '{action}' not supported: no power backend available"
 msgstr  "不支持电源操作“{action}”：没有可用的电源后端"
 #
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 221
+#, rust-format
+msgid   "expected Key=Value in --worker, got '{value}'"
+msgstr  "--worker 需要 Key=Value 形式，实际为“{value}”"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 228
+#, rust-format
+msgid   "unknown module key '{key}' in --worker"
+msgstr  "--worker 中的模块键“{key}”未知"
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 233
 msgid   "SysAInit — System Alphabet init"
 msgstr  "SysAInit — System Alphabet 初始化"
@@ -2001,9 +1967,13 @@ msgstr  "SysAInit — System Alphabet 初始化"
 msgid   "Workers to skip (short names or full binary names)."
 msgstr  "要跳过的工作进程（短名称或完整二进制名称）。"
 #
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
-msgid   "Search for the systema-* binaries only in this directory."
-msgstr  "仅在此目录中搜索 systema-* 二进制文件。"
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 336
+msgid   "Search for the systema-* binaries only in this directory (default: the executable directory, then PATH)."
+msgstr  "仅在此目录中查找 systema-* 二进制文件（默认：可执行文件所在目录，然后是 PATH）。"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 341
+msgid   "Override one module from the command line (Key=Value; an empty value disables it)."
+msgstr  "从命令行覆盖某个模块（Key=Value；空值表示禁用）。"
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 257
 msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
@@ -2047,6 +2017,50 @@ msgstr  "System Init 当前不接受电源状态切换请求。"
 #, rust-format
 msgid   "Power transition already pending for invocation {id}."
 msgstr  "调用 {id} 的电源状态切换请求已在处理中。"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 177
+# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 173
+#, rust-format
+msgid   "IPC version exchange with System A failed: {e}"
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 188
+msgid   "System A closed the connection during hello"
+msgstr  "System A 在 hello 期间关闭了连接"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 193
+#, rust-format
+msgid   "unexpected reply '{method}' to manager.hello"
+msgstr  "manager.hello 收到意外的应答“{method}”"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 209
+msgid   "System A closed the connection"
+msgstr  "System A 关闭了连接"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 253
+#, rust-format
+msgid   "SysAInit reaper error: {e}"
+msgstr  "SysAInit reaper 错误：{e}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 358
+#, rust-format
+msgid   "cannot install SIGHUP handler: {e}"
+msgstr  "无法安装 SIGHUP 处理程序：{e}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 440
+#, rust-format
+msgid   "System Init received an unknown power action: {action}"
+msgstr  "System Init 收到未知的电源操作：{action}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 734
+#, rust-format
+msgid   "manager.daemon_reload failed: {message}"
+msgstr  "manager.daemon_reload 失败：{message}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 757
+#, rust-format
+msgid   "manager.register_power_units failed: {message}"
+msgstr  "manager.register_power_units 失败：{message}"
 #
 # File: ../crates/backend/systema-sysn/src/backend/kqueue.rs, line: 65
 #, rust-format
@@ -2150,6 +2164,11 @@ msgstr  "正在解码 manager.error 载荷"
 msgid   "decoding {method} reply"
 msgstr  "正在解码 {method} 回复"
 #
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 406
+#, rust-format
+msgid   "Unit {name} is not loaded."
+msgstr  "单元 {name} 未加载。"
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 152
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 192
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/properties.rs, line: 370
@@ -2191,11 +2210,6 @@ msgstr  "作业模式 {mode} 无效"
 #, rust-format
 msgid   "Job type {other} invalid"
 msgstr  "作业类型 {other} 无效"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 406
-#, rust-format
-msgid   "Unit {name} is not loaded."
-msgstr  "单元 {name} 未加载。"
 #
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 417
 #, rust-format
@@ -2243,14 +2257,13 @@ msgstr  "控制会话已结束 — 需要重新连接"
 msgid   "System Wrapper — systemd D-Bus bridge"
 msgstr  "System Wrapper — systemd D-Bus 桥接"
 #
-# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
-#, rust-format
-msgid   "systema-sysu reaper error: {e}"
-msgstr  "systema-sysu reaper 错误：{e}"
-#
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 113
 msgid   "System U — per-user instance launcher"
 msgstr  "System U — 用户实例启动器"
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 252
+msgid   "Search for the systema-* binaries only in this directory."
+msgstr  "仅在此目录中搜索 systema-* 二进制文件。"
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 150
 msgid   "Start the per-user instance in the background if it is not running (idempotent; for login hooks)."
@@ -2334,6 +2347,16 @@ msgstr  "用户实例（pid {pid}）在 {secs} 秒内未停止。"
 #, rust-format
 msgid   "setsid failed: {e}."
 msgstr  "setsid 失败：{e}。"
+#
+# File: ../crates/backend/systema-sysu/src/supervise.rs, line: 239
+#, rust-format
+msgid   "systema-sysu reaper error: {e}"
+msgstr  "systema-sysu reaper 错误：{e}"
+#
+# File: ../crates/backend/systema-sysi/src/supervise.rs, line: 780
+#, rust-format
+msgid   "manager.list_units failed: {message}"
+msgstr  "manager.list_units 失败：{message}"
 #
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 89
 msgid   "Failed to parse units JSON."
@@ -2479,14 +2502,42 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 302
+#~ msgid        "Search for the systema-* binaries only in this directory (default: PATH)."
+#~ msgstr       "仅在此目录中查找 systema-* 二进制文件（默认：PATH）。"
+#
+#
+#
+#
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 32
+#~ msgid        "mkdir -p for mount point failed"
+#~ msgstr       "为挂载点执行 mkdir -p 失败"
+#
+#
+#
+#
+# File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 38
+#~ msgid        "chmod for mount point failed"
+#~ msgstr       "为挂载点执行 chmod 失败"
+#
+#
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 150
 #~ msgid        "Transaction order is cyclic"
 #~ msgstr       "事务顺序存在循环"
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
 #~ msgid        "Worker disconnected"
 #~ msgstr       "工作进程已断开连接"
+#
+#
+#
 #
 #
 #
@@ -2501,9 +2552,15 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "无法加载单元"
+#
+#
+#
 #
 #
 #
@@ -2518,6 +2575,9 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2527,10 +2587,16 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "单元 {name} 是模板，无法直接加载"
+#
+#
+#
 #
 #
 #
@@ -2547,10 +2613,16 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "移除 {count} 条边后仍无法解决依赖循环。"
+#
+#
+#
 #
 #
 #
@@ -2570,10 +2642,16 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') 失败：{r}"
+#
+#
+#
 #
 #
 #
@@ -2595,10 +2673,16 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "无效的日志级别“{level}”（{e}）；使用 info"
+#
+#
+#
 #
 #
 #
@@ -2622,9 +2706,15 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
+#
+#
 #
 #
 #
@@ -2652,10 +2742,16 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
+#
+#
 #
 #
 #
@@ -2686,10 +2782,16 @@ msgstr  ""
 #
 #
 #
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
+#
+#
 #
 #
 #

@@ -46,6 +46,12 @@ struct Args {
     )]
     log_file: Option<std::path::PathBuf>,
 
+    #[arg(
+        long,
+        help = "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan)"
+    )]
+    finder: Option<String>,
+
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
 
@@ -77,6 +83,11 @@ async fn main() -> Result<()> {
             .mut_arg("log_level", |a| {
                 a.help(sysa::l10n::t_(
                     "Log level (trace, debug, info, warn, error).",
+                ))
+            })
+            .mut_arg("finder", |a| {
+                a.help(sysa::l10n::t_(
+                    "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan).",
                 ))
             })
             .mut_arg("version", |a| {
@@ -111,7 +122,8 @@ async fn main() -> Result<()> {
     // Spawn the ReloadTask: serialises all finder-commit and reload
     // operations through a single consumer.  System A never scans unit
     // files directly.
-    let (reload_tx, _reload_handle) = reload_task::ReloadTask::spawn(allocator.clone());
+    let (reload_tx, _reload_handle) =
+        reload_task::ReloadTask::spawn(allocator.clone(), args.finder.clone());
     {
         let mut state = allocator.write();
         state.reload_tx = Some(reload_tx);

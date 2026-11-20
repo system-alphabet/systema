@@ -2,8 +2,11 @@
 //!
 //! SysAInit does exactly one thing: spawn System A and the System Workers,
 //! and supervise them until they exit.  This module owns the *set* of
-//! processes to spawn: the default collection, `--skip-workers` trimming,
-//! platform gating, and the one-shot finder chain.
+//! processes to spawn: the built-in module table, `init.conf` overrides,
+//! `--skip-workers` trimming, platform defaults, and the one-shot finder
+//! chain.
+
+use std::collections::HashMap;
 
 /// Supervision kind for a child process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,130 +23,147 @@ pub enum ProcessKind {
 pub struct WorkerSpec {
     /// Canonical short name used in `--skip-workers` (e.g. `"syss"`).
     pub name: &'static str,
-    /// Executable name to spawn; when `linux_binary` is present it replaces
-    /// `binary` on Linux platforms.
-    pub binary: &'static str,
-    /// Linux-specific executable name that replaces `binary` on Linux.
-    pub linux_binary: Option<&'static str>,
+    /// Executable name to spawn, as selected by the platform defaults and
+    /// `init.conf` overrides.
+    pub binary: String,
     /// Worker ID registered with System A (`None` for System A itself).
     pub worker_id: Option<&'static str>,
     /// Supervision kind.
     pub kind: ProcessKind,
-    /// Only spawned on Linux (dropped on other platforms).
-    pub linux_only: bool,
     /// Extra command-line arguments.
     pub args: &'static [&'static str],
 }
 
-impl WorkerSpec {
-    fn new(
-        name: &'static str,
-        binary: &'static str,
-        worker_id: Option<&'static str>,
-        kind: ProcessKind,
-        linux_only: bool,
-    ) -> Self {
-        Self {
-            name,
-            binary,
-            worker_id,
-            kind,
-            linux_only,
-            linux_binary: None,
-            args: &[],
-        }
+/// One entry of the built-in module table.
+///
+/// The table defines both the spawn order and the `init.conf` keys.  A
+/// module whose binary is empty for a platform is not part of that
+/// platform's default set; `init.conf` can still enable it explicitly.
+struct ModuleDef {
+    /// Canonical short name (`--skip-workers`, per-worker flags).
+    name: &'static str,
+    /// `init.conf` key overriding this module's binary.
+    key: &'static str,
+    /// Binary used on Linux.
+    linux_binary: &'static str,
+    /// Binary used on every other platform.
+    unix_binary: &'static str,
+    /// Worker ID registered with System A (`None` for System A itself).
+    worker_id: Option<&'static str>,
+}
+
+impl ModuleDef {
+    fn default_binary(&self, platform: Platform) -> Option<&'static str> {
+        let binary = match platform {
+            Platform::Linux => self.linux_binary,
+            Platform::Other => self.unix_binary,
+        };
+        (!binary.is_empty()).then_some(binary)
     }
 
-    fn matches_name(&self, s: &str) -> bool {
-        s == self.name || s == self.binary || self.linux_binary == Some(s)
+    /// Whether `name` identifies this module in `--skip-workers`: its short
+    /// name, or either platform's binary name.
+    fn matches_name(&self, name: &str) -> bool {
+        name == self.name || name == self.linux_binary || name == self.unix_binary
+    }
+
+    fn matches_binary(&self, name: &str, binary: &str) -> bool {
+        self.matches_name(name) || name == binary
     }
 }
 
-/// The default set of long-running processes.
+/// The built-in module table, in spawn order.
 ///
-/// System M ships a dedicated `.linux` flavor and is dropped off Linux.
-/// System P has been removed: System Init manages the `power` unit type
-/// directly (in-process `reboot(2)`) and no `power` worker is supervised.
-fn default_workers() -> Vec<WorkerSpec> {
-    vec![
-        WorkerSpec::new(
-            "sysa",
-            "systema-sysa",
-            None,
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "syss",
-            "systema-syss",
-            Some("system-s-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "syse",
-            "systema-syse",
-            Some("system-e-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "syst",
-            "systema-syst",
-            Some("system-t-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "sysc",
-            "systema-sysc",
-            Some("system-c-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "sysk",
-            "systema-sysk",
-            Some("system-k-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "sysn",
-            "systema-sysn",
-            Some("system-n-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "sysd",
-            "systema-sysd",
-            Some("system-d-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "sysr",
-            "systema-sysr",
-            Some("system-r-1"),
-            ProcessKind::LongRunning,
-            false,
-        ),
-        WorkerSpec::new(
-            "sysm",
-            "systema-sysm.linux",
-            Some("system-m-1"),
-            ProcessKind::LongRunning,
-            true,
-        ),
-        WorkerSpec::new(
-            "sysw",
-            "systema-sysw.systemd",
-            Some("system-w-1"),
-            ProcessKind::LongRunning,
-            true,
-        ),
-    ]
+/// System M is the only module with a per-platform binary; System W exists
+/// only on Linux by default (the D-Bus surface has no other flavor).  The
+/// keys live in [`sysa::init_config`] so System A can read the `Finder=`
+/// entry from the same file.
+const MODULES: &[ModuleDef] = &[
+    ModuleDef {
+        name: "sysa",
+        key: sysa::init_config::KEY_ALLOCATOR,
+        linux_binary: "systema-sysa",
+        unix_binary: "systema-sysa",
+        worker_id: None,
+    },
+    ModuleDef {
+        name: "syss",
+        key: sysa::init_config::KEY_SERVICE,
+        linux_binary: "systema-syss",
+        unix_binary: "systema-syss",
+        worker_id: Some("system-s-1"),
+    },
+    ModuleDef {
+        name: "syse",
+        key: sysa::init_config::KEY_EXTERNAL,
+        linux_binary: "systema-syse",
+        unix_binary: "systema-syse",
+        worker_id: Some("system-e-1"),
+    },
+    ModuleDef {
+        name: "syst",
+        key: sysa::init_config::KEY_TARGET,
+        linux_binary: "systema-syst",
+        unix_binary: "systema-syst",
+        worker_id: Some("system-t-1"),
+    },
+    ModuleDef {
+        name: "sysc",
+        key: sysa::init_config::KEY_CRON,
+        linux_binary: "systema-sysc",
+        unix_binary: "systema-sysc",
+        worker_id: Some("system-c-1"),
+    },
+    ModuleDef {
+        name: "sysk",
+        key: sysa::init_config::KEY_SOCKET,
+        linux_binary: "systema-sysk",
+        unix_binary: "systema-sysk",
+        worker_id: Some("system-k-1"),
+    },
+    ModuleDef {
+        name: "sysn",
+        key: sysa::init_config::KEY_PATH,
+        linux_binary: "systema-sysn",
+        unix_binary: "systema-sysn",
+        worker_id: Some("system-n-1"),
+    },
+    ModuleDef {
+        name: "sysd",
+        key: sysa::init_config::KEY_DEVICE,
+        linux_binary: "systema-sysd",
+        unix_binary: "systema-sysd",
+        worker_id: Some("system-d-1"),
+    },
+    ModuleDef {
+        name: "sysr",
+        key: sysa::init_config::KEY_RESOURCE,
+        linux_binary: "systema-sysr",
+        unix_binary: "systema-sysr",
+        worker_id: Some("system-r-1"),
+    },
+    ModuleDef {
+        name: "sysm",
+        key: sysa::init_config::KEY_MOUNT,
+        linux_binary: "systema-sysm.linux",
+        unix_binary: "systema-sysm.unix",
+        worker_id: Some("system-m-1"),
+    },
+    ModuleDef {
+        name: "sysw",
+        key: sysa::init_config::KEY_WRAPPER,
+        linux_binary: "systema-sysw.systemd",
+        unix_binary: "",
+        worker_id: Some("system-w-1"),
+    },
+];
+
+/// Whether `key` names a module System Init itself supervises.
+///
+/// `Finder` is a valid `init.conf` key but belongs to System A, so it is
+/// not accepted by SysAInit's `--worker`.
+pub fn is_worker_key(key: &str) -> bool {
+    MODULES.iter().any(|module| module.key == key)
 }
 
 /// Platform abstraction so tests can simulate non-Linux hosts.
@@ -163,50 +183,78 @@ impl Platform {
     }
 }
 
-/// Build the supervised process set.
+/// Build the supervised process set from the built-in table and `config`.
 ///
 /// `skip` accepts canonical short names (`"sysd"`) or full binary names
 /// (`"systema-sysd"`, `"systema-sysm.linux"`); unknown names are an error.
-/// Skipping `"sysf"` removes the whole finder chain.  Platform-gated
-/// workers are dropped on non-Linux.
-pub fn build_worker_set(skip: &[String]) -> anyhow::Result<Vec<WorkerSpec>> {
-    build_worker_set_for(Platform::current(), skip)
+/// Skipping `"sysf"` removes the whole finder chain.
+///
+/// An `init.conf` key overrides a module's binary; an empty value removes
+/// the module from the set.  Explicit values are honoured on every
+/// platform, so a non-Linux host can opt into a module that has no default
+/// there.
+pub fn build_worker_set(
+    skip: &[String],
+    config: &sysa::init_config::InitConfig,
+) -> anyhow::Result<Vec<WorkerSpec>> {
+    build_worker_set_for(Platform::current(), skip, config)
 }
 
 pub fn build_worker_set_for(
     platform: Platform,
     skip: &[String],
+    config: &sysa::init_config::InitConfig,
 ) -> anyhow::Result<Vec<WorkerSpec>> {
-    let all: Vec<WorkerSpec> = default_workers();
+    let mut binaries: HashMap<&'static str, String> = MODULES
+        .iter()
+        .filter_map(|module| {
+            module
+                .default_binary(platform)
+                .map(|binary| (module.name, binary.to_string()))
+        })
+        .collect();
 
-    let mut retained: Vec<WorkerSpec> = Vec::with_capacity(all.len());
-    for spec in all {
-        if spec.linux_only && platform != Platform::Linux {
-            continue;
-        }
-        if skip.iter().any(|s| spec.matches_name(s)) {
-            continue;
-        }
-        // Pick the executable for this platform so downstream resolution
-        // and logging always see the concrete binary.
-        let mut spec = spec;
-        if platform == Platform::Linux {
-            if let Some(linux_binary) = spec.linux_binary {
-                spec.binary = linux_binary;
+    for module in MODULES {
+        match config.get(module.key) {
+            Some("") => {
+                binaries.remove(module.name);
             }
+            Some(binary) => {
+                binaries.insert(module.name, binary.to_string());
+            }
+            None => {}
         }
-        spec.linux_binary = None;
-        retained.push(spec);
     }
 
-    if let Some(unknown) = skip
-        .iter()
-        .find(|s| !default_workers().iter().any(|spec| spec.matches_name(s)))
-    {
+    if let Some(unknown) = skip.iter().find(|name| {
+        !MODULES.iter().any(|module| module.matches_name(name))
+            && !MODULES.iter().any(|module| {
+                config
+                    .get(module.key)
+                    .is_some_and(|binary| !binary.is_empty() && binary == name.as_str())
+            })
+    }) {
         anyhow::bail!(sysa::l10n::fmt(
             sysa::l10n::t_("unknown worker name '{unknown}'"),
             &[("unknown", &unknown.to_string())]
         ));
+    }
+
+    let mut retained: Vec<WorkerSpec> = Vec::with_capacity(binaries.len());
+    for module in MODULES {
+        let Some(binary) = binaries.get(module.name) else {
+            continue;
+        };
+        if skip.iter().any(|name| module.matches_binary(name, binary)) {
+            continue;
+        }
+        retained.push(WorkerSpec {
+            name: module.name,
+            binary: binary.clone(),
+            worker_id: module.worker_id,
+            kind: ProcessKind::LongRunning,
+            args: &[],
+        });
     }
 
     Ok(retained)
@@ -242,14 +290,21 @@ fn search_in(dirs: &[std::path::PathBuf], name: &str) -> Option<std::path::PathB
 
 /// Resolve a binary to an executable path.
 ///
-/// Search order: an explicit `--bin-dir` (authoritative when given), then
-/// the directory of the SysAInit executable itself, then the canonical
-/// systema install directories (`sysa::paths::systema_bin_search_paths`),
-/// then `PATH`.
+/// A module is either named by a plain binary name, or by an absolute path.
+/// An absolute path is used as-is: that is the supported way to run a
+/// module installed outside the search locations.
+///
+/// Plain names are searched in `--bin-dir` when given (authoritative), and
+/// otherwise in the directory of the SysAInit executable first, then in
+/// `PATH`.  Every candidate must carry the executable bit.
 pub fn resolve_binary(
     binary: &str,
     bin_dir: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
+    let direct = std::path::Path::new(binary);
+    if direct.is_absolute() {
+        return executable_exists(direct).then(|| direct.to_path_buf());
+    }
     if let Some(dir) = bin_dir {
         let path = dir.join(binary);
         return executable_exists(&path).then_some(path);
@@ -259,9 +314,6 @@ pub fn resolve_binary(
         if let Some(dir) = exe.parent() {
             dirs.push(dir.to_path_buf());
         }
-    }
-    for dir in &sysa::paths::instance().systema_bin_search_paths {
-        dirs.push(std::path::PathBuf::from(dir));
     }
     if let Some(path) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path));
@@ -277,7 +329,7 @@ pub fn resolve_set(
     let mut resolved = Vec::new();
     let mut missing = Vec::new();
     for spec in set {
-        match resolve_binary(spec.binary, bin_dir) {
+        match resolve_binary(&spec.binary, bin_dir) {
             Some(path) => resolved.push(ResolvedProcess {
                 spec: spec.clone(),
                 path,
@@ -292,8 +344,16 @@ pub fn resolve_set(
 mod tests {
     use super::*;
 
+    fn resolve_binary_call(spec: &WorkerSpec) -> &str {
+        &spec.binary
+    }
+
     fn skip(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn config(pairs: &[(&str, &str)]) -> sysa::init_config::InitConfig {
+        sysa::init_config::InitConfig::from_pairs(pairs.iter().copied())
     }
 
     fn names(set: &[WorkerSpec]) -> Vec<&str> {
@@ -302,7 +362,8 @@ mod tests {
 
     #[test]
     fn platform_selects_binaries() {
-        let linux = build_worker_set_for(Platform::Linux, &[]).unwrap();
+        let default = sysa::init_config::InitConfig::default();
+        let linux = build_worker_set_for(Platform::Linux, &[], &default).unwrap();
         assert_eq!(
             names(&linux),
             vec![
@@ -313,7 +374,7 @@ mod tests {
         assert_eq!(linux.len(), 11);
         assert!(linux.iter().all(|s| s.kind == ProcessKind::LongRunning));
         fn binary_of<'a>(set: &'a [WorkerSpec], name: &'a str) -> &'a str {
-            set.iter().find(|s| s.name == name).unwrap().binary
+            resolve_binary_call(set.iter().find(|s| s.name == name).unwrap())
         }
         // System M / System W exist only on Linux.
         assert_eq!(binary_of(&linux, "sysm"), "systema-sysm.linux");
@@ -323,17 +384,25 @@ mod tests {
         // as a build artifact.
         assert_eq!(binary_of(&linux, "sysr"), "systema-sysr");
 
-        let other = build_worker_set_for(Platform::Other, &[]).unwrap();
+        let other = build_worker_set_for(Platform::Other, &[], &default).unwrap();
         assert_eq!(
             names(&other),
-            vec!["sysa", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr"]
+            vec!["sysa", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr", "sysm"]
         );
+        // System M falls back to its Unix flavor; System W has no default
+        // off Linux.
+        assert_eq!(binary_of(&other, "sysm"), "systema-sysm.unix");
         assert_eq!(binary_of(&other, "sysr"), "systema-sysr");
     }
 
     #[test]
     fn skip_accepts_short_names() {
-        let set = build_worker_set_for(Platform::Linux, &skip(&["sysd", "sysc"])).unwrap();
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &skip(&["sysd", "sysc"]),
+            &sysa::init_config::InitConfig::default(),
+        )
+        .unwrap();
         assert_eq!(
             names(&set),
             vec!["sysa", "syss", "syse", "syst", "sysk", "sysn", "sysr", "sysm", "sysw"]
@@ -345,6 +414,7 @@ mod tests {
         let set = build_worker_set_for(
             Platform::Linux,
             &skip(&["systema-sysd", "systema-sysm.linux"]),
+            &sysa::init_config::InitConfig::default(),
         )
         .unwrap();
         assert_eq!(
@@ -355,20 +425,83 @@ mod tests {
 
     #[test]
     fn skipping_sysa_removes_the_core() {
-        let set = build_worker_set_for(Platform::Linux, &skip(&["sysa"])).unwrap();
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &skip(&["sysa"]),
+            &sysa::init_config::InitConfig::default(),
+        )
+        .unwrap();
         assert!(!names(&set).contains(&"sysa"));
     }
 
     #[test]
     fn sysf_not_in_worker_set() {
-        let set = build_worker_set_for(Platform::Linux, &[]).unwrap();
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &[],
+            &sysa::init_config::InitConfig::default(),
+        )
+        .unwrap();
         assert!(!names(&set).contains(&"sysf"));
     }
 
     #[test]
     fn unknown_skip_name_is_an_error() {
-        let err = build_worker_set_for(Platform::Linux, &skip(&["nope"])).unwrap_err();
+        let err = build_worker_set_for(
+            Platform::Linux,
+            &skip(&["nope"]),
+            &sysa::init_config::InitConfig::default(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("nope"));
+    }
+
+    #[test]
+    fn init_conf_overrides_a_binary() {
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &[],
+            &config(&[(
+                sysa::init_config::KEY_SERVICE,
+                "/opt/systema/systema-syss-debug",
+            )]),
+        )
+        .unwrap();
+        let service = set.iter().find(|s| s.name == "syss").unwrap();
+        assert_eq!(service.binary, "/opt/systema/systema-syss-debug");
+    }
+
+    #[test]
+    fn init_conf_empty_value_disables_a_module() {
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &[],
+            &config(&[(sysa::init_config::KEY_DEVICE, "")]),
+        )
+        .unwrap();
+        assert!(!names(&set).contains(&"sysd"));
+    }
+
+    #[test]
+    fn init_conf_can_enable_a_module_off_linux() {
+        let set = build_worker_set_for(
+            Platform::Other,
+            &[],
+            &config(&[(sysa::init_config::KEY_WRAPPER, "systema-sysw.systemd")]),
+        )
+        .unwrap();
+        assert!(names(&set).contains(&"sysw"));
+    }
+
+    #[test]
+    fn init_conf_binary_can_be_skipped_by_name() {
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &skip(&["systema-syss-debug"]),
+            &config(&[(sysa::init_config::KEY_SERVICE, "systema-syss-debug")]),
+        )
+        .unwrap();
+        assert!(!names(&set).contains(&"syss"));
     }
 
     fn shim_dir(tag: &str) -> std::path::PathBuf {
@@ -396,6 +529,33 @@ mod tests {
     }
 
     #[test]
+    fn absolute_paths_are_used_as_is() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = shim_dir("absolute");
+        let path = dir.join("my-worker");
+        fs::write(&path, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // An absolute path bypasses the bin-dir/PATH lookup entirely.
+        assert_eq!(
+            resolve_binary(
+                path.to_str().unwrap(),
+                Some(std::path::Path::new("/nonexistent"))
+            ),
+            Some(path.clone())
+        );
+        assert!(resolve_binary(dir.join("missing").to_str().unwrap(), None).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bare_names_are_only_looked_up_in_path() {
+        let name = format!("systema-absent-{}", std::process::id());
+        assert!(resolve_binary(&name, None).is_none());
+    }
+
+    #[test]
     fn search_in_finds_executables_only() {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
@@ -419,7 +579,12 @@ mod tests {
         fs::write(dir.join("systema-sysa"), "#!/bin/sh\n").unwrap();
         fs::set_permissions(dir.join("systema-sysa"), fs::Permissions::from_mode(0o755)).unwrap();
 
-        let set = build_worker_set_for(Platform::Linux, &[]).unwrap();
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &[],
+            &sysa::init_config::InitConfig::default(),
+        )
+        .unwrap();
         let (resolved, missing) = resolve_set(&set, Some(&dir));
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].spec.name, "sysa");
