@@ -292,47 +292,75 @@ pub struct ResolvedProcess {
     pub path: std::path::PathBuf,
 }
 
-#[cfg(unix)]
-fn executable_exists(path: &std::path::Path) -> bool {
-    nix::unistd::access(path, nix::unistd::AccessFlags::X_OK).is_ok()
+/// Whether `path` is a regular file carrying the executable bit.
+fn executable_file(path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
 }
 
-#[cfg(not(unix))]
-fn executable_exists(path: &std::path::Path) -> bool {
-    path.is_file()
+/// Every executable regular file directly inside `dir`, sorted by file
+/// name.  Subdirectories are not entered.
+fn executables_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<std::path::PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| executable_file(path))
+        .collect();
+    paths.sort();
+    paths
 }
 
 /// First directory in `dirs` that contains an executable `name`.
 fn search_in(dirs: &[std::path::PathBuf], name: &str) -> Option<std::path::PathBuf> {
     for dir in dirs {
         let path = dir.join(name);
-        if executable_exists(&path) {
+        if executable_file(&path) {
             return Some(path);
         }
     }
     None
 }
 
-/// Resolve a binary to an executable path.
+/// Resolve a configured module value to the executable(s) it names.
 ///
-/// A module is either named by a plain binary name, or by an absolute path.
-/// An absolute path is used as-is: that is the supported way to run a
-/// module installed outside the search locations.
+/// - An absolute path naming a regular executable is used as-is.
+/// - An absolute path naming a directory expands to every executable
+///   regular file directly inside it (non-recursive), sorted by file name.
+/// - A plain binary name is searched in `--bin-dir` when given
+///   (authoritative), and otherwise in the directory of the SysAInit
+///   executable first, then in `PATH`.
 ///
-/// Plain names are searched in `--bin-dir` when given (authoritative), and
-/// otherwise in the directory of the SysAInit executable first, then in
-/// `PATH`.  Every candidate must carry the executable bit.
-pub fn resolve_binary(
+/// `None` means nothing runnable was found: the path does not exist, the
+/// directory holds no executable file, or the name is not in any search
+/// directory.  Every candidate must be a regular file carrying the
+/// executable bit.
+pub fn resolve_binaries(
     binary: &str,
     bin_dir: Option<&std::path::Path>,
-) -> Option<std::path::PathBuf> {
+) -> Option<Vec<std::path::PathBuf>> {
     let direct = std::path::Path::new(binary);
     if direct.is_absolute() {
-        return executable_exists(direct).then(|| direct.to_path_buf());
+        if direct.is_dir() {
+            let files = executables_in(direct);
+            return (!files.is_empty()).then_some(files);
+        }
+        return executable_file(direct).then(|| vec![direct.to_path_buf()]);
     }
     if let Some(dir) = bin_dir {
         let path = dir.join(binary);
-        return executable_exists(&path).then_some(path);
+        return executable_file(&path).then_some(vec![path]);
     }
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -343,10 +371,14 @@ pub fn resolve_binary(
     if let Some(path) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path));
     }
-    search_in(&dirs, binary)
+    search_in(&dirs, binary).map(|path| vec![path])
 }
 
 /// Resolve every spec in the set, reporting which ones are missing.
+///
+/// A directory value yields one [`ResolvedProcess`] per executable, in file
+/// name order; each entry is named after its executable so the processes
+/// get distinct log files.
 pub fn resolve_set(
     set: &[WorkerSpec],
     bin_dir: Option<&std::path::Path>,
@@ -354,15 +386,31 @@ pub fn resolve_set(
     let mut resolved = Vec::new();
     let mut missing = Vec::new();
     for spec in set {
-        match resolve_binary(&spec.binary, bin_dir) {
-            Some(path) => resolved.push(ResolvedProcess {
-                spec: spec.clone(),
-                path,
-            }),
+        match resolve_binaries(&spec.binary, bin_dir) {
+            Some(paths) => {
+                for path in paths {
+                    resolved.push(ResolvedProcess {
+                        spec: named_after_executable(spec, &path),
+                        path,
+                    });
+                }
+            }
             None => missing.push(spec.clone()),
         }
     }
     (resolved, missing)
+}
+
+/// Name a resolved process after the executable it runs.
+///
+/// The binary field doubles as the `--log-file` basename, so each entry of
+/// an expanded directory gets its own log file instead of sharing one.
+fn named_after_executable(spec: &WorkerSpec, path: &std::path::Path) -> WorkerSpec {
+    let mut spec = spec.clone();
+    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+        spec.binary = name.to_string();
+    }
+    spec
 }
 
 #[cfg(test)]
@@ -566,11 +614,11 @@ mod tests {
         fs::write(dir.join("systema-sysd"), "#!/bin/sh\n").unwrap();
         fs::set_permissions(dir.join("systema-sysd"), fs::Permissions::from_mode(0o755)).unwrap();
 
-        let hit = resolve_binary("systema-sysd", Some(&dir)).unwrap();
-        assert_eq!(hit, dir.join("systema-sysd"));
+        let hit = resolve_binaries("systema-sysd", Some(&dir)).unwrap();
+        assert_eq!(hit, vec![dir.join("systema-sysd")]);
 
         // An explicit bin-dir does not fall back to PATH / exe dir.
-        assert!(resolve_binary("systema-sysa", Some(&dir)).is_none());
+        assert!(resolve_binaries("systema-sysa", Some(&dir)).is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -585,20 +633,98 @@ mod tests {
 
         // An absolute path bypasses the bin-dir/PATH lookup entirely.
         assert_eq!(
-            resolve_binary(
+            resolve_binaries(
                 path.to_str().unwrap(),
                 Some(std::path::Path::new("/nonexistent"))
             ),
-            Some(path.clone())
+            Some(vec![path.clone()])
         );
-        assert!(resolve_binary(dir.join("missing").to_str().unwrap(), None).is_none());
+        assert!(resolve_binaries(dir.join("missing").to_str().unwrap(), None).is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn bare_names_are_only_looked_up_in_path() {
         let name = format!("systema-absent-{}", std::process::id());
-        assert!(resolve_binary(&name, None).is_none());
+        assert!(resolve_binaries(&name, None).is_none());
+    }
+
+    #[test]
+    fn a_directory_value_expands_to_executables_in_name_order() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = shim_dir("expand");
+        let workers = dir.join("workers.d");
+        fs::create_dir_all(&workers).unwrap();
+        for name in ["charlie", "alpha", "bravo"] {
+            let path = workers.join(name);
+            fs::write(&path, "#!/bin/sh\n").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // Neither a file without the executable bit nor a subdirectory is
+        // part of the expansion.
+        fs::write(workers.join("data.txt"), "not a program").unwrap();
+        fs::create_dir_all(workers.join("nested")).unwrap();
+        fs::write(workers.join("nested/delta"), "#!/bin/sh\n").unwrap();
+        fs::set_permissions(
+            workers.join("nested/delta"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+
+        let set = vec![WorkerSpec {
+            name: "sysd",
+            binary: workers.to_string_lossy().into_owned(),
+            worker_id: Some("system-d-1"),
+            kind: ProcessKind::LongRunning,
+            args: &[],
+        }];
+        let (resolved, missing) = resolve_set(&set, None);
+        assert!(missing.is_empty());
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|rp| rp.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                workers.join("alpha"),
+                workers.join("bravo"),
+                workers.join("charlie")
+            ]
+        );
+        // Each process is named after its executable, so their `--log-file`
+        // basenames differ.
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|rp| rp.spec.binary.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "bravo", "charlie"]
+        );
+        assert!(resolved
+            .iter()
+            .all(|rp| rp.spec.worker_id == Some("system-d-1")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_empty_directory_is_reported_missing() {
+        use std::fs;
+        let dir = shim_dir("empty-dir");
+        let workers = dir.join("workers.d");
+        fs::create_dir_all(&workers).unwrap();
+
+        let set = vec![WorkerSpec {
+            name: "sysd",
+            binary: workers.to_string_lossy().into_owned(),
+            worker_id: Some("system-d-1"),
+            kind: ProcessKind::LongRunning,
+            args: &[],
+        }];
+        let (resolved, missing) = resolve_set(&set, None);
+        assert!(resolved.is_empty());
+        assert_eq!(missing.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

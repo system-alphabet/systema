@@ -2,11 +2,12 @@
 //!
 //! The generic finder runner.  Scans the finder search paths
 //! (`sysa::paths::finder_search_paths`) for finder executables — every
-//! file with the executable bit set, e.g. `systema-sysf.systemd` — runs
-//! all of them concurrently (each stages its discovered units into the
-//! shared staging area), then commits the staging area into the active
-//! set.  The `commit` / `query` subcommands manage the staging area
-//! explicitly.
+//! file with the executable bit set, e.g. `systema-sysf.systemd` — and
+//! runs the selected ones in order (each stages its discovered units into
+//! the shared staging area), then commits the staging area into the active
+//! set.  The `--finder` selection may also name a directory: every
+//! executable directly inside it is run, sorted by file name.  The
+//! `commit` / `query` subcommands manage the staging area explicitly.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,7 +49,7 @@ struct Args {
 
     #[arg(
         long,
-        help = "Run only the finder executable with this file name (default: every finder found)"
+        help = "Run only the selected finders: a file name, a file path, or a directory (default: every finder found)"
     )]
     finder: Option<String>,
 
@@ -103,7 +104,7 @@ async fn main() -> Result<()> {
             })
             .mut_arg("finder", |a| {
                 a.help(sysa::l10n::t_(
-                    "Run only the finder executable with this file name (default: every finder found).",
+                    "Run only the selected finders: a file name, a file path, or a directory (default: every finder found).",
                 ))
             })
             .mut_subcommand("commit", |cmd| {
@@ -150,15 +151,40 @@ async fn main() -> Result<()> {
 
 /// Scan the finder search paths for finder executables.
 ///
-/// Every regular file with the executable bit set is considered a finder
-/// executable.  Directories are visited in search-path order; within a
-/// directory, entries are sorted for determinism.  When `filter` is set,
-/// only the file with that name is kept.
+/// `filter` may be:
+/// - `None`: every finder in every search path;
+/// - a bare file name (`systema-sysf.systemd`): only files with that name,
+///   in search-path order;
+/// - a file path: that one executable;
+/// - a directory path: every executable directly inside it (non-recursive),
+///   sorted by file name.
 fn discover_finders(filter: Option<&str>) -> Vec<PathBuf> {
     discover_finders_in(&paths::instance().finder_search_paths, filter)
 }
 
 fn discover_finders_in(dirs: &[String], filter: Option<&str>) -> Vec<PathBuf> {
+    let Some(filter) = filter else {
+        return finders_in_search_paths(dirs);
+    };
+    let direct = Path::new(filter);
+    if direct.is_dir() {
+        return executables_in_dir(direct);
+    }
+    if direct.is_file() {
+        return is_executable(direct)
+            .then(|| direct.to_path_buf())
+            .into_iter()
+            .collect();
+    }
+    finders_in_search_paths(dirs)
+        .into_iter()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(filter))
+        .collect()
+}
+
+/// Every finder executable in the search paths, in search-path order and,
+/// within a directory, sorted by file name.
+fn finders_in_search_paths(dirs: &[String]) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -173,14 +199,24 @@ fn discover_finders_in(dirs: &[String], filter: Option<&str>) -> Vec<PathBuf> {
             })
             .collect();
         names.sort();
-        for name in names {
-            if filter.is_some_and(|filter| filter != name) {
-                continue;
-            }
-            out.push(PathBuf::from(dir).join(name));
-        }
+        out.extend(names.into_iter().map(|name| PathBuf::from(dir).join(name)));
     }
     out
+}
+
+/// Every executable directly inside `dir`, sorted by file name.
+/// Subdirectories are not entered.
+fn executables_in_dir(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| is_executable(path))
+        .collect();
+    paths.sort();
+    paths
 }
 
 #[cfg(unix)]
@@ -196,12 +232,15 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
-/// Run every selected finder executable concurrently, then commit the
+/// Run every selected finder executable **in order**, then commit the
 /// staging area.
 ///
-/// Each finder receives `--name` so all of them stage into the same
-/// UID-bound staging area.  All finders are spawned before any is awaited;
-/// the commit runs only after every finder has exited.
+/// Each finder is spawned and waited for before the next one starts, so the
+/// configured order (search-path order, or file-name order inside a
+/// directory) is also the execution order.  Each finder receives `--name`
+/// so all of them stage into the same UID-bound staging area.  A failing
+/// finder does not stop the others; the commit runs after every finder has
+/// exited.
 async fn run_finders(name: &str, filter: Option<&str>) -> Result<()> {
     info!("System F running finder executables (name='{name}')");
 
@@ -209,21 +248,21 @@ async fn run_finders(name: &str, filter: Option<&str>) -> Result<()> {
     if finders.is_empty() {
         if let Some(filter) = filter {
             anyhow::bail!(sysa::l10n::fmt(
-                sysa::l10n::t_("Finder '{name}' not found in the finder search paths."),
+                sysa::l10n::t_("Finder '{name}' not found."),
                 &[("name", filter)]
             ));
         }
         warn!("No finder executables found in finder search paths");
     }
 
-    let mut children: Vec<(PathBuf, tokio::process::Child)> = Vec::new();
+    let mut failed: Vec<PathBuf> = Vec::new();
     for path in &finders {
         info!("Spawning finder {}", path.display());
         let binary = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "systema-finder".to_string());
-        let child = tokio::process::Command::new(path)
+        let mut child = tokio::process::Command::new(path)
             .arg("--name")
             .arg(name)
             // Same log directory as ours (see the logging module).
@@ -236,17 +275,12 @@ async fn run_finders(name: &str, filter: Option<&str>) -> Result<()> {
                     &[("path", &path.display().to_string())],
                 )
             })?;
-        children.push((path.clone(), child));
-    }
-
-    let mut failed: Vec<PathBuf> = Vec::new();
-    for (path, mut child) in children {
         let status = child.wait().await?;
         if status.success() {
             info!("Finder {} finished successfully", path.display());
         } else {
             error!("Finder {} exited with {status}", path.display());
-            failed.push(path);
+            failed.push(path.clone());
         }
     }
 
@@ -460,5 +494,44 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&first);
         let _ = std::fs::remove_dir_all(&second);
+    }
+
+    #[test]
+    fn a_directory_selection_runs_executables_in_file_name_order() {
+        let dir = temp_dir("dir-selection");
+        for name in ["second", "first"] {
+            let path = dir.join(name);
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // A non-executable file and a subdirectory are not part of the
+        // selection, and the walk does not recurse.
+        std::fs::write(dir.join("notes.txt"), "not a program").unwrap();
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        let nested = dir.join("nested/third");
+        std::fs::write(&nested, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(
+            discover_finders_in(&[], Some(dir.to_str().unwrap())),
+            vec![dir.join("first"), dir.join("second")]
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_path_selects_just_that_finder() {
+        let dir = temp_dir("file-selection");
+        let path = dir.join("only");
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(
+            discover_finders_in(&[], Some(path.to_str().unwrap())),
+            vec![path.clone()]
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

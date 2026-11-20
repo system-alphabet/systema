@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-11-20 14:20+0800\n"
+        "POT-Creation-Date: 2026-11-20 18:57+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -819,9 +819,9 @@ msgstr  "System F — System Finder Worker"
 msgid   "Name for the staging area."
 msgstr  "Name for the staging area."
 #
-# File: ../crates/backend/systema-sysf/src/main.rs, line: 106
-msgid   "Run only the finder executable with this file name (default: every finder found)."
-msgstr  "Run only the finder executable with this file name (default: every finder found)."
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 107
+msgid   "Run only the selected finders: a file name, a file path, or a directory (default: every finder found)."
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 78
 msgid   "Commit the UID-bound staging area."
@@ -835,10 +835,10 @@ msgstr  "Query the UID-bound staging area."
 msgid   "Listen for reload notifications from System A."
 msgstr  "Listen for reload notifications from System A."
 #
-# File: ../crates/backend/systema-sysf/src/main.rs, line: 212
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 248
 #, rust-format
-msgid   "Finder '{name}' not found in the finder search paths."
-msgstr  "Finder '{name}' not found in the finder search paths."
+msgid   "Finder '{name}' not found."
+msgstr  "Finder '{name}' not found."
 #
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 164
 #, rust-format
@@ -2503,9 +2503,22 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 106
+#~ msgid        "Run only the finder executable with this file name (default: every finder found)."
+#~ msgstr       "Run only the finder executable with this file name (default: every finder found)."
+#
+#
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 212
+#, rust-format
+#~ msgid        "Finder '{name}' not found in the finder search paths."
+#~ msgstr       "Finder '{name}' not found in the finder search paths."
+#
+#
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 302
 #~ msgid        "Search for the systema-* binaries only in this directory (default: PATH)."
 #~ msgstr       "Search for the systema-* binaries only in this directory (default: PATH)."
+#
 #
 #
 #
@@ -2517,9 +2530,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 38
 #~ msgid        "chmod for mount point failed"
 #~ msgstr       "chmod for mount point failed"
+#
 #
 #
 #
@@ -2533,9 +2548,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
 #~ msgid        "Worker disconnected"
 #~ msgstr       "Worker disconnected"
+#
 #
 #
 #
@@ -2556,9 +2573,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "failed to load unit"
+#
 #
 #
 #
@@ -2579,6 +2598,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2591,10 +2611,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "Unit {name} is a template and cannot be loaded directly"
+#
 #
 #
 #
@@ -2617,10 +2639,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "Unable to resolve dependency cycles after removing {count} edges."
+#
 #
 #
 #
@@ -2646,10 +2670,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') failed: {r}"
+#
 #
 #
 #
@@ -2677,10 +2703,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "Invalid log level '{level}' ({e}); using info"
+#
 #
 #
 #
@@ -2710,9 +2738,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 #
@@ -2746,10 +2776,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2786,10 +2818,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #

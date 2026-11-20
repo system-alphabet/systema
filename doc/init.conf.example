@@ -16,6 +16,15 @@
 #
 #     Service=/opt/systema/libexec/systema-syss
 #
+# An absolute path may also name a directory: every executable regular file
+# directly inside it (non-recursive) is run, sorted by file name, in that
+# order.  For a worker key this means several supervised processes sharing
+# the module's worker ID; the separate `--log-file` names keep their logs
+# apart:
+#
+#     Finder=/usr/libexec/finder.d
+#     Device=/opt/systema/device-workers.d
+#
 # Drop-ins: every /etc/systema/init.conf.d/*.conf file is read after this
 # file, in lexicographic order; a later assignment overrides an earlier one.
 # Copy this file to /etc/systema/init.conf to start overriding.
@@ -34,8 +43,9 @@
 #Allocator=systema-sysa
 
 # Finder — the executable System F runs on daemon-reload to discover units.
-# The default is systema-sysf.systemd.  An empty value disables the unit
-# scan entirely.
+# The default is systema-sysf.systemd.  A directory runs every executable
+# inside it, in file-name order.  An empty value disables the unit scan
+# entirely.
 #Finder=systema-sysf.systemd
 
 # Splash — the boot-log console, started once System A is ready and before

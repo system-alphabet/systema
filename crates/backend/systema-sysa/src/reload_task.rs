@@ -13,8 +13,10 @@ use tracing::{error, info, warn};
 
 use crate::state::AllocatorHandle;
 
-/// Pick the finder executable System F should run.
+/// Pick the finder selection System F should run.
 ///
+/// The value is a binary name, a file path, or a directory of executables
+/// (System F runs every executable directly inside it, in file-name order).
 /// Precedence: the `--finder` command line, then `Finder=` from
 /// `init.conf`/`init.conf.d`/the environment, then
 /// [`sysa::init_config::DEFAULT_FINDER`].  `None` means the selected value
@@ -119,10 +121,11 @@ impl ReloadTask {
     /// Locate the `systema-sysf` binary and run it as a subprocess.
     ///
     /// System F discovers format-specific finders (e.g. `systema-sysf.systemd`),
-    /// runs them all concurrently to stage discovered units, then commits the
-    /// staging area into System A's active set via IPC.  The finder selection
-    /// (`--finder` > `Finder=` > the built-in default) narrows the run to one
-    /// executable; an empty value skips the scan entirely.
+    /// runs them in selection order to stage discovered units, then commits
+    /// the staging area into System A's active set via IPC.  The finder
+    /// selection (`--finder` > `Finder=` > the built-in default) may name a
+    /// file name, a file path, or a directory of executables; an empty value
+    /// skips the scan entirely.
     ///
     /// # Errors
     /// Returns an error if the binary cannot be found or exits with a
