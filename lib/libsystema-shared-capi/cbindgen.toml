@@ -1,0 +1,7 @@
+language = "C"
+include_guard = "SYSTEMA_SHARED_CAPI_H"
+usize_is_size_t = true
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
