@@ -339,7 +339,7 @@ async fn main() -> Result<()> {
             })
             .mut_arg("worker", |a| {
                 a.help(sysa::l10n::t_(
-                    "Override one module from the command line (Key=Value; an empty value disables it).",
+                    "Override one module from the command line (Key=Value, Value may be a PATH-style list; an empty value disables it).",
                 ))
             })
             .mut_arg("no_strict", |a| {

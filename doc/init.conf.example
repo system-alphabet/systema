@@ -16,18 +16,33 @@
 #
 #     Service=/opt/systema/libexec/systema-syss
 #
+# Every key accepts a LIST of executables:
+#
+#     Key=value             replaces the list (this is the default form)
+#     Key+=value            appends to the list built so far
+#     Key=a:/dir.d:b        ':' separates values on one line (PATH style)
+#
+# Appends follow systemd's file semantics: they extend earlier assignments
+# (from this file and earlier drop-ins), starting from an empty list when
+# there is none.  To keep the built-in default and add an extra process,
+# name both explicitly:
+#
+#     Service=systema-syss
+#     Service+=/opt/systema-syss-helper
+#
 # An absolute path may also name a directory: every executable regular file
 # directly inside it (non-recursive) is run, sorted by file name, in that
-# order.  For a worker key this means several supervised processes sharing
-# the module's worker ID; the separate `--log-file` names keep their logs
-# apart:
+# order.  All executables of one key share the module's worker ID; SysAInit
+# waits for that worker's readiness once, after the key's last process was
+# spawned, and the separate `--log-file` names keep their logs apart:
 #
 #     Finder=/usr/libexec/finder.d
-#     Device=/opt/systema/device-workers.d
+#     Device=/opt/systema/device-workers.d:/opt/systema/extra-device-worker
 #
 # Drop-ins: every /etc/systema/init.conf.d/*.conf file is read after this
-# file, in lexicographic order; a later assignment overrides an earlier one.
-# Copy this file to /etc/systema/init.conf to start overriding.
+# file, in lexicographic order; a later `Key=` overrides an earlier one and
+# a later `Key+=` appends to it.  Copy this file to /etc/systema/init.conf
+# to start overriding.
 #
 # Precedence, lowest to highest:
 #   built-in defaults
@@ -35,6 +50,10 @@
 #   < /etc/systema/init.conf.d/*.conf
 #   < SYSTEMA_SYSA / SYSTEMA_SYSS / ... / SYSTEMA_SYSF environment variables
 #   < command line (systema-sysi --worker Key=Value, systema-sysa --finder)
+#
+# The SYSTEMA_SYS* variables accept the same PATH-style list, e.g.
+# SYSTEMA_SYSS="systema-syss:/opt/systema-syss-helper".  They replace the
+# configured list (an empty variable disables the module).
 
 [Init]
 
@@ -44,8 +63,8 @@
 
 # Finder — the executable System F runs on daemon-reload to discover units.
 # The default is systema-sysf.systemd.  A directory runs every executable
-# inside it, in file-name order.  An empty value disables the unit scan
-# entirely.
+# inside it, in file-name order; several values are run in configuration
+# order.  An empty value disables the unit scan entirely.
 #Finder=systema-sysf.systemd
 
 # Splash — the boot-log console, started once System A is ready and before

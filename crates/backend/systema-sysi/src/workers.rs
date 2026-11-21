@@ -70,10 +70,6 @@ impl ModuleDef {
     fn matches_name(&self, name: &str) -> bool {
         name == self.name || name == self.linux_binary || name == self.unix_binary
     }
-
-    fn matches_binary(&self, name: &str, binary: &str) -> bool {
-        self.matches_name(name) || name == binary
-    }
 }
 
 /// The built-in module table, in spawn order.
@@ -214,10 +210,13 @@ impl Platform {
 /// (`"systema-sysd"`, `"systema-sysm.linux"`); unknown names are an error.
 /// Skipping `"sysf"` removes the whole finder chain.
 ///
-/// An `init.conf` key overrides a module's binary; an empty value removes
-/// the module from the set.  Explicit values are honoured on every
+/// An `init.conf` key replaces a module's executable list; an empty list
+/// removes the module from the set.  Explicit values are honoured on every
 /// platform, so a non-Linux host can opt into a module that has no default
-/// there.
+/// there.  A key may name several executables or directories
+/// (`Key=a:/dir.d`, or several `Key=`/`Key+=` lines): each becomes its own
+/// [`WorkerSpec`] sharing the module's name and worker ID, in configuration
+/// order.  Directories expand later, in [`resolve_set`].
 pub fn build_worker_set(
     skip: &[String],
     config: &sysa::init_config::InitConfig,
@@ -230,22 +229,22 @@ pub fn build_worker_set_for(
     skip: &[String],
     config: &sysa::init_config::InitConfig,
 ) -> anyhow::Result<Vec<WorkerSpec>> {
-    let mut binaries: HashMap<&'static str, String> = MODULES
+    let mut components: HashMap<&'static str, Vec<String>> = MODULES
         .iter()
         .filter_map(|module| {
             module
                 .default_binary(platform)
-                .map(|binary| (module.name, binary.to_string()))
+                .map(|binary| (module.name, vec![binary.to_string()]))
         })
         .collect();
 
     for module in MODULES {
-        match config.get(module.key) {
-            Some("") => {
-                binaries.remove(module.name);
+        match config.get_list(module.key) {
+            Some([]) => {
+                components.remove(module.name);
             }
-            Some(binary) => {
-                binaries.insert(module.name, binary.to_string());
+            Some(list) => {
+                components.insert(module.name, list.to_vec());
             }
             None => {}
         }
@@ -255,8 +254,8 @@ pub fn build_worker_set_for(
         !MODULES.iter().any(|module| module.matches_name(name))
             && !MODULES.iter().any(|module| {
                 config
-                    .get(module.key)
-                    .is_some_and(|binary| !binary.is_empty() && binary == name.as_str())
+                    .get_list(module.key)
+                    .is_some_and(|list| list.iter().any(|value| value == *name))
             })
     }) {
         anyhow::bail!(sysa::l10n::fmt(
@@ -265,21 +264,28 @@ pub fn build_worker_set_for(
         ));
     }
 
-    let mut retained: Vec<WorkerSpec> = Vec::with_capacity(binaries.len());
+    let mut retained: Vec<WorkerSpec> = Vec::new();
     for module in MODULES {
-        let Some(binary) = binaries.get(module.name) else {
+        let Some(list) = components.get(module.name) else {
             continue;
         };
-        if skip.iter().any(|name| module.matches_binary(name, binary)) {
+        // A module name skips the module as a whole; an individual value
+        // only skips that one executable.
+        if skip.iter().any(|name| module.matches_name(name)) {
             continue;
         }
-        retained.push(WorkerSpec {
-            name: module.name,
-            binary: binary.clone(),
-            worker_id: module.worker_id,
-            kind: module.kind,
-            args: &[],
-        });
+        for binary in list {
+            if skip.iter().any(|name| name == binary) {
+                continue;
+            }
+            retained.push(WorkerSpec {
+                name: module.name,
+                binary: binary.clone(),
+                worker_id: module.worker_id,
+                kind: module.kind,
+                args: &[],
+            });
+        }
     }
 
     Ok(retained)
@@ -552,6 +558,71 @@ mod tests {
         .unwrap();
         let service = set.iter().find(|s| s.name == "syss").unwrap();
         assert_eq!(service.binary, "/opt/systema/systema-syss-debug");
+    }
+
+    #[test]
+    fn init_conf_lists_several_executables_per_module() {
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &[],
+            &config(&[(
+                sysa::init_config::KEY_SERVICE,
+                "systema-syss:/opt/syss.d:/opt/systema-syss-helper",
+            )]),
+        )
+        .unwrap();
+        let service: Vec<&str> = set
+            .iter()
+            .filter(|s| s.name == "syss")
+            .map(|s| s.binary.as_str())
+            .collect();
+        assert_eq!(
+            service,
+            vec!["systema-syss", "/opt/syss.d", "/opt/systema-syss-helper"]
+        );
+        // The extra processes keep the module's worker ID, so they stay one
+        // logical worker.
+        assert!(set
+            .iter()
+            .filter(|s| s.name == "syss")
+            .all(|s| s.worker_id == Some("system-s-1")));
+        // The module stays one contiguous block in table order (after sysh).
+        let all = names(&set);
+        let first = all.iter().position(|n| *n == "syss").unwrap();
+        assert_eq!(&all[first..first + 3], &["syss", "syss", "syss"]);
+    }
+
+    #[test]
+    fn skipping_one_value_leaves_the_rest_of_the_module() {
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &skip(&["/opt/systema-syss-helper"]),
+            &config(&[(
+                sysa::init_config::KEY_SERVICE,
+                "systema-syss:/opt/systema-syss-helper",
+            )]),
+        )
+        .unwrap();
+        let service: Vec<&str> = set
+            .iter()
+            .filter(|s| s.name == "syss")
+            .map(|s| s.binary.as_str())
+            .collect();
+        assert_eq!(service, vec!["systema-syss"]);
+    }
+
+    #[test]
+    fn skipping_the_module_name_drops_every_value() {
+        let set = build_worker_set_for(
+            Platform::Linux,
+            &skip(&["syss"]),
+            &config(&[(
+                sysa::init_config::KEY_SERVICE,
+                "systema-syss:/opt/systema-syss-helper",
+            )]),
+        )
+        .unwrap();
+        assert!(!names(&set).contains(&"syss"));
     }
 
     #[test]

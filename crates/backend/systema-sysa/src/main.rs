@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
             })
             .mut_arg("finder", |a| {
                 a.help(sysa::l10n::t_(
-                    "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan).",
+                    "Finder selection to run on daemon-reload, PATH-style list (default: Finder= from init.conf; empty disables the scan).",
                 ))
             })
             .mut_arg("version", |a| {

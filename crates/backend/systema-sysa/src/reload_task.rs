@@ -13,22 +13,24 @@ use tracing::{error, info, warn};
 
 use crate::state::AllocatorHandle;
 
-/// Pick the finder selection System F should run.
+/// Pick the finder selection(s) System F should run.
 ///
-/// The value is a binary name, a file path, or a directory of executables
-/// (System F runs every executable directly inside it, in file-name order).
-/// Precedence: the `--finder` command line, then `Finder=` from
-/// `init.conf`/`init.conf.d`/the environment, then
-/// [`sysa::init_config::DEFAULT_FINDER`].  `None` means the selected value
-/// is empty: the unit scan is disabled.
-fn select_finder(config: &sysa::init_config::InitConfig, cli: Option<&str>) -> Option<String> {
+/// Each value is a binary name, a file path, or a directory of executables
+/// (System F runs every executable directly inside it, in file-name order);
+/// the configured list may hold several of them and System F runs them in
+/// order.  Precedence: the `--finder` command line, then `Finder=` from
+/// `init.conf`/`init.conf.d`/the environment (PATH-style `a:/dir.d:b`), then
+/// [`sysa::init_config::DEFAULT_FINDER`].  `None` means the selection is
+/// empty: the unit scan is disabled.
+fn select_finder(config: &sysa::init_config::InitConfig, cli: Option<&str>) -> Option<Vec<String>> {
     if let Some(finder) = cli {
-        return (!finder.is_empty()).then(|| finder.to_string());
+        let finders = sysa::init_config::split_value(finder);
+        return (!finders.is_empty()).then_some(finders);
     }
-    match config.get(sysa::init_config::KEY_FINDER) {
-        Some("") => None,
-        Some(finder) => Some(finder.to_string()),
-        None => Some(sysa::init_config::DEFAULT_FINDER.to_string()),
+    match config.get_list(sysa::init_config::KEY_FINDER) {
+        Some([]) => None,
+        Some(finders) => Some(finders.to_vec()),
+        None => Some(vec![sysa::init_config::DEFAULT_FINDER.to_string()]),
     }
 }
 
@@ -122,46 +124,48 @@ impl ReloadTask {
     ///
     /// System F discovers format-specific finders (e.g. `systema-sysf.systemd`),
     /// runs them in selection order to stage discovered units, then commits
-    /// the staging area into System A's active set via IPC.  The finder
+    /// the staging area into System A's active set via IPC.  Every finder
     /// selection (`--finder` > `Finder=` > the built-in default) may name a
-    /// file name, a file path, or a directory of executables; an empty value
-    /// skips the scan entirely.
+    /// file name, a file path, or a directory of executables, and every
+    /// selection becomes one `--finder` argument; an empty selection skips
+    /// the scan entirely.
     ///
     /// # Errors
     /// Returns an error if the binary cannot be found or exits with a
     /// non-zero status.
     async fn spawn_sysf(finder_override: Option<&str>) -> Result<()> {
         let config = sysa::init_config::InitConfig::load_with_env();
-        let Some(finder) = select_finder(&config, finder_override) else {
+        let Some(finders) = select_finder(&config, finder_override) else {
             warn!("System F scan skipped: the finder selection is empty");
             return Ok(());
         };
         let sysf_path = Self::find_sysf_binary()?;
         info!(
-            "ReloadTask: running {} (finder '{finder}')",
-            sysf_path.display()
+            "ReloadTask: running {} (finder '{}')",
+            sysf_path.display(),
+            finders.join(":")
         );
 
-        let status = tokio::process::Command::new(&sysf_path)
+        let mut command = tokio::process::Command::new(&sysf_path);
+        command
             .arg("--name")
             .arg("systema-sysf/reload")
-            .arg("--finder")
-            .arg(&finder)
             // Same log directory as ours; "-" when this process has no
             // file sink (see the logging module).
             .arg("--log-file")
-            .arg(sysa::logging::child_log_file("systema-sysf"))
-            .status()
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!(sysa::l10n::fmt(
-                    sysa::l10n::t_("failed to spawn {program}: {e}"),
-                    &[
-                        ("program", &(sysf_path.display()).to_string()),
-                        ("e", &e.to_string())
-                    ]
-                ))
-            })?;
+            .arg(sysa::logging::child_log_file("systema-sysf"));
+        for finder in &finders {
+            command.arg("--finder").arg(finder);
+        }
+        let status = command.status().await.map_err(|e| {
+            anyhow::anyhow!(sysa::l10n::fmt(
+                sysa::l10n::t_("failed to spawn {program}: {e}"),
+                &[
+                    ("program", &(sysf_path.display()).to_string()),
+                    ("e", &e.to_string())
+                ]
+            ))
+        })?;
 
         if status.success() {
             info!("ReloadTask: System F completed successfully");
@@ -201,11 +205,23 @@ mod tests {
     fn finder_selection_follows_the_init_configuration() {
         assert_eq!(
             select_finder(&InitConfig::default(), None),
-            Some(DEFAULT_FINDER.to_string())
+            Some(vec![DEFAULT_FINDER.to_string()])
         );
         assert_eq!(
             select_finder(&InitConfig::from_pairs([(KEY_FINDER, "my-finder")]), None),
-            Some("my-finder".to_string())
+            Some(vec!["my-finder".to_string()])
+        );
+        // PATH-style lists become several finder selections, in order.
+        assert_eq!(
+            select_finder(
+                &InitConfig::from_pairs([(KEY_FINDER, "first:/opt/finders.d:last")]),
+                None
+            ),
+            Some(vec![
+                "first".to_string(),
+                "/opt/finders.d".to_string(),
+                "last".to_string()
+            ])
         );
         assert_eq!(
             select_finder(&InitConfig::from_pairs([(KEY_FINDER, "")]), None),
@@ -218,7 +234,11 @@ mod tests {
         let config = InitConfig::from_pairs([(KEY_FINDER, "from-conf")]);
         assert_eq!(
             select_finder(&config, Some("from-cli")),
-            Some("from-cli".to_string())
+            Some(vec!["from-cli".to_string()])
+        );
+        assert_eq!(
+            select_finder(&config, Some("one:two")),
+            Some(vec!["one".to_string(), "two".to_string()])
         );
         assert_eq!(select_finder(&config, Some("")), None);
     }

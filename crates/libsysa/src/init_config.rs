@@ -8,10 +8,21 @@
 //! afterwards: every `*.conf` file is applied in lexicographic order, so a
 //! later file overrides an earlier assignment of the same key.
 //!
+//! Every value is a list of executables or directories:
+//!
+//! - `Key=Value` replaces the list, `Key+=Value` appends to it.  Like
+//!   systemd, an append starts from whatever earlier assignments produced
+//!   (an empty list when there are none).
+//! - `:` separates several values on one line
+//!   (`executable:/dir.d:other-executable`), the same PATH-style form the
+//!   `SYSTEMA_SYS*` environment overrides accept.
+//! - An empty value (`Key=`) resets the list to empty, which disables the
+//!   module.
+//!
 //! Both `systema-sysi` (the module table) and `systema-sysa` (the `Finder=`
 //! selection) read the same files; a missing file or directory simply
 //! yields an empty configuration, and each key falls back to its built-in
-//! default.  An *empty* value disables the module (`Service=`).
+//! default.
 //!
 //! Unknown sections, unknown keys and malformed lines are ignored with a
 //! warning, mirroring systemd's `config_parse()`.
@@ -99,7 +110,21 @@ pub const ENV: &[(&str, &str)] = &[
 /// environment and command-line layers applied on top.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InitConfig {
-    values: HashMap<String, String>,
+    values: HashMap<String, Vec<String>>,
+}
+
+/// Split one assignment into its components.
+///
+/// Values are PATH-style lists (`executable:/dir.d:xxx`), so `:` separates
+/// entries.  Components are trimmed and empty ones are dropped: an empty
+/// value therefore yields an empty list, which disables the key's module.
+pub fn split_value(value: &str) -> Vec<String> {
+    value
+        .split(':')
+        .map(str::trim)
+        .filter(|component| !component.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 impl InitConfig {
@@ -115,9 +140,10 @@ impl InitConfig {
         config
     }
 
-    /// Overlay explicit assignments, overriding earlier values.  A later
+    /// Overlay explicit assignments, replacing earlier values.  A later
     /// `Key=Value` wins over an earlier one, so this is the command-line
-    /// layer (`--worker`, `--finder`).
+    /// layer (`--worker`, `--finder`); the value may itself be a PATH-style
+    /// `a:b` list.
     pub fn apply_pairs<I, K, V>(&mut self, pairs: I)
     where
         I: IntoIterator<Item = (K, V)>,
@@ -125,11 +151,13 @@ impl InitConfig {
         V: Into<String>,
     {
         for (key, value) in pairs {
-            self.values.insert(key.into(), value.into());
+            let value: String = value.into();
+            self.values.insert(key.into(), split_value(&value));
         }
     }
 
-    /// Overlay the `SYSTEMA_SYS*` environment variables.  An empty value is
+    /// Overlay the `SYSTEMA_SYS*` environment variables.  Each value is a
+    /// PATH-style list (`executable:/dir.d:xxx`); an empty value is
     /// preserved and disables the module, exactly like an empty file value.
     pub fn apply_env(&mut self) {
         self.apply_env_from(|name| std::env::var(name).ok());
@@ -143,8 +171,7 @@ impl InitConfig {
     {
         for (key, name) in ENV {
             if let Some(value) = lookup(name) {
-                self.values
-                    .insert((*key).to_string(), value.trim().to_string());
+                self.values.insert((*key).to_string(), split_value(&value));
             }
         }
     }
@@ -177,11 +204,13 @@ impl InitConfig {
         config
     }
 
-    /// The configured value of `key`, or `None` when the key is absent.
+    /// The configured values of `key`, or `None` when the key is absent.
     ///
-    /// `Some("")` means the module was explicitly disabled.
-    pub fn get(&self, key: &str) -> Option<&str> {
-        self.values.get(key).map(String::as_str)
+    /// `Some(&[])` means the module was explicitly disabled (an empty
+    /// `Key=`), while each element is one configured executable or
+    /// directory, in configuration order.
+    pub fn get_list(&self, key: &str) -> Option<&[String]> {
+        self.values.get(key).map(Vec::as_slice)
     }
 
     fn read_file(&mut self, path: &Path) {
@@ -231,7 +260,7 @@ impl InitConfig {
             return;
         }
 
-        let Some((key, value)) = line.split_once('=') else {
+        let Some((raw_key, value)) = line.split_once('=') else {
             warn!(
                 "{}:{line_no}: expected 'Key=Value', ignoring line",
                 path.display()
@@ -252,7 +281,11 @@ impl InitConfig {
             return;
         }
 
-        let key = key.trim();
+        let raw_key = raw_key.trim();
+        let (key, append) = match raw_key.strip_suffix('+') {
+            Some(key) => (key.trim(), true),
+            None => (raw_key, false),
+        };
         if !KEYS.contains(&key) {
             warn!(
                 "{}:{line_no}: unknown key '{key}', ignoring",
@@ -268,8 +301,20 @@ impl InitConfig {
             );
             return;
         }
-        self.values
-            .insert(key.to_string(), value.trim().to_string());
+        let parts = split_value(value);
+        if append {
+            // `Key+=Value`: append to what earlier files produced.
+            if !parts.is_empty() {
+                self.values
+                    .entry(key.to_string())
+                    .or_default()
+                    .extend(parts);
+            }
+        } else {
+            // `Key=Value` replaces the list; an empty value keeps the key
+            // present with no components, which disables the module.
+            self.values.insert(key.to_string(), parts);
+        }
     }
 }
 
@@ -299,6 +344,14 @@ mod tests {
         dir
     }
 
+    /// The configured list of `key` as `&str` values, for readable
+    /// assertions.
+    fn values<'a>(config: &'a InitConfig, key: &str) -> Option<Vec<&'a str>> {
+        config
+            .get_list(key)
+            .map(|list| list.iter().map(String::as_str).collect())
+    }
+
     #[test]
     fn missing_files_yield_an_empty_configuration() {
         let dir = temp_dir("missing");
@@ -323,10 +376,86 @@ mod tests {
         .unwrap();
 
         let config = InitConfig::load_from(&dir.join("init.conf"), &dir.join("init.conf.d"));
-        assert_eq!(config.get(KEY_ALLOCATOR), Some("systema-sysa"));
-        assert_eq!(config.get(KEY_SERVICE), Some("systema-syss"));
-        assert_eq!(config.get(KEY_DEVICE), Some(""));
-        assert_eq!(config.get(KEY_MOUNT), None);
+        assert_eq!(values(&config, KEY_ALLOCATOR), Some(vec!["systema-sysa"]));
+        assert_eq!(values(&config, KEY_SERVICE), Some(vec!["systema-syss"]));
+        // An empty value keeps the key present with an empty list, which
+        // disables the module.
+        assert_eq!(values(&config, KEY_DEVICE), Some(Vec::new()));
+        assert_eq!(values(&config, KEY_MOUNT), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn path_style_values_expand_to_a_list() {
+        let dir = temp_dir("path-style");
+        std::fs::write(
+            dir.join("init.conf"),
+            "[Workers]\nService=systema-syss:/opt/syss.d:systema-syss-helper\n",
+        )
+        .unwrap();
+
+        let config = InitConfig::load_from(&dir.join("init.conf"), &dir.join("init.conf.d"));
+        assert_eq!(
+            values(&config, KEY_SERVICE),
+            Some(vec!["systema-syss", "/opt/syss.d", "systema-syss-helper"])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn append_starts_from_earlier_assignments_or_an_empty_list() {
+        let dir = temp_dir("append");
+        let dropins = dir.join("init.conf.d");
+        std::fs::create_dir_all(&dropins).unwrap();
+        std::fs::write(
+            dir.join("init.conf"),
+            "[Workers]\nService=systema-syss\nDevice+=/opt/dev.d\nDevice+=/opt/extra\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dropins.join("10-service.conf"),
+            "[Workers]\nService+=/opt/syss-helper\n",
+        )
+        .unwrap();
+
+        let config = InitConfig::load_from(&dir.join("init.conf"), &dropins);
+        // Appends accumulate in configuration order, across drop-ins too.
+        assert_eq!(
+            values(&config, KEY_SERVICE),
+            Some(vec!["systema-syss", "/opt/syss-helper"])
+        );
+        // With no earlier assignment, an append starts from an empty list.
+        assert_eq!(
+            values(&config, KEY_DEVICE),
+            Some(vec!["/opt/dev.d", "/opt/extra"])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_later_replacement_resets_earlier_appends() {
+        let dir = temp_dir("append-reset");
+        std::fs::write(
+            dir.join("init.conf"),
+            "[Workers]\nService=systema-syss\nService+=/opt/extra\nDevice=/opt/a\nDevice=\n",
+        )
+        .unwrap();
+
+        let config = InitConfig::load_from(&dir.join("init.conf"), &dir.join("init.conf.d"));
+        assert_eq!(values(&config, KEY_DEVICE), Some(Vec::new()));
+        // A replacement after appends drops the appended entries.
+        assert_eq!(
+            values(&config, KEY_SERVICE),
+            Some(vec!["systema-syss", "/opt/extra"])
+        );
+
+        std::fs::write(
+            dir.join("init.conf"),
+            "[Workers]\nService=systema-syss\nService+=/opt/extra\nService=replaced\n",
+        )
+        .unwrap();
+        let config = InitConfig::load_from(&dir.join("init.conf"), &dir.join("init.conf.d"));
+        assert_eq!(values(&config, KEY_SERVICE), Some(vec!["replaced"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -350,9 +479,12 @@ mod tests {
         std::fs::write(dropins.join("30-ignored.conf.bak"), "[Init]\nFinder=\n").unwrap();
 
         let config = InitConfig::load_from(&dir.join("init.conf"), &dropins);
-        assert_eq!(config.get(KEY_SERVICE), Some("systema-syss.debug"));
-        assert_eq!(config.get(KEY_MOUNT), Some("none"));
-        assert_eq!(config.get(KEY_FINDER), None);
+        assert_eq!(
+            values(&config, KEY_SERVICE),
+            Some(vec!["systema-syss.debug"])
+        );
+        assert_eq!(values(&config, KEY_MOUNT), Some(vec!["none"]));
+        assert_eq!(config.get_list(KEY_FINDER), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -365,7 +497,7 @@ mod tests {
         std::fs::write(dropins.join("20-b.conf"), "[Init]\nFinder=second\n").unwrap();
 
         let config = InitConfig::load_from(&dir.join("absent.conf"), &dropins);
-        assert_eq!(config.get(KEY_FINDER), Some("second"));
+        assert_eq!(values(&config, KEY_FINDER), Some(vec!["second"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -385,9 +517,12 @@ mod tests {
         .unwrap();
 
         let config = InitConfig::load_from(&dir.join("init.conf"), &dir.join("init.conf.d"));
-        assert_eq!(config.get(KEY_SERVICE), None);
-        assert_eq!(config.get("Bogus"), None);
-        assert_eq!(config.get(KEY_FINDER), Some("systema-sysf.systemd"));
+        assert_eq!(config.get_list(KEY_SERVICE), None);
+        assert_eq!(config.get_list("Bogus"), None);
+        assert_eq!(
+            values(&config, KEY_FINDER),
+            Some(vec!["systema-sysf.systemd"])
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -397,7 +532,7 @@ mod tests {
         std::fs::write(dir.join("init.conf"), "Service=systema-syss\n").unwrap();
 
         let config = InitConfig::load_from(&dir.join("init.conf"), &dir.join("init.conf.d"));
-        assert_eq!(config.get(KEY_SERVICE), None);
+        assert_eq!(config.get_list(KEY_SERVICE), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -410,9 +545,23 @@ mod tests {
             _ => None,
         });
 
-        assert_eq!(config.get(KEY_SERVICE), Some("from-env"));
-        assert_eq!(config.get(KEY_DEVICE), Some(""));
-        assert_eq!(config.get(KEY_MOUNT), None);
+        assert_eq!(values(&config, KEY_SERVICE), Some(vec!["from-env"]));
+        assert_eq!(values(&config, KEY_DEVICE), Some(Vec::new()));
+        assert_eq!(values(&config, KEY_MOUNT), None);
+    }
+
+    #[test]
+    fn environment_accepts_path_style_lists() {
+        let mut config = InitConfig::default();
+        config.apply_env_from(|name| match name {
+            "SYSTEMA_SYSS" => Some("executable:/dir.d:xxx".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(
+            values(&config, KEY_SERVICE),
+            Some(vec!["executable", "/dir.d", "xxx"])
+        );
     }
 
     #[test]
@@ -421,8 +570,8 @@ mod tests {
         config.apply_env_from(|_| Some("from-env".to_string()));
         config.apply_pairs([(KEY_SERVICE, "from-cli"), (KEY_DEVICE, "")]);
 
-        assert_eq!(config.get(KEY_SERVICE), Some("from-cli"));
-        assert_eq!(config.get(KEY_DEVICE), Some(""));
-        assert_eq!(config.get(KEY_MOUNT), Some("from-env"));
+        assert_eq!(values(&config, KEY_SERVICE), Some(vec!["from-cli"]));
+        assert_eq!(values(&config, KEY_DEVICE), Some(Vec::new()));
+        assert_eq!(values(&config, KEY_MOUNT), Some(vec!["from-env"]));
     }
 }

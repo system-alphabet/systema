@@ -892,9 +892,22 @@ pub async fn run(
     let mut bootlog: Vec<String> = Vec::new();
 
     // --- Phase 1: System A, then wait for the notify connection. ---
-    let code = if let Some(rp) = allocator_specs.first() {
-        if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_target, extra_flags)
-        {
+    // Several allocator executables may be configured; they all start before
+    // the readiness wait (the connection is System A's own signal).
+    let code = if allocator_specs.is_empty() {
+        warn!("System A is not in the process set; skipping allocator readiness wait");
+        None
+    } else {
+        let mut spawn_failure = None;
+        for rp in &allocator_specs {
+            if let Some(code) =
+                spawn_process(rp, &mut procs, debug, log_level, log_target, extra_flags)
+            {
+                spawn_failure = Some(code);
+                break;
+            }
+        }
+        if let Some(code) = spawn_failure {
             Some(shutdown(&procs, code, grace).await)
         } else {
             wait_ready(
@@ -912,9 +925,6 @@ pub async fn run(
             )
             .await?
         }
-    } else {
-        warn!("System A is not in the process set; skipping allocator readiness wait");
-        None
     };
     if let Some(code) = code {
         notify.shutdown();
@@ -936,13 +946,23 @@ pub async fn run(
     }
 
     // --- Phase 2: workers, serially, each gated on WORKER_READY. ---
-    for rp in &workers {
+    // One module key may contribute several executables (a PATH-style list
+    // or a directory); readiness is awaited once per module, after the
+    // module's last executable was spawned, so appended helper processes that
+    // never report readiness cannot stall the boot.
+    for (index, rp) in workers.iter().enumerate() {
         if let Some(code) = spawn_process(rp, &mut procs, debug, log_level, log_target, extra_flags)
         {
             let code = shutdown(&procs, code, grace).await;
             notify.shutdown();
             drop(reaper);
             return Ok(code);
+        }
+        if workers
+            .get(index + 1)
+            .is_some_and(|next| next.spec.name == rp.spec.name)
+        {
+            continue;
         }
         let Some(worker_id) = rp.spec.worker_id else {
             continue;

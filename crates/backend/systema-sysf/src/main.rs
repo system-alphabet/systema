@@ -5,9 +5,11 @@
 //! file with the executable bit set, e.g. `systema-sysf.systemd` — and
 //! runs the selected ones in order (each stages its discovered units into
 //! the shared staging area), then commits the staging area into the active
-//! set.  The `--finder` selection may also name a directory: every
-//! executable directly inside it is run, sorted by file name.  The
-//! `commit` / `query` subcommands manage the staging area explicitly.
+//! set.  Each `--finder` selection may name a file name, a file path, or a
+//! directory (every executable directly inside it is run, sorted by file
+//! name); the flag may be repeated, and `:` separates values within one
+//! occurrence.  The `commit` / `query` subcommands manage the staging area
+//! explicitly.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -49,9 +51,10 @@ struct Args {
 
     #[arg(
         long,
-        help = "Run only the selected finders: a file name, a file path, or a directory (default: every finder found)"
+        value_delimiter = ':',
+        help = "Run only the selected finders: file names, file paths, or directories; may be repeated and ':' separates values (default: every finder found)"
     )]
-    finder: Option<String>,
+    finder: Vec<String>,
 
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
@@ -104,7 +107,7 @@ async fn main() -> Result<()> {
             })
             .mut_arg("finder", |a| {
                 a.help(sysa::l10n::t_(
-                    "Run only the selected finders: a file name, a file path, or a directory (default: every finder found).",
+                    "Run only the selected finders: file names, file paths, or directories; may be repeated and ':' separates values (default: every finder found).",
                 ))
             })
             .mut_subcommand("commit", |cmd| {
@@ -144,28 +147,39 @@ async fn main() -> Result<()> {
     match args.command {
         Some(Command::Commit) => run_commit(&args.name).await,
         Some(Command::Query) => run_query(&args.name).await,
-        Some(Command::DaemonReload) => run_daemon_reload(&args.name, args.finder.as_deref()).await,
-        None => run_finders(&args.name, args.finder.as_deref()).await,
+        Some(Command::DaemonReload) => run_daemon_reload(&args.name, &args.finder).await,
+        None => run_finders(&args.name, &args.finder).await,
     }
 }
 
 /// Scan the finder search paths for finder executables.
 ///
-/// `filter` may be:
-/// - `None`: every finder in every search path;
+/// `filters` holds one entry per `--finder` value (a `:`-delimited list is
+/// split by the argument parser).  Each entry selects, in order:
 /// - a bare file name (`systema-sysf.systemd`): only files with that name,
 ///   in search-path order;
 /// - a file path: that one executable;
 /// - a directory path: every executable directly inside it (non-recursive),
 ///   sorted by file name.
-fn discover_finders(filter: Option<&str>) -> Vec<PathBuf> {
-    discover_finders_in(&paths::instance().finder_search_paths, filter)
+///
+/// No filters at all means every finder in every search path.
+fn discover_finders(filters: &[String]) -> Vec<PathBuf> {
+    discover_finders_in(&paths::instance().finder_search_paths, filters)
 }
 
-fn discover_finders_in(dirs: &[String], filter: Option<&str>) -> Vec<PathBuf> {
-    let Some(filter) = filter else {
+fn discover_finders_in(dirs: &[String], filters: &[String]) -> Vec<PathBuf> {
+    if filters.is_empty() {
         return finders_in_search_paths(dirs);
-    };
+    }
+    let mut out = Vec::new();
+    for filter in filters {
+        out.extend(discover_one(dirs, filter));
+    }
+    out
+}
+
+/// One `--finder` selection.
+fn discover_one(dirs: &[String], filter: &str) -> Vec<PathBuf> {
     let direct = Path::new(filter);
     if direct.is_dir() {
         return executables_in_dir(direct);
@@ -241,15 +255,15 @@ fn is_executable(path: &Path) -> bool {
 /// so all of them stage into the same UID-bound staging area.  A failing
 /// finder does not stop the others; the commit runs after every finder has
 /// exited.
-async fn run_finders(name: &str, filter: Option<&str>) -> Result<()> {
+async fn run_finders(name: &str, filters: &[String]) -> Result<()> {
     info!("System F running finder executables (name='{name}')");
 
-    let finders = discover_finders(filter);
+    let finders = discover_finders(filters);
     if finders.is_empty() {
-        if let Some(filter) = filter {
+        if !filters.is_empty() {
             anyhow::bail!(sysa::l10n::fmt(
                 sysa::l10n::t_("Finder '{name}' not found."),
-                &[("name", filter)]
+                &[("name", &filters.join(", "))]
             ));
         }
         warn!("No finder executables found in finder search paths");
@@ -353,7 +367,7 @@ async fn run_query(name: &str) -> Result<()> {
 ///
 /// The socket file lives in `/run` (tmpfs) and is removed when this
 /// function returns (on SIGTERM / signal-driven shutdown from SysI).
-async fn run_daemon_reload(name: &str, finder: Option<&str>) -> Result<()> {
+async fn run_daemon_reload(name: &str, finder: &[String]) -> Result<()> {
     let socket_path = paths::instance().reload_socket;
     let socket_path_owned = std::path::PathBuf::from(socket_path);
 
@@ -392,7 +406,7 @@ async fn run_daemon_reload(name: &str, finder: Option<&str>) -> Result<()> {
 async fn run_daemon_reload_loop(
     listener: &tokio::net::UnixListener,
     name: &str,
-    finder: Option<&str>,
+    finder: &[String],
 ) -> Result<()> {
     loop {
         let (mut stream, addr) = match listener.accept().await {
@@ -461,14 +475,49 @@ mod tests {
         }
         let dirs = vec![dir.to_string_lossy().into_owned()];
 
-        assert_eq!(discover_finders_in(&dirs, None).len(), 2);
+        assert_eq!(discover_finders_in(&dirs, &[]).len(), 2);
         assert_eq!(
-            discover_finders_in(&dirs, Some("b-finder")),
+            discover_finders_in(&dirs, &["b-finder".to_string()]),
             vec![dir.join("b-finder")]
         );
-        assert!(discover_finders_in(&dirs, Some("missing")).is_empty());
+        assert!(discover_finders_in(&dirs, &["missing".to_string()]).is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn several_filters_run_in_selection_order() {
+        let first = temp_dir("multi-first");
+        let second = temp_dir("multi-second");
+        for dir in [&first, &second] {
+            let path = dir.join("finder");
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let dirs = vec![
+            first.to_string_lossy().into_owned(),
+            second.to_string_lossy().into_owned(),
+        ];
+
+        assert_eq!(
+            discover_finders_in(&dirs, &["finder".to_string()]),
+            vec![first.join("finder"), second.join("finder")]
+        );
+        // Two selections concatenate in the order they were configured.
+        assert_eq!(
+            discover_finders_in(
+                &dirs,
+                &[second.to_string_lossy().into_owned(), "finder".to_string()]
+            ),
+            vec![
+                second.join("finder"),
+                first.join("finder"),
+                second.join("finder")
+            ]
+        );
+
+        let _ = std::fs::remove_dir_all(&first);
+        let _ = std::fs::remove_dir_all(&second);
     }
 
     #[test]
@@ -488,7 +537,7 @@ mod tests {
         // Within the filter the first search path wins, matching how a
         // finder name shadows a lower-priority copy.
         assert_eq!(
-            discover_finders_in(&dirs, Some("finder")),
+            discover_finders_in(&dirs, &["finder".to_string()]),
             vec![first.join("finder"), second.join("finder")]
         );
 
@@ -513,7 +562,7 @@ mod tests {
         std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         assert_eq!(
-            discover_finders_in(&[], Some(dir.to_str().unwrap())),
+            discover_finders_in(&[], &[dir.to_str().unwrap().to_string()]),
             vec![dir.join("first"), dir.join("second")]
         );
 
@@ -528,7 +577,7 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         assert_eq!(
-            discover_finders_in(&[], Some(path.to_str().unwrap())),
+            discover_finders_in(&[], &[path.to_str().unwrap().to_string()]),
             vec![path.clone()]
         );
 
