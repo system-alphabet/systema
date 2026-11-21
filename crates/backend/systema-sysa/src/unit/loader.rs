@@ -62,6 +62,62 @@ pub fn inject_default_dependencies(allocator: AllocatorHandle) {
         }
     }
 
+    // Pass 1b: target-side implicit ordering
+    // (`target_add_default_dependencies()` → `unit_add_default_target_dependency()`
+    // in systemd's target.c/unit.c).  A target runs after the units it pulls
+    // in via Requires=/Requisite=/Wants=/BindsTo=/Upholds=/PartOf=, as long as
+    // neither side disabled default dependencies.
+    //
+    // When the member is already ordered towards the target (an explicit
+    // `Before=` on the member, or an `After=` on the target — which covers the
+    // `After=` edges pass 1 just injected on services), the ordering edge
+    // already exists and the duplicate is skipped.  This is systemd's
+    // `unit_has_dependency(target, BEFORE, u)` loop guard; it also keeps
+    // membership edges (`foo.socket Before=sockets.target`) as the plain
+    // `Before=` edges they are, which the scheduler's socket-activation
+    // extension must not resolve to the socket's service (that would close
+    // `basic.target -> sockets.target -> foo.service -> basic.target`).
+    let mut target_edges: Vec<(String, String)> = Vec::new();
+    {
+        let state = allocator.read();
+        for name in &names {
+            let Some(target) = state.units.get(name) else {
+                continue;
+            };
+            if target.kind != crate::unit::types::UnitKind::Target
+                || !target.unit.default_dependencies
+            {
+                continue;
+            }
+            for member in default_target_members(target) {
+                if &member == name {
+                    continue;
+                }
+                let Some(member_unit) = state.units.get(&member) else {
+                    continue;
+                };
+                if !member_unit.unit.default_dependencies {
+                    continue;
+                }
+                if target.unit.before.contains(&member)
+                    || member_unit.unit.before.contains(name)
+                    || member_unit.unit.after.contains(name)
+                {
+                    continue;
+                }
+                target_edges.push((name.clone(), member));
+            }
+        }
+    }
+    {
+        let mut state = allocator.write();
+        for (target_name, member) in target_edges {
+            if let Some(target) = state.units.get_mut(&target_name) {
+                target.unit.after.insert(member);
+            }
+        }
+    }
+
     // Pass 2: mount-point cross references.  These are file-level
     // dependencies in systemd and are NOT gated on DefaultDependencies=.
     // Compute all edges from an immutable snapshot, then apply them.
@@ -106,6 +162,23 @@ enum MountDep {
     Requires,
     Wants,
     After,
+}
+
+/// Dependency fields systemd queues for target-side ordering
+/// (`UNIT_ATOM_ADD_DEFAULT_TARGET_DEPENDENCY_QUEUE` in
+/// `unit-dependency-atom.c`): `Requires=`, `Requisite=`, `Wants=`, `BindsTo=`,
+/// `Upholds=` and `PartOf=`.
+fn default_target_members(unit: &UnitFile) -> Vec<String> {
+    unit.unit
+        .requires
+        .iter()
+        .chain(unit.unit.requisite.iter())
+        .chain(unit.unit.wants.iter())
+        .chain(unit.unit.binds_to.iter())
+        .chain(unit.unit.upholds.iter())
+        .chain(unit.unit.part_of.iter())
+        .cloned()
+        .collect()
 }
 
 /// Add a single default dependency, but only if the target unit exists in
@@ -626,6 +699,140 @@ mod tests {
         assert!(sshd.unit.requires.is_empty());
         assert!(sshd.unit.before.is_empty());
         assert!(sshd.unit.conflicts.is_empty());
+    }
+
+    #[test]
+    fn test_target_ordering_after_wanted_member() {
+        // systemd's `target_add_default_dependencies()`: a target runs after
+        // every unit it pulls in (`WantedBy=` on the member becomes
+        // `Wants=` on the target).
+        let mut multi = target("multi-user.target");
+        multi
+            .unit
+            .wants
+            .insert("plymouth-quit-wait.service".to_string());
+        let units = run_injection(vec![multi, service("plymouth-quit-wait.service")]);
+        assert!(units["multi-user.target"]
+            .unit
+            .after
+            .contains("plymouth-quit-wait.service"));
+    }
+
+    #[test]
+    fn test_target_ordering_covers_all_queue_dependencies() {
+        let members = [
+            "req.service",
+            "reqsite.service",
+            "wants.service",
+            "binds.service",
+            "upholds.service",
+            "partof.service",
+        ];
+        let mut multi = target("multi-user.target");
+        multi.unit.requires.insert(members[0].to_string());
+        multi.unit.requisite.insert(members[1].to_string());
+        multi.unit.wants.insert(members[2].to_string());
+        multi.unit.binds_to.insert(members[3].to_string());
+        multi.unit.upholds.insert(members[4].to_string());
+        multi.unit.part_of.insert(members[5].to_string());
+        let mut units = vec![multi];
+        for name in members {
+            units.push(service(name));
+        }
+        let units = run_injection(units);
+        for name in members {
+            assert!(
+                units["multi-user.target"].unit.after.contains(name),
+                "missing ordering edge for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_target_ordering_skips_units_without_default_dependencies() {
+        let mut multi = target("multi-user.target");
+        multi.unit.wants.insert("plain.service".to_string());
+        let mut plain = service("plain.service");
+        plain.unit.default_dependencies = false;
+        let units = run_injection(vec![multi, plain]);
+        assert!(!units["multi-user.target"]
+            .unit
+            .after
+            .contains("plain.service"));
+    }
+
+    #[test]
+    fn test_target_ordering_skips_when_target_disabled_them() {
+        let mut multi = target("multi-user.target");
+        multi.unit.default_dependencies = false;
+        multi.unit.wants.insert("plain.service".to_string());
+        let units = run_injection(vec![multi, service("plain.service")]);
+        assert!(!units["multi-user.target"]
+            .unit
+            .after
+            .contains("plain.service"));
+    }
+
+    #[test]
+    fn test_target_ordering_skips_missing_members() {
+        let mut multi = target("multi-user.target");
+        multi.unit.wants.insert("not-loaded.service".to_string());
+        let units = run_injection(vec![multi]);
+        assert!(!units["multi-user.target"]
+            .unit
+            .after
+            .contains("not-loaded.service"));
+    }
+
+    #[test]
+    fn test_target_ordering_skips_reverse_ordering() {
+        // The member is explicitly ordered after the target: adding the
+        // reverse edge would be an ordering cycle (systemd's
+        // `unit_has_dependency(target, BEFORE, u)` guard).
+        let mut multi = target("multi-user.target");
+        multi.unit.wants.insert("early.service".to_string());
+        let mut early = service("early.service");
+        early.unit.after.insert("multi-user.target".to_string());
+        let units = run_injection(vec![multi, early]);
+        assert!(!units["multi-user.target"]
+            .unit
+            .after
+            .contains("early.service"));
+        assert!(units["early.service"]
+            .unit
+            .after
+            .contains("multi-user.target"));
+    }
+
+    #[test]
+    fn test_target_ordering_skips_members_already_ordered_before_the_target() {
+        // Pass 1 makes every socket `Before=sockets.target`; that edge already
+        // orders the target after its member.  Adding an explicit `After=`
+        // would make the scheduler resolve the membership edge to the
+        // socket's activated service and close an ordering cycle
+        // (basic.target -> sockets.target -> foo.service -> basic.target).
+        let mut sockets = target("sockets.target");
+        sockets.unit.wants.insert("foo.socket".to_string());
+        let units = run_injection(vec![sockets, UnitFile::new("foo.socket")]);
+        assert!(units["foo.socket"].unit.before.contains("sockets.target"));
+        assert!(!units["sockets.target"].unit.after.contains("foo.socket"));
+    }
+
+    #[test]
+    fn test_target_ordering_does_not_cycle_with_injected_defaults() {
+        // Pass 1 ordered the service after sysinit.target; the target-side
+        // pass must therefore not order sysinit.target after the service.
+        let mut sysinit = target("sysinit.target");
+        sysinit.unit.wants.insert("worker.service".to_string());
+        let units = run_injection(vec![sysinit, service("worker.service")]);
+        assert!(units["worker.service"]
+            .unit
+            .after
+            .contains("sysinit.target"));
+        assert!(!units["sysinit.target"]
+            .unit
+            .after
+            .contains("worker.service"));
     }
 
     #[test]
