@@ -1,5 +1,5 @@
 [package]
-name = "libsystema-shared"
+name = "libsystema-shared-rs"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

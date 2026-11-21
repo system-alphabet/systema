@@ -22,23 +22,23 @@ changes do **not** need to be written back into these docs.
 
 ## Workspace gotchas
 - **Directory name ≠ package name**: `crates/libsysa` is package **`sysa`**;
-  `crates/libsystema-sysa` and `crates/libsystema-shared` keep their own
+  `crates/libsystema-sysa` and `lib/libsystema-shared-rs` keep their own
   names. `cargo test -p libsysa` fails with "did not match any packages" —
-  always target packages `sysa`/`libsystema-sysa`/`libsystema-shared` etc.
+  always target packages `sysa`/`libsystema-sysa`/`libsystema-shared-rs` etc.
 - The IPC layer is two crates, with the dependency direction strictly
-  **shared → nothing, sysa → shared**: **`libsystema-shared`** owns the wire
+  **shared → nothing, sysa → shared**: **`libsystema-shared-rs`** owns the wire
   contract (proto, framing, version constants, IR, error codes), the
   `UnitStatus` model and the worker-side runtime/clients (`WorkerIpc`,
   `UnitController`, finder, staging/unit-state admin); **`libsystema-sysa`**
   depends on it and adds only the server-side handshake helpers
   (`version_request_from`, `version_verdict`, `version_result_envelope`,
   `gate_session_first`).  `libsysa` re-exports both
-  (`pub use libsystema_shared::{…}` / `pub use libsystema_sysa::ipc`)
+  (`pub use libsystema_shared_rs::{…}` / `pub use libsystema_sysa::ipc`)
   precisely so every consumer keeps the old `sysa::ipc`/`sysa::proto`/
   `sysa::worker_ipc` paths. Never move modules without preserving
-  re-exports.  `libsystema-shared` must never depend on `libsystema-sysa`.
+  re-exports.  `libsystema-shared-rs` must never depend on `libsystema-sysa`.
 - All proto Rust types are generated into `OUT_DIR` at build time by
-  `crates/libsystema-shared/build.rs`. **Edit `proto/*.proto` only**; never
+  `lib/libsystema-shared-rs/build.rs`. **Edit `proto/*.proto` only**; never
   commit generated files. `libsysa/build.rs` emits build info, bakes the
   compile-time path defaults and compiles `.po` → `.mo`.
 - `libsysa/build.rs` bakes default filesystem paths from env vars at build
@@ -74,7 +74,8 @@ changes do **not** need to be written back into these docs.
   implementation on other targets. A bare unconditional `libc`/`nix`
   dependency breaks the FreeBSD/OpenBSD/Android matrix.
 - Worker lifecycle (reconnect+backoff, graceful `worker.exit`
-  handshake) lives **inside** `WorkerIpc::run()` in `libsystema-shared`, but the
+  handshake) lives **inside** `WorkerIpc::run()` in
+  `libsystema-shared-rs`, but the
   loop watches **no** process signals: a caller asks it to leave through
   `WorkerIpc::shutdown(reason)` / a `ShutdownHandle`, and the loop exits
   at a loop boundary (cleanup on the still-open connection, then the
@@ -120,12 +121,12 @@ changes do **not** need to be written back into these docs.
   workers stay zbus-free (syss may use D-Bus as a *client* only).
 
 ## Tests
-- Per package: `cargo test -p libsystema-shared` / `-p libsystema-sysa`;
+- Per package: `cargo test -p libsystema-shared-rs` / `-p libsystema-sysa`;
   single test: `cargo test -p <package> <name>`. Unit tests are colocated
   `mod tests` with `#[tokio::test]`; integration tests in `crates/*/tests/`.
 - Worker-IPC tests run against a fake System A at a test-only socket path
   (injection via `#[cfg(test)]` in
-  `libsystema-shared/src/worker_ipc.rs`) — no root, no
+  `lib/libsystema-shared-rs/src/worker_ipc.rs`) — no root, no
   `/run` sockets, fast on Linux.
 - Actually running daemons needs root for `/run/systema` sockets; the
   user-domain instance is `systema-sysu --login` with all sockets under

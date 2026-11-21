@@ -1,6 +1,6 @@
 //! Common library shared by System A and all System Workers.
 //!
-//! The IPC layer is split into two crates: `libsystema-shared` owns the wire
+//! The IPC layer is split into two crates: `libsystema-shared-rs` owns the wire
 //! contract (protobuf types, framing, IR, error codes), the `UnitStatus`
 //! model and the worker-side runtime/clients; `libsystema-sysa` depends on it
 //! and adds only the server-side handshake gate.  Both are re-exported here
@@ -19,7 +19,7 @@
 //! - The gettext/gettext wiring and the English msgid helpers (`l10n`)
 //! - Localized rendering of the IPC kernel's error codes (`errors`)
 
-pub use libsystema_shared::{
+pub use libsystema_shared_rs::{
     controller, error_code, finder, ir, proto, staging_admin, unitstate_admin, worker_ipc,
 };
 pub use libsystema_sysa::ipc;

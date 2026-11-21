@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-libsystema-shared = { path = "../libsystema-shared" }
+libsystema-shared-rs = { path = "../../lib/libsystema-shared-rs" }
 anyhow.workspace = true
 prost.workspace = true
 tracing.workspace = true

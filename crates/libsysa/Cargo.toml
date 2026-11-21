@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 libsystema-sysa = { path = "../libsystema-sysa" }
-libsystema-shared = { path = "../libsystema-shared" }
+libsystema-shared-rs = { path = "../../lib/libsystema-shared-rs" }
 async-trait.workspace = true
 bytes.workspace = true
 tokio.workspace = true
