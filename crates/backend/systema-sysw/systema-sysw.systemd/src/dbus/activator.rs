@@ -262,7 +262,12 @@ mod tests {
                 .unwrap(),
         );
         let mirror: MirrorHandle = Arc::new(parking_lot::RwLock::new(UnitMirror::new()));
-        let ctx = BridgeContext::new(mirror, client, None);
+        let ctx = BridgeContext::new(
+            mirror,
+            client,
+            None,
+            crate::service_install::ServiceInstallFallback::Auto,
+        );
         (ctx, seen)
     }
 

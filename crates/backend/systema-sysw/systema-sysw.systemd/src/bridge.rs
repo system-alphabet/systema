@@ -155,12 +155,15 @@ async fn event_loop(ctx: Arc<dbus::BridgeContext>, mut rx: mpsc::UnboundedReceiv
 /// Run the bridge: connect to the control plane, prime the mirror, serve
 /// D-Bus on `bus_address` (the system bus when `None`), and keep the mirror
 /// fresh until the session dies (returning so the caller can reconnect).
-pub async fn run(bus_address: Option<zbus::Address>) -> Result<()> {
+pub async fn run(
+    bus_address: Option<zbus::Address>,
+    install_fallback: crate::service_install::ServiceInstallFallback,
+) -> Result<()> {
     let flavor = "systemd";
     let client = Arc::new(ControlClient::connect(flavor, Some("system-w-1")).await?);
 
     let mirror: MirrorHandle = Arc::new(parking_lot::RwLock::new(UnitMirror::new()));
-    let ctx = dbus::BridgeContext::new(mirror, client.clone(), bus_address);
+    let ctx = dbus::BridgeContext::new(mirror, client.clone(), bus_address, install_fallback);
 
     seed(&ctx).await?;
 
@@ -328,7 +331,12 @@ mod tests {
                 .unwrap(),
         );
         let mirror: MirrorHandle = Arc::new(parking_lot::RwLock::new(UnitMirror::new()));
-        let ctx = BridgeContext::new(mirror, client.clone(), None);
+        let ctx = BridgeContext::new(
+            mirror,
+            client.clone(),
+            None,
+            crate::service_install::ServiceInstallFallback::Auto,
+        );
 
         // Forward pushed control events into the event loop, exactly like
         // `run()` does.

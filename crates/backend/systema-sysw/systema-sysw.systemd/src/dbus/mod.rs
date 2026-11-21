@@ -59,6 +59,8 @@ pub struct BridgeContext {
     /// The bus to serve on: `--bus-address` when the launcher passes one,
     /// zbus's system-bus default otherwise (plan 备注 11).
     pub bus_address: Option<zbus::Address>,
+    /// How enable/disable/mask/... reach the unit-file set.
+    pub install_fallback: crate::service_install::ServiceInstallFallback,
 }
 
 impl BridgeContext {
@@ -66,12 +68,14 @@ impl BridgeContext {
         mirror: MirrorHandle,
         client: Arc<ControlClient>,
         bus_address: Option<zbus::Address>,
+        install_fallback: crate::service_install::ServiceInstallFallback,
     ) -> Arc<Self> {
         Arc::new(Self {
             mirror,
             client,
             conn: Arc::new(OnceCell::new()),
             bus_address,
+            install_fallback,
         })
     }
 }

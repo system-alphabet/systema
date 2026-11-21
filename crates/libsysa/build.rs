@@ -168,6 +168,7 @@ fn generate_paths() {
             "/usr/local/lib/systema",
             "/usr/lib/systema",
             "/etc/systemd/system",
+            "/run/systemd/system",
             "/usr/lib/systemd/system",
             "/lib/systemd/system",
         ],

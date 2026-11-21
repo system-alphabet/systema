@@ -15,6 +15,7 @@ use zbus::interface;
 use zbus::{OwnedObjectPath, OwnedVariant as OwnedValue};
 
 use super::BridgeContext;
+use crate::service_install::{self, Verb};
 
 use sysa::proto::{
     EnqueueJobRequest, EnqueueJobResult, LoadUnitRequest, LoadUnitResult, RefUnitRequest,
@@ -84,6 +85,33 @@ pub fn unit_object_path(name: &str) -> OwnedObjectPath {
 pub fn job_object_path(job_id: u64) -> OwnedObjectPath {
     OwnedObjectPath::try_from(format!("/org/freedesktop/systemd1/job/{}", job_id))
         .expect("valid job path")
+}
+
+/// systemd's public `UnitFileFlags` bits.
+const UNIT_FILE_RUNTIME: u64 = 1 << 0;
+const UNIT_FILE_FORCE: u64 = 1 << 1;
+const UNIT_FILE_PORTABLE: u64 = 1 << 2;
+const UNIT_FILE_FLAGS_MASK_PUBLIC: u64 = UNIT_FILE_RUNTIME | UNIT_FILE_FORCE | UNIT_FILE_PORTABLE;
+
+/// Decode the `WithFlags` variants' bitmask into `(runtime, force)`.
+fn parse_install_flags(flags: u64, allow_force: bool) -> zbus::fdo::Result<(bool, bool)> {
+    if flags & !UNIT_FILE_FLAGS_MASK_PUBLIC != 0 {
+        return Err(zbus::fdo::Error::InvalidArgs(sysa::l10n::t_(
+            "Invalid unit file flags.",
+        )));
+    }
+    if flags & UNIT_FILE_PORTABLE != 0 {
+        return Err(zbus::fdo::Error::NotSupported(sysa::l10n::t_(
+            "Portable unit files are not supported.",
+        )));
+    }
+    let force = flags & UNIT_FILE_FORCE != 0;
+    if force && !allow_force {
+        return Err(zbus::fdo::Error::InvalidArgs(sysa::l10n::t_(
+            "The force flag is not accepted here.",
+        )));
+    }
+    Ok((flags & UNIT_FILE_RUNTIME != 0, force))
 }
 
 /// Validate a job-mode string locally (the allocator enforces it too, but
@@ -510,6 +538,36 @@ impl ManagerInterface {
         let bus_name = zbus::names::BusName::try_from(sender).ok()?;
         proxy.get_connection_unix_process_id(bus_name).await.ok()
     }
+
+    /// Execute an install verb and emit `UnitFilesChanged` afterwards.
+    async fn install_op(
+        &self,
+        verb: Verb,
+        names: Vec<String>,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<service_install::Outcome> {
+        let outcome = service_install::run(self.ctx.install_fallback, verb, names, runtime, force)
+            .await
+            .map_err(zbus::fdo::Error::Failed)?;
+        // `get-default` is the only read-only verb, and it alone fills
+        // `default_target`.
+        if outcome.default_target.is_none() {
+            self.emit_unit_files_changed().await;
+        }
+        Ok(outcome)
+    }
+
+    async fn emit_unit_files_changed(&self) {
+        let Some(conn) = super::connection(&self.ctx) else {
+            return;
+        };
+        if let Ok(signal_ctx) =
+            zbus::object_server::SignalEmitter::new(conn, "/org/freedesktop/systemd1")
+        {
+            let _ = ManagerInterface::unit_files_changed(&signal_ctx).await;
+        }
+    }
 }
 
 #[interface(name = "org.freedesktop.systemd1.Manager")]
@@ -544,6 +602,11 @@ impl ManagerInterface {
 
     #[zbus(signal)]
     pub async fn reloading(ctxt: &zbus::object_server::SignalEmitter<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    pub async fn unit_files_changed(
+        ctxt: &zbus::object_server::SignalEmitter<'_>,
+    ) -> zbus::Result<()>;
 
     // ------------------------------------------------------------------
     // Unit lookup methods
@@ -1117,6 +1180,254 @@ impl ManagerInterface {
     async fn unsubscribe(&self) -> zbus::fdo::Result<()> {
         debug!("D-Bus Unsubscribe (no-op)");
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Unit-file installation (enable/disable/mask/...)
+    // ------------------------------------------------------------------
+
+    async fn enable_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<(bool, Vec<(String, String, String)>)> {
+        debug!(
+            "D-Bus EnableUnitFiles: files={:?} runtime={} force={}",
+            files, runtime, force
+        );
+        let outcome = self.install_op(Verb::Enable, files, runtime, force).await?;
+        Ok((
+            outcome.carries_install_info.unwrap_or(true),
+            outcome.changes,
+        ))
+    }
+
+    async fn enable_unit_files_with_flags(
+        &self,
+        files: Vec<String>,
+        flags: u64,
+    ) -> zbus::fdo::Result<(bool, Vec<(String, String, String)>)> {
+        let (runtime, force) = parse_install_flags(flags, true)?;
+        debug!(
+            "D-Bus EnableUnitFilesWithFlags: files={:?} flags={}",
+            files, flags
+        );
+        let outcome = self.install_op(Verb::Enable, files, runtime, force).await?;
+        Ok((
+            outcome.carries_install_info.unwrap_or(true),
+            outcome.changes,
+        ))
+    }
+
+    async fn disable_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!(
+            "D-Bus DisableUnitFiles: files={:?} runtime={}",
+            files, runtime
+        );
+        let outcome = self
+            .install_op(
+                Verb::Disable {
+                    install_info: false,
+                },
+                files,
+                runtime,
+                false,
+            )
+            .await?;
+        Ok(outcome.changes)
+    }
+
+    async fn disable_unit_files_with_flags(
+        &self,
+        files: Vec<String>,
+        flags: u64,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        let (runtime, _) = parse_install_flags(flags, false)?;
+        debug!(
+            "D-Bus DisableUnitFilesWithFlags: files={:?} flags={}",
+            files, flags
+        );
+        let outcome = self
+            .install_op(
+                Verb::Disable {
+                    install_info: false,
+                },
+                files,
+                runtime,
+                false,
+            )
+            .await?;
+        Ok(outcome.changes)
+    }
+
+    async fn disable_unit_files_with_flags_and_install_info(
+        &self,
+        files: Vec<String>,
+        flags: u64,
+    ) -> zbus::fdo::Result<(bool, Vec<(String, String, String)>)> {
+        let (runtime, _) = parse_install_flags(flags, false)?;
+        debug!(
+            "D-Bus DisableUnitFilesWithFlagsAndInstallInfo: files={:?} flags={}",
+            files, flags
+        );
+        let outcome = self
+            .install_op(Verb::Disable { install_info: true }, files, runtime, false)
+            .await?;
+        Ok((
+            outcome.carries_install_info.unwrap_or(true),
+            outcome.changes,
+        ))
+    }
+
+    async fn reenable_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<(bool, Vec<(String, String, String)>)> {
+        debug!(
+            "D-Bus ReenableUnitFiles: files={:?} runtime={} force={}",
+            files, runtime, force
+        );
+        let outcome = self
+            .install_op(Verb::Reenable, files, runtime, force)
+            .await?;
+        Ok((
+            outcome.carries_install_info.unwrap_or(true),
+            outcome.changes,
+        ))
+    }
+
+    async fn link_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!(
+            "D-Bus LinkUnitFiles: files={:?} runtime={} force={}",
+            files, runtime, force
+        );
+        let outcome = self.install_op(Verb::Link, files, runtime, force).await?;
+        Ok(outcome.changes)
+    }
+
+    async fn mask_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!(
+            "D-Bus MaskUnitFiles: files={:?} runtime={} force={}",
+            files, runtime, force
+        );
+        let outcome = self.install_op(Verb::Mask, files, runtime, force).await?;
+        Ok(outcome.changes)
+    }
+
+    async fn unmask_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!(
+            "D-Bus UnmaskUnitFiles: files={:?} runtime={}",
+            files, runtime
+        );
+        let outcome = self.install_op(Verb::Unmask, files, runtime, false).await?;
+        Ok(outcome.changes)
+    }
+
+    async fn revert_unit_files(
+        &self,
+        files: Vec<String>,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!("D-Bus RevertUnitFiles: files={:?}", files);
+        let outcome = self.install_op(Verb::Revert, files, false, false).await?;
+        Ok(outcome.changes)
+    }
+
+    async fn preset_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<(bool, Vec<(String, String, String)>)> {
+        debug!(
+            "D-Bus PresetUnitFiles: files={:?} runtime={} force={}",
+            files, runtime, force
+        );
+        let outcome = self
+            .install_op(Verb::Preset(None), files, runtime, force)
+            .await?;
+        Ok((
+            outcome.carries_install_info.unwrap_or(true),
+            outcome.changes,
+        ))
+    }
+
+    async fn preset_unit_files_with_mode(
+        &self,
+        files: Vec<String>,
+        mode: String,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<(bool, Vec<(String, String, String)>)> {
+        debug!(
+            "D-Bus PresetUnitFilesWithMode: files={:?} mode={} runtime={} force={}",
+            files, mode, runtime, force
+        );
+        let outcome = self
+            .install_op(Verb::Preset(Some(mode)), files, runtime, force)
+            .await?;
+        Ok((
+            outcome.carries_install_info.unwrap_or(true),
+            outcome.changes,
+        ))
+    }
+
+    async fn preset_all_unit_files(
+        &self,
+        mode: String,
+        runtime: bool,
+        force: bool,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!(
+            "D-Bus PresetAllUnitFiles: mode={} runtime={} force={}",
+            mode, runtime, force
+        );
+        let outcome = self
+            .install_op(Verb::PresetAll(mode), Vec::new(), runtime, force)
+            .await?;
+        Ok(outcome.changes)
+    }
+
+    async fn set_default_target(
+        &self,
+        name: String,
+        force: bool,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!("D-Bus SetDefaultTarget: name={} force={}", name, force);
+        let outcome = self
+            .install_op(Verb::SetDefault, vec![name], false, force)
+            .await?;
+        Ok(outcome.changes)
+    }
+
+    async fn get_default_target(&self) -> zbus::fdo::Result<String> {
+        debug!("D-Bus GetDefaultTarget");
+        let outcome = self
+            .install_op(Verb::GetDefault, Vec::new(), false, false)
+            .await?;
+        Ok(outcome
+            .default_target
+            .unwrap_or_else(|| "default.target".to_string()))
     }
 
     // ------------------------------------------------------------------

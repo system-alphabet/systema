@@ -9,7 +9,9 @@
 mod bridge;
 mod dbus;
 mod file_state;
+mod install;
 mod mirror;
+mod service_install;
 
 use anyhow::Result;
 use clap::Parser;
@@ -38,6 +40,13 @@ struct Args {
 
     #[arg(long, help = "D-Bus address to use (default: the system bus)")]
     bus_address: Option<String>,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "How to install units for enable/disable/mask/... (auto, always, never)"
+    )]
+    service_install_fallback: Option<service_install::ServiceInstallFallback>,
 
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
@@ -144,13 +153,14 @@ async fn main() -> Result<()> {
 
     // Reconnect loop: keep serving D-Bus across control-session restarts.
     // A SIGTERM/SIGINT request (from System Init or a console) ends it.
+    let install_fallback = resolve_install_fallback(args.service_install_fallback);
     loop {
         let result = tokio::select! {
             biased;
             _sig = sysa::signals::shutdown_signal() => {
                 break;
             }
-            result = bridge::run(bus_address.clone()) => result,
+            result = bridge::run(bus_address.clone(), install_fallback) => result,
         };
         match result {
             Ok(()) => {
@@ -164,4 +174,26 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve the effective fallback mode: command line first, then
+/// `SYSTEMA_FORCE_FALLBACK_SERVICE_INSTALL=1`, then `auto`.
+fn resolve_install_fallback(
+    cli: Option<service_install::ServiceInstallFallback>,
+) -> service_install::ServiceInstallFallback {
+    use service_install::ServiceInstallFallback;
+    if let Some(mode) = cli {
+        return mode;
+    }
+    match std::env::var("SYSTEMA_FORCE_FALLBACK_SERVICE_INSTALL") {
+        Ok(value) if is_truthy(&value) => ServiceInstallFallback::Always,
+        _ => ServiceInstallFallback::Auto,
+    }
+}
+
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "yes" | "true" | "on"
+    )
 }
