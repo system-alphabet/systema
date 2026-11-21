@@ -569,13 +569,15 @@ pub async fn start_service(
     //   oneshot          → active once ExecStart exited (RemainAfterExit=)
     //   notify(-reload)  → active once READY=1 arrived
     //   dbus             → active once BusName= is owned
+    //   forking          → active once the ExecStart parent exited and the
+    //                      daemon was adopted
     //
     // The controllers' waiters (`await_oneshot_exit`, `await_notify_start`,
-    // `await_dbus_start`) move the unit from `Starting` to `Running` — or to
-    // `Failed` when readiness never arrives.
+    // `await_dbus_start`, `await_forking_start`) move the unit from
+    // `Starting` to `Running` — or to `Failed` when start never completes.
     let waits_for_readiness = matches!(
         svc.service_type.as_str(),
-        "oneshot" | "notify" | "notify-reload" | "dbus"
+        "oneshot" | "notify" | "notify-reload" | "dbus" | "forking"
     );
     {
         let mut reg = registry.lock();
@@ -1290,6 +1292,60 @@ pub fn is_alive(pid: u32) -> bool {
 #[cfg(not(unix))]
 pub fn is_alive(_pid: u32) -> bool {
     false
+}
+
+/// What `monitor_service` watches for a service's main process.
+///
+/// `Child` is the direct child returned by [`start_service`].  `Pid` is used
+/// for daemonized (`Type=forking`) services: the ExecStart parent exits and
+/// the daemon is reparented to this worker (a child subreaper), so it is
+/// adopted by pid — from `PIDFile=` or the unit's cgroup — instead of through
+/// a `Child` handle.
+pub enum ServiceWait {
+    Child(Child),
+    Pid(u32),
+}
+
+impl ServiceWait {
+    /// Non-blocking exit check; `Ok(None)` means the process is still
+    /// running.
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        match self {
+            ServiceWait::Child(child) => child.try_wait(),
+            ServiceWait::Pid(pid) => try_wait_pid(*pid),
+        }
+    }
+}
+
+/// `waitpid(pid, WNOHANG)` for an adopted (daemonized) main process.
+#[cfg(unix)]
+fn try_wait_pid(pid: u32) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use nix::errno::Errno;
+    use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+    use std::os::unix::process::ExitStatusExt;
+
+    match waitpid(
+        nix::unistd::Pid::from_raw(pid as i32),
+        Some(WaitPidFlag::WNOHANG),
+    ) {
+        Ok(WaitStatus::StillAlive) => Ok(None),
+        // `ExitStatus::from_raw` takes the raw wait status: exit code in the
+        // high byte, signal number for a signal death.
+        Ok(WaitStatus::Exited(_, code)) => Ok(Some(std::process::ExitStatus::from_raw(code << 8))),
+        Ok(WaitStatus::Signaled(_, signal, _)) => {
+            Ok(Some(std::process::ExitStatus::from_raw(signal as i32)))
+        }
+        Ok(_) => Ok(None),
+        // Not (yet) our child — an intermediate parent may still exist.
+        // Keep waiting for as long as the process lives.
+        Err(Errno::ECHILD) if is_alive(pid) => Ok(None),
+        Err(e) => Err(std::io::Error::from_raw_os_error(e as i32)),
+    }
+}
+
+#[cfg(not(unix))]
+fn try_wait_pid(_pid: u32) -> std::io::Result<Option<std::process::ExitStatus>> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
 // ---------------------------------------------------------------------------
@@ -2602,6 +2658,33 @@ fn quote_for_shell(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Adopted (Type=forking) main process ---
+
+    #[cfg(unix)]
+    #[test]
+    fn pid_wait_reports_the_child_exit_status() {
+        let child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 3")
+            .spawn()
+            .expect("spawn sh");
+        let pid = child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let status = loop {
+            match try_wait_pid(pid) {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    assert!(std::time::Instant::now() < deadline, "child did not exit");
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => panic!("try_wait_pid failed: {e}"),
+            }
+        };
+        // Reaped by `try_wait_pid`, so dropping the `Child` must not wait.
+        assert_eq!(status.code(), Some(3));
+        assert!(!status.success());
+    }
 
     // --- Word splitting ---
 

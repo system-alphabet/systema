@@ -113,7 +113,7 @@ pub(crate) async fn monitor_service(
     registry: ServiceRegistry,
     unit_name: String,
     event_pub: EventPublisher,
-    mut child: tokio::process::Child,
+    mut wait: crate::process::ServiceWait,
     pid: u32,
 ) {
     loop {
@@ -135,16 +135,16 @@ pub(crate) async fn monitor_service(
         }
 
         // A restart may have replaced this activation while we slept.  This
-        // monitor still holds the old `Child`; waking up and calling
+        // monitor still holds the old handle; waking up and calling
         // `try_wait()` on it would return ECHILD (the reaper already collected
         // it) and, worse, the failure branch below would mark the *new*
         // activation failed.  Stop observing once the registry no longer
-        // points at our child.
+        // points at our process.
         if current_pid != Some(pid) {
             break;
         }
 
-        match child.try_wait() {
+        match wait.try_wait() {
             Ok(Some(status)) => {
                 info!(
                     "Service {} (PID {}) exited: code={:?}, success={}",
@@ -315,7 +315,7 @@ mod tests {
                 registry.clone(),
                 "restarted.service".to_string(),
                 publisher,
-                child,
+                crate::process::ServiceWait::Child(child),
                 child_pid,
             ),
         )

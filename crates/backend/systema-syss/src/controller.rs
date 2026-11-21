@@ -289,6 +289,217 @@ impl ServiceController {
         }
     }
 
+    /// Whether the unit is `Type=forking` and thus the start job must wait
+    /// for the ExecStart parent to exit and the daemon to be adopted.
+    fn is_forking_type(cfg: &UnitConfig) -> bool {
+        ServiceConfig::from_unit_config(cfg).is_some_and(|s| s.service_type == "forking")
+    }
+
+    /// Mark an activation as failed: failed state, no main process, no
+    /// invocation.
+    fn fail_start(&self, unit_name: &str) {
+        {
+            let mut reg = self.registry.lock();
+            if let Some(inst) = reg.get_mut(unit_name) {
+                inst.state = ServiceState::Failed;
+                inst.main_pid = None;
+                inst.invocation_id = None;
+            }
+        }
+        self.publish_state(unit_name);
+    }
+
+    /// Wait for a `Type=forking` service's ExecStart parent to exit and adopt
+    /// the daemonized child as the main process (systemd's
+    /// `service_enter_start()` for `SERVICE_FORKING`).
+    ///
+    /// The start job completes only here.  Without this wait a forking service
+    /// was reported active as soon as its parent forked — before the daemon
+    /// was ready (plymouthd had not written `/run/plymouth/pid` yet, so
+    /// lightdm's `plymouth --ping` failed and plymouthd stayed around).
+    ///
+    /// Returns the adopted main PID, or `None` when no daemon process can be
+    /// identified and there is nothing to monitor.
+    async fn await_forking_start(
+        &self,
+        unit_name: &str,
+        pid: u32,
+        mut child: tokio::process::Child,
+        cfg: &UnitConfig,
+        svc: &ServiceConfig,
+    ) -> Result<Option<u32>> {
+        let timeout = start_timeout_secs(cfg);
+        let started = std::time::Instant::now();
+        match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await {
+            Ok(Ok(status)) => {
+                info!(
+                    "Forking service {} (PID {}) parent exited: code={:?}, success={}",
+                    unit_name,
+                    pid,
+                    status.code(),
+                    status.success()
+                );
+                let (state, succeeded) = {
+                    let reg = self.registry.lock();
+                    match reg.get(unit_name) {
+                        Some(inst) => (inst.state, inst.exit_succeeded(status.success())),
+                        None => (ServiceState::Failed, status.success()),
+                    }
+                };
+                if state != ServiceState::Starting {
+                    // A concurrent stop/restart owns the unit now.
+                    return Ok(None);
+                }
+                if !succeeded {
+                    self.fail_start(unit_name);
+                    let message = sysa::l10n::fmt(
+                        sysa::l10n::t_("forking service {unit_name} exited with code {code}"),
+                        &[
+                            ("unit_name", &unit_name.to_string()),
+                            ("code", &format!("{:?}", status.code())),
+                        ],
+                    );
+                    // Like the oneshot waiter: a normal non-zero exit is a
+                    // unit outcome, not a task malfunction.
+                    return Err(if status.code().is_some() {
+                        anyhow::Error::new(sysa::worker_ipc::UnitFailure).context(message)
+                    } else {
+                        anyhow::anyhow!(message)
+                    });
+                }
+
+                // The daemon writes its PID file around the fork; give it the
+                // rest of the start budget instead of failing on the first
+                // miss.
+                let remaining =
+                    std::time::Duration::from_secs(timeout).saturating_sub(started.elapsed());
+                let main_pid = if svc.pid_file.is_empty() {
+                    Self::guess_main_pid(unit_name, cfg, pid)
+                } else {
+                    match Self::wait_for_pid_file(&svc.pid_file, remaining).await {
+                        Ok(daemon) => Some(daemon),
+                        Err(e) => {
+                            self.fail_start(unit_name);
+                            return Err(e);
+                        }
+                    }
+                };
+                {
+                    let mut reg = self.registry.lock();
+                    if let Some(inst) = reg.get_mut(unit_name) {
+                        inst.state = ServiceState::Running;
+                        inst.main_pid = main_pid;
+                    }
+                }
+                self.publish_state(unit_name);
+                Ok(main_pid)
+            }
+            Ok(Err(e)) => {
+                warn!("Error waiting for forking {}: {}", unit_name, e);
+                self.fail_start(unit_name);
+                Err(anyhow!(sysa::l10n::fmt(
+                    sysa::l10n::t_("forking service {unit_name} error: {e}"),
+                    &[("unit_name", &unit_name.to_string()), ("e", &e.to_string())]
+                )))
+            }
+            Err(_) => {
+                warn!(
+                    "Timeout waiting for the parent of forking service {} ({}s), stopping",
+                    unit_name, timeout
+                );
+                let _ =
+                    stop_service(self.registry.clone(), unit_name, 10, Some(&self.cgroup)).await;
+                self.publish_state(unit_name);
+                Err(anyhow!(sysa::l10n::fmt(
+                    sysa::l10n::t_("forking service {unit_name} timed out after {timeout}s"),
+                    &[
+                        ("unit_name", &unit_name.to_string()),
+                        ("timeout", &timeout.to_string())
+                    ]
+                )))
+            }
+        }
+    }
+
+    /// `service_load_pid_file()`: read the daemon PID from `PIDFile=`,
+    /// polling until the daemon has written it (bounded by the start budget).
+    async fn wait_for_pid_file(path: &str, budget: std::time::Duration) -> Result<u32> {
+        let deadline = std::time::Instant::now() + budget;
+        loop {
+            match std::fs::read_to_string(path) {
+                Ok(contents) => {
+                    let pid = contents.trim().parse::<u32>().ok().filter(|p| *p > 0);
+                    let Some(pid) = pid else {
+                        return Err(anyhow!(sysa::l10n::fmt(
+                            sysa::l10n::t_("PID file {path} does not contain a valid PID."),
+                            &[("path", path)]
+                        )));
+                    };
+                    if !crate::process::is_alive(pid) {
+                        return Err(anyhow!(sysa::l10n::fmt(
+                            sysa::l10n::t_(
+                                "PID file {path} points to a process that is not running."
+                            ),
+                            &[("path", path)]
+                        )));
+                    }
+                    return Ok(pid);
+                }
+                Err(_) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Err(e) => {
+                    return Err(anyhow!(sysa::l10n::fmt(
+                        sysa::l10n::t_("Failed to read PID file {path}: {e}"),
+                        &[("path", path), ("e", &e.to_string())]
+                    )))
+                }
+            }
+        }
+    }
+
+    /// `unit_search_main_pid()` fallback for forking services without
+    /// `PIDFile=`.
+    ///
+    /// The daemonized child of the ExecStart parent was reparented to this
+    /// worker (we are a child subreaper), so it is one of our direct children
+    /// and belongs to the unit's cgroup.  Without a cgroup path there is no
+    /// way to tell which service a child belongs to, so the caller gets
+    /// `None` and simply has nothing to monitor.
+    fn guess_main_pid(unit_name: &str, cfg: &UnitConfig, parent_pid: u32) -> Option<u32> {
+        if cfg.cgroup_path.is_empty() {
+            warn!(
+                "{}: no cgroup path; cannot identify the daemonized main process of the forking service",
+                unit_name
+            );
+            return None;
+        }
+        let members: std::collections::HashSet<u32> = crate::cgroup::read_pids(&cfg.cgroup_path)
+            .into_iter()
+            .collect();
+        let mut candidates = crate::reaper::scan_children()
+            .into_iter()
+            .map(|(child, _)| child)
+            .filter(|child| *child != parent_pid && members.contains(child));
+        match (candidates.next(), candidates.next()) {
+            (Some(pid), None) => Some(pid),
+            (None, _) => {
+                warn!(
+                    "{}: no daemonized process in the unit cgroup; the forking service has no main PID",
+                    unit_name
+                );
+                None
+            }
+            (Some(_), Some(_)) => {
+                warn!(
+                    "{}: more than one daemonized process in the unit cgroup; cannot determine the main PID",
+                    unit_name
+                );
+                None
+            }
+        }
+    }
+
     /// Whether the unit is `Type=dbus` and thus must own its `BusName=`
     /// before the start job completes.
     fn is_dbus_type(cfg: &UnitConfig) -> bool {
@@ -586,17 +797,34 @@ impl UnitController for ServiceController {
         // - Type=notify(-reload): the start job completes when READY=1
         //   is received (like systemd's service_enter_start_post()).
         // - Type=dbus: the start job completes when BusName= is owned.
-        // - Others (simple/forking/etc.): the start job completes as
-        //   soon as the process is spawned.
+        // - Type=forking: the start job completes when the ExecStart parent
+        //   exited and the daemon was adopted (see `await_forking_start`).
+        // - Others (simple/etc.): the start job completes as soon as the
+        //   process is spawned.
         if Self::is_oneshot_type(&cfg) {
             self.await_oneshot_exit(unit_name, _pid, child, &cfg)
                 .await?;
+        } else if Self::is_forking_type(&cfg) {
+            // Type=forking: the start job completes once the ExecStart parent
+            // exited and the daemon was adopted.
+            if let Some(main_pid) = self
+                .await_forking_start(unit_name, _pid, child, &cfg, &svc)
+                .await?
+            {
+                tokio::spawn(crate::ipc::monitor_service(
+                    self.registry.clone(),
+                    unit_name.to_string(),
+                    self.event_pub.clone(),
+                    crate::process::ServiceWait::Pid(main_pid),
+                    main_pid,
+                ));
+            }
         } else {
             tokio::spawn(crate::ipc::monitor_service(
                 self.registry.clone(),
                 unit_name.to_string(),
                 self.event_pub.clone(),
-                child,
+                crate::process::ServiceWait::Child(child),
                 _pid,
             ));
             self.await_notify_start(unit_name, _pid, &cfg).await?;
@@ -685,12 +913,25 @@ impl UnitController for ServiceController {
         if Self::is_oneshot_type(&cfg) {
             self.await_oneshot_exit(unit_name, _pid, child, &cfg)
                 .await?;
+        } else if Self::is_forking_type(&cfg) {
+            if let Some(main_pid) = self
+                .await_forking_start(unit_name, _pid, child, &cfg, &svc)
+                .await?
+            {
+                tokio::spawn(crate::ipc::monitor_service(
+                    self.registry.clone(),
+                    unit_name.to_string(),
+                    self.event_pub.clone(),
+                    crate::process::ServiceWait::Pid(main_pid),
+                    main_pid,
+                ));
+            }
         } else {
             tokio::spawn(crate::ipc::monitor_service(
                 self.registry.clone(),
                 unit_name.to_string(),
                 self.event_pub.clone(),
-                child,
+                crate::process::ServiceWait::Child(child),
                 _pid,
             ));
             self.await_notify_start(unit_name, _pid, &cfg).await?;

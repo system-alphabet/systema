@@ -28,6 +28,7 @@ pub struct ServiceConfig {
     pub tty_path: String,
     pub remain_after_exit: bool,
     pub bus_name: String,
+    pub pid_file: String,
     pub state_directory: Vec<String>,
     pub state_directory_mode: u32,
     pub logs_directory: Vec<String>,
@@ -78,6 +79,7 @@ impl ServiceConfig {
             tty_path: get_string(map, "TTYPath").unwrap_or_default(),
             remain_after_exit: get_bool(map, "RemainAfterExit"),
             bus_name: get_string(map, "BusName").unwrap_or_default(),
+            pid_file: get_string(map, "PIDFile").unwrap_or_default(),
             state_directory: get_strings(map, "StateDirectory"),
             state_directory_mode: get_mode(map, "StateDirectoryMode").unwrap_or(0),
             logs_directory: get_strings(map, "LogsDirectory"),
@@ -128,6 +130,7 @@ impl ServiceConfig {
             ("StandardError", &self.standard_error),
             ("TTYPath", &self.tty_path),
             ("BusName", &self.bus_name),
+            ("PIDFile", &self.pid_file),
         ] {
             if !value.is_empty() {
                 put(key, json!(value));

@@ -104,6 +104,13 @@ pub(crate) async fn run(_shared: &SharedRegistry) {
     std::future::pending::<()>().await
 }
 
+/// No `/proc` enumeration on this platform: the forking-service main-PID
+/// guess has to fall back to "no daemon process identified".
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub(crate) fn scan_children() -> Vec<(u32, String)> {
+    Vec::new()
+}
+
 /// Await one SIGCHLD (returns `false` once the stream is exhausted).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 async fn wait_sigchld(sig: &mut Option<Signal>) -> bool {
@@ -231,7 +238,7 @@ fn describe(pid: u32, status: i32) -> String {
 /// contain spaces and parentheses, so it is delimited by the first `(` and
 /// the last `)`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn scan_children() -> Vec<(u32, String)> {
+pub(crate) fn scan_children() -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut out = Vec::new();
 

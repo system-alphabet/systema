@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-11-20 18:57+0800\n"
+        "POT-Creation-Date: 2026-11-20 20:01+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -1461,6 +1461,36 @@ msgstr  "oneshot 服务 {unit_name} 错误：{e}"
 msgid   "oneshot service {unit_name} timed out after {timeout}s"
 msgstr  "oneshot 服务 {unit_name} 在 {timeout}s 后超时"
 #
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 356
+#, rust-format
+msgid   "forking service {unit_name} exited with code {code}"
+msgstr  "forking 服务 {unit_name} 退出，退出码 {code}"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 401
+#, rust-format
+msgid   "forking service {unit_name} error: {e}"
+msgstr  "forking 服务 {unit_name} 错误：{e}"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 414
+#, rust-format
+msgid   "forking service {unit_name} timed out after {timeout}s"
+msgstr  "forking 服务 {unit_name} 在 {timeout}s 后超时"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 434
+#, rust-format
+msgid   "PID file {path} does not contain a valid PID."
+msgstr  "PID 文件 {path} 不包含有效的 PID。"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 441
+#, rust-format
+msgid   "PID file {path} points to a process that is not running."
+msgstr  "PID 文件 {path} 指向的进程未在运行。"
+#
+# File: ../crates/backend/systema-syss/src/controller.rs, line: 453
+#, rust-format
+msgid   "Failed to read PID file {path}: {e}"
+msgstr  "读取 PID 文件 {path} 失败：{e}"
+#
 # File: ../crates/backend/systema-syss/src/controller.rs, line: 509
 #, rust-format
 msgid   "Reload of {unit_name} failed: service is not running."
@@ -2502,9 +2532,11 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 106
 #~ msgid        "Run only the finder executable with this file name (default: every finder found)."
 #~ msgstr       "只运行文件名为此值的查找器可执行文件（默认：运行找到的全部查找器）。"
+#
 #
 #
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 212
@@ -2514,9 +2546,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 302
 #~ msgid        "Search for the systema-* binaries only in this directory (default: PATH)."
 #~ msgstr       "仅在此目录中查找 systema-* 二进制文件（默认：PATH）。"
+#
 #
 #
 #
@@ -2530,9 +2564,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 38
 #~ msgid        "chmod for mount point failed"
 #~ msgstr       "为挂载点执行 chmod 失败"
+#
 #
 #
 #
@@ -2548,9 +2584,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
 #~ msgid        "Worker disconnected"
 #~ msgstr       "工作进程已断开连接"
+#
 #
 #
 #
@@ -2573,9 +2611,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "无法加载单元"
+#
 #
 #
 #
@@ -2598,6 +2638,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2611,10 +2652,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "单元 {name} 是模板，无法直接加载"
+#
 #
 #
 #
@@ -2639,10 +2682,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "移除 {count} 条边后仍无法解决依赖循环。"
+#
 #
 #
 #
@@ -2670,10 +2715,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') 失败：{r}"
+#
 #
 #
 #
@@ -2703,10 +2750,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "无效的日志级别“{level}”（{e}）；使用 info"
+#
 #
 #
 #
@@ -2738,9 +2787,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
 #
 #
 #
@@ -2776,10 +2827,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
 #
 #
 #
@@ -2818,10 +2871,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
 #
 #
 #
