@@ -511,9 +511,7 @@ async fn handle_worker_session(
                         let target = {
                             let state = alloc_for_recv.read();
                             state
-                                .workers
-                                .values()
-                                .find(|w| w.unit_types.iter().any(|t| t == "socket"))
+                                .worker_for_unit(&unit_name)
                                 .map(|w| w.worker_id.clone())
                         };
                         let Some(sock_wid) = target else {
@@ -1703,12 +1701,18 @@ async fn handle_state_update(
 
     for status in &update.units {
         // Ownership validation for incremental updates.  Reject only when
-        // the unit is owned by a *different* worker; units without an owner
-        // are accepted and claimed by the first worker that reports them
-        // (e.g. mounts discovered from /proc/self/mountinfo at boot, or the
-        // companion of an automount that was mounted by a kernel trigger).
+        // the unit is owned by a *different* worker.  A Finder-pinned owner
+        // (the unit definition) wins over the runtime claim; units without
+        // either are accepted and claimed by the first worker that reports
+        // them (e.g. mounts discovered from /proc/self/mountinfo at boot, or
+        // the companion of an automount that was mounted by a kernel trigger).
         if !update.full_snapshot {
-            let owner = allocator.read().unit_owners.get(&status.unit_name).cloned();
+            let owner = {
+                let state = allocator.read();
+                state
+                    .unit_owner(&status.unit_name)
+                    .or_else(|| state.unit_owners.get(&status.unit_name).cloned())
+            };
             match owner {
                 Some(owner) if owner != sender => {
                     warn!(

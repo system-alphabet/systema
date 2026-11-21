@@ -33,6 +33,47 @@ use crate::scheduler::transaction::{
     build_plan, build_plan_multi, PlanError, PlannerMode, TransactionPlan,
 };
 
+/// Build the error text for a unit whose worker cannot be found.
+///
+/// A pinned owner is named explicitly: the unit's type may still have
+/// workers, so the type-based wording would hide the real misconfiguration.
+fn missing_worker_error(
+    state: &AllocatorState,
+    unit_name: &str,
+    unit_type: &str,
+    kind: &str,
+) -> String {
+    match state.unit_owner(unit_name) {
+        Some(owner) => l10n::fmt(
+            l10n::t_("Owner worker '{owner}' of unit '{unit_name}' is not registered. Cannot execute {kind} operation."),
+            &[("owner", &owner), ("unit_name", unit_name), ("kind", kind)],
+        ),
+        None => l10n::fmt(
+            l10n::t_("No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"),
+            &[("unit_type", unit_type), ("unit_name", unit_name), ("kind", kind)],
+        ),
+    }
+}
+
+/// The dependency-chain variant of [`missing_worker_error`].
+fn missing_worker_chain_error(
+    state: &AllocatorState,
+    unit_name: &str,
+    unit_type: &str,
+    root: &str,
+) -> String {
+    match state.unit_owner(unit_name) {
+        Some(owner) => l10n::fmt(
+            l10n::t_("Owner worker '{owner}' of unit '{unit_name}' is not registered. Cannot process dependency chain for '{name}'."),
+            &[("owner", &owner), ("unit_name", unit_name), ("name", root)],
+        ),
+        None => l10n::fmt(
+            l10n::t_("No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."),
+            &[("unit_type", unit_type), ("unit_name", unit_name), ("name", root)],
+        ),
+    }
+}
+
 /// Map a transaction job type onto the public job kind used for worker
 /// dispatch. `Nop` and `VerifyActive` steps need no worker interaction:
 /// they are resolved by the planner against the cached runtime state.
@@ -1336,15 +1377,8 @@ async fn dispatch_plan(
         // acquire the write lock without deadlocking.
         let (worker_chan, worker_id, task_id, unit_type) = {
             let state = allocator.read();
-            let unit = state.units.get(name.as_str());
-            let unit_type = unit
-                .map(|u| u.kind.worker_type().to_string())
-                .unwrap_or_else(|| "service".to_string());
-
-            let worker = state
-                .workers
-                .values()
-                .find(|w| w.unit_types.contains(&unit_type));
+            let worker = state.worker_for_unit(name.as_str());
+            let unit_type = state.worker_type_for(name.as_str());
 
             let tid = next_task_id();
             (
@@ -1358,11 +1392,10 @@ async fn dispatch_plan(
         let (worker_envelope_tx, task_id) = match (worker_chan, task_id) {
             (Some(tx), tid) => (tx, tid),
             (None, _) => {
-                let err = l10n::fmt(l10n::t_("No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."), &[
-                    ("unit_type", &unit_type),
-                    ("unit_name", error_owner),
-                    ("name", name),
-                ]);
+                let err = {
+                    let state = allocator.read();
+                    missing_worker_chain_error(&state, name, &unit_type, error_owner)
+                };
                 warn!("{}", err);
                 {
                     let mut state = allocator.write();
@@ -1842,28 +1875,20 @@ async fn prepare_batch_start(
         }
     }
 
-    // --- Every root needs a worker that owns its unit type ---
+    // --- Every root needs a worker (its owner, if pinned) ---
     {
         let state = allocator.read();
-        let unit_type = state
-            .units
-            .get(unit_name)
-            .map(|u| u.kind.worker_type().to_string())
-            .unwrap_or_else(|| {
-                UnitKind::from_extension(unit_name)
-                    .worker_type()
-                    .to_string()
-            });
-        let has_worker = state
-            .workers
-            .values()
-            .any(|w| w.unit_types.contains(&unit_type));
-        if !has_worker {
-            bail!("{}", l10n::fmt(l10n::t_("No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"), &[
-                ("unit_type", &unit_type),
-                ("unit_name", unit_name),
-                ("kind", &format!("{:?}", JobKind::Start)),
-            ]));
+        let unit_type = state.worker_type_for(unit_name);
+        if state.worker_for_unit(unit_name).is_none() {
+            bail!(
+                "{}",
+                missing_worker_error(
+                    &state,
+                    unit_name,
+                    &unit_type,
+                    &format!("{:?}", JobKind::Start)
+                )
+            );
         }
     }
 
@@ -4953,6 +4978,7 @@ mod tests {
             description: None,
             source_format: Some("dynamic".to_string()),
             source_path: None,
+            owner: None,
             aliases: Vec::new(),
             alias_of: None,
             slice: Some(parent.to_string()),

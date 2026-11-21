@@ -157,6 +157,7 @@ mod tests {
             description: Some("Getty on %I".to_string()),
             source_format: Some("systemd".to_string()),
             source_path: None,
+            owner: None,
             aliases: Vec::new(),
             alias_of: None,
             slice: None,

@@ -985,11 +985,7 @@ async fn manager_abandon_scope(allocator: &AllocatorHandle, env: Envelope) -> Re
             .get(&name)
             .map(|s| s.active_state.clone())
             .unwrap_or_else(|| "inactive".to_string());
-        let worker_tx = state
-            .workers
-            .values()
-            .find(|w| w.unit_types.iter().any(|t| t == "scope"))
-            .map(|w| w.envelope_tx.clone());
+        let worker_tx = state.worker_for_unit(&name).map(|w| w.envelope_tx.clone());
         (worker_tx, active_state)
     };
     if !matches!(active_state.as_str(), "active" | "activating") {

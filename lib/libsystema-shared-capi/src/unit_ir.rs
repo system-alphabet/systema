@@ -154,6 +154,45 @@ pub extern "C" fn systema_shared_unit_ir_source_path(
     })
 }
 
+/// Copy the pinned owner worker (free with `systema_shared_string_free`);
+/// `NOT_FOUND` when type-based routing applies.
+#[no_mangle]
+pub extern "C" fn systema_shared_unit_ir_owner(
+    ir: *const SystemaUnitIR,
+    out: *mut *mut c_char,
+) -> SystemaStatus {
+    ffi_try!(SystemaStatus::Internal, {
+        string_field(ir, out, "owner", |ir| ir.owner.clone())
+    })
+}
+
+/// Pin the owning worker, or clear the pin with a `NULL` value.
+///
+/// The owner is a worker id as announced in `worker.register`.  With a pin,
+/// every task and event for this unit goes to that worker even when it does
+/// not advertise the unit's type; clearing it restores type-based routing.
+#[no_mangle]
+pub extern "C" fn systema_shared_unit_ir_set_owner(
+    ir: *mut SystemaUnitIR,
+    owner: *const c_char,
+) -> SystemaStatus {
+    ffi_try!(SystemaStatus::Internal, {
+        if ir.is_null() {
+            return crate::error::fail(SystemaStatus::InvalidArgument, "ir is null");
+        }
+        let owner = if owner.is_null() {
+            None
+        } else {
+            match unsafe { crate::ffi::require_str(owner, "owner") } {
+                Ok(owner) => Some(owner.to_string()),
+                Err(status) => return status,
+            }
+        };
+        unsafe { &mut *ir }.ir.owner = owner;
+        SystemaStatus::Ok
+    })
+}
+
 /// Copy the alias target (free with `systema_shared_string_free`).
 #[no_mangle]
 pub extern "C" fn systema_shared_unit_ir_alias_of(

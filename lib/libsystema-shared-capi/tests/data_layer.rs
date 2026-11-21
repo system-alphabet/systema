@@ -18,10 +18,10 @@ use systema_shared_capi::unit_ir::{
     systema_shared_unit_ir_description, systema_shared_unit_ir_free,
     systema_shared_unit_ir_from_json, systema_shared_unit_ir_id,
     systema_shared_unit_ir_is_template, systema_shared_unit_ir_is_template_instance,
-    systema_shared_unit_ir_slice, systema_shared_unit_ir_source_format,
-    systema_shared_unit_ir_source_path, systema_shared_unit_ir_template_of,
-    systema_shared_unit_ir_template_parameters, systema_shared_unit_ir_to_json,
-    systema_shared_unit_ir_unit_type, SystemaUnitIR,
+    systema_shared_unit_ir_owner, systema_shared_unit_ir_set_owner, systema_shared_unit_ir_slice,
+    systema_shared_unit_ir_source_format, systema_shared_unit_ir_source_path,
+    systema_shared_unit_ir_template_of, systema_shared_unit_ir_template_parameters,
+    systema_shared_unit_ir_to_json, systema_shared_unit_ir_unit_type, SystemaUnitIR,
 };
 use systema_shared_capi::unit_status::{
     systema_shared_unit_status_active_state, systema_shared_unit_status_decode,
@@ -215,6 +215,37 @@ fn unit_ir_round_trips_and_reports_its_fields() {
     let mut slice = ptr::null_mut();
     systema_shared_unit_ir_slice(handle, &mut slice);
     assert_eq!(take_string(slice).as_deref(), Some("system.slice"));
+
+    // Owner: unset by default, settable, and clearable with NULL.
+    let mut missing_owner = ptr::null_mut();
+    assert_eq!(
+        systema_shared_unit_ir_owner(handle, &mut missing_owner),
+        SystemaStatus::NotFound
+    );
+    assert!(missing_owner.is_null());
+
+    let custom = CString::new("custom-worker").unwrap();
+    assert_eq!(
+        systema_shared_unit_ir_set_owner(handle, custom.as_ptr()),
+        SystemaStatus::Ok
+    );
+    let mut owner = ptr::null_mut();
+    assert_eq!(
+        systema_shared_unit_ir_owner(handle, &mut owner),
+        SystemaStatus::Ok
+    );
+    assert_eq!(take_string(owner).as_deref(), Some("custom-worker"));
+
+    assert_eq!(
+        systema_shared_unit_ir_set_owner(handle, ptr::null()),
+        SystemaStatus::Ok
+    );
+    let mut cleared = ptr::null_mut();
+    assert_eq!(
+        systema_shared_unit_ir_owner(handle, &mut cleared),
+        SystemaStatus::NotFound
+    );
+    assert!(cleared.is_null());
 
     let mut aliases: *mut SystemaStringList = ptr::null_mut();
     assert_eq!(

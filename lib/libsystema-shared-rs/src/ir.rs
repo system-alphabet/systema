@@ -283,6 +283,19 @@ pub struct UnitIR {
     /// The file path this unit was loaded from, if applicable.
     pub source_path: Option<String>,
 
+    /// Prefer a specific owning worker for this unit.
+    ///
+    /// `None` — what the systemd Finder reports, and the default — leaves the
+    /// unit with the worker that advertises its [`Self::unit_type`].  When a
+    /// Finder sets this, every task and event for the unit goes to that
+    /// worker instead, whether or not it advertises the type: the field lets
+    /// a producer single out one unit (an experiment, a compatibility
+    /// wrapper) without giving the whole type to another worker.
+    ///
+    /// The value is a worker id as announced in `worker.register`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+
     /// Alias names that refer to this unit (e.g. `display-manager.service`
     /// for `lightdm.service`).  Aliases come from `[Install] Alias=` lines
     /// and from unit-file symlinks (a symlink's basename aliases the

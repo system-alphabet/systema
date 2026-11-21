@@ -105,6 +105,7 @@ fn convert_unit_file(uf: &UnitFile) -> UnitIR {
         description: Some(uf.unit.description.clone()),
         source_format: Some("systemd".to_string()),
         source_path: None,
+        owner: None,
         slice: (!uf.unit.slice.is_empty()).then(|| uf.unit.slice.clone()),
         dependencies: Some(convert_dependencies(uf)),
         // The unit's own section travels as the flattened systemd directive
@@ -244,6 +245,7 @@ fn alias_record(alias: &str, canonical: &str) -> UnitIR {
         description: None,
         source_format: Some("systemd".to_string()),
         source_path: None,
+        owner: None,
         slice: None,
         dependencies: None,
         config: None,

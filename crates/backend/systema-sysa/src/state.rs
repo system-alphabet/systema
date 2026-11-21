@@ -497,6 +497,55 @@ impl AllocatorState {
         }
     }
 
+    /// The Finder-pinned owner of a unit, if its definition reported one.
+    ///
+    /// A pinned owner overrides type-based routing for this unit alone; the
+    /// systemd Finder leaves it unset, so ordinary units keep following
+    /// [`Self::worker_type_for`].
+    pub fn unit_owner(&self, unit_name: &str) -> Option<String> {
+        self.units
+            .get(unit_name)
+            .and_then(|unit| unit.owner.clone())
+    }
+
+    /// The unit type used for worker routing when no owner is pinned.
+    ///
+    /// A unit that is not loaded yet falls back to its name extension, so a
+    /// dependency on `user-0.slice` is routed to the slice worker rather
+    /// than guessed as a service.
+    pub fn worker_type_for(&self, unit_name: &str) -> String {
+        self.units
+            .get(unit_name)
+            .map(|unit| unit.kind.worker_type().to_string())
+            .unwrap_or_else(|| {
+                UnitKind::from_extension(unit_name)
+                    .worker_type()
+                    .to_string()
+            })
+    }
+
+    /// The worker that should receive this unit's tasks and events.
+    ///
+    /// A Finder-reported [`UnitFile::owner`] wins over the type registry:
+    /// the field exists precisely so one unit can be handed to a worker that
+    /// does not advertise its type.  Without an owner the lookup is the
+    /// historical one — the first worker whose `unit_types` contains the
+    /// unit's type.
+    pub fn worker_for_unit(&self, unit_name: &str) -> Option<&WorkerEntry> {
+        match self.unit_owner(unit_name) {
+            Some(owner) => self
+                .workers
+                .values()
+                .find(|worker| worker.worker_id == owner),
+            None => {
+                let unit_type = self.worker_type_for(unit_name);
+                self.workers
+                    .values()
+                    .find(|worker| worker.unit_types.contains(&unit_type))
+            }
+        }
+    }
+
     /// Synthesise systemd's implicit root slice (`-.slice`).
     ///
     /// systemd keeps `-.slice` as a perpetual special unit that is always
@@ -1034,6 +1083,11 @@ fn apply_ir_patch(ir: &UnitIR, uf: &mut UnitFile) {
     }
     if let Some(slice) = &ir.slice {
         uf.unit.slice.clone_from(slice);
+    }
+    // A pinned owner is an explicit Finder decision; an omitted field means
+    // "no opinion", so an existing pin is kept rather than cleared.
+    if let Some(owner) = &ir.owner {
+        uf.owner = Some(owner.clone());
     }
 
     // Map dependency fields when the whole dependency set is provided.
@@ -1770,6 +1824,104 @@ mod tests {
             config: Some(ConfigMap::new()),
             ..Default::default()
         }
+    }
+
+    fn worker_entry(
+        id: &str,
+        unit_types: &[&str],
+    ) -> (WorkerEntry, tokio::sync::mpsc::Receiver<bytes::Bytes>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        (
+            WorkerEntry {
+                worker_id: id.to_string(),
+                unit_types: unit_types.iter().map(|t| t.to_string()).collect(),
+                supports_unit_define: false,
+                supports_resource_prepare: false,
+                ready: true,
+                envelope_tx: tx,
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn merge_units_pins_the_reported_owner() {
+        let mut state = AllocatorState::new();
+        let mut ir = service_ir("hacked.service");
+        ir.owner = Some("custom-worker".to_string());
+        state
+            .merge_units(&HashMap::from([(ir.id.clone(), ir)]))
+            .unwrap();
+
+        assert_eq!(
+            state.unit_owner("hacked.service").as_deref(),
+            Some("custom-worker")
+        );
+        assert_eq!(
+            state.units["hacked.service"].owner.as_deref(),
+            Some("custom-worker")
+        );
+
+        // A later report without the field is "no opinion": the pin stays.
+        state
+            .merge_units(&HashMap::from([(
+                "hacked.service".to_string(),
+                service_ir("hacked.service"),
+            )]))
+            .unwrap();
+        assert_eq!(
+            state.unit_owner("hacked.service").as_deref(),
+            Some("custom-worker")
+        );
+    }
+
+    #[test]
+    fn worker_for_unit_prefers_the_pinned_owner() {
+        let mut state = AllocatorState::new();
+        let (service_worker, _service_rx) = worker_entry("service-worker", &["service"]);
+        let (custom_worker, _custom_rx) = worker_entry("custom-worker", &["timer"]);
+        state
+            .workers
+            .insert("service-worker".to_string(), service_worker);
+        state
+            .workers
+            .insert("custom-worker".to_string(), custom_worker);
+
+        // Without a pin, the unit type picks the worker.
+        state
+            .merge_units(&HashMap::from([(
+                "plain.service".to_string(),
+                service_ir("plain.service"),
+            )]))
+            .unwrap();
+        assert_eq!(
+            state
+                .worker_for_unit("plain.service")
+                .map(|w| w.worker_id.as_str()),
+            Some("service-worker")
+        );
+
+        // A pin overrides the type registry, even for a worker that does not
+        // advertise the type.
+        let mut ir = service_ir("hacked.service");
+        ir.owner = Some("custom-worker".to_string());
+        state
+            .merge_units(&HashMap::from([(ir.id.clone(), ir)]))
+            .unwrap();
+        assert_eq!(
+            state
+                .worker_for_unit("hacked.service")
+                .map(|w| w.worker_id.as_str()),
+            Some("custom-worker")
+        );
+
+        // An unregistered owner is an error, not a silent type-based fallback.
+        let mut orphan = service_ir("orphan.service");
+        orphan.owner = Some("gone-worker".to_string());
+        state
+            .merge_units(&HashMap::from([(orphan.id.clone(), orphan)]))
+            .unwrap();
+        assert!(state.worker_for_unit("orphan.service").is_none());
     }
 
     /// The Finder's alias record: `alias` is another name for `target`.

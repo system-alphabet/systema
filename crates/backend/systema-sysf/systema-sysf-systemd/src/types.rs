@@ -807,6 +807,11 @@ pub struct UnitFile {
     pub transient: bool,
     pub unit: UnitSection,
     pub install: InstallSection,
+    /// Finder-pinned owner worker.
+    ///
+    /// `None` routes the unit by its type; `Some(worker_id)` sends every task
+    /// and event for the unit to that worker instead.
+    pub owner: Option<String>,
     /// Aliases materialised as unit-file symlinks, as opposed to the
     /// `[Install] Alias=` declarations the parser folds into
     /// [`InstallSection::alias`].  Filled by the loader, never by the parser:
@@ -863,6 +868,7 @@ impl UnitFile {
             transient: false,
             unit: UnitSection::default(),
             install: InstallSection::default(),
+            owner: None,
             alias_links: Vec::new(),
             enabled: false,
             file_state: None,
