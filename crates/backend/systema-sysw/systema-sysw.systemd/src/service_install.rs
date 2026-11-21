@@ -239,9 +239,18 @@ async fn run_systemctl(
 /// calling `systemctl` dumps it; the subprocess output is the equivalent
 /// information when the real `systemctl` did the work itself.
 fn parse_systemctl_changes(output: &Output) -> Vec<ChangeTuple> {
+    parse_change_text(
+        &String::from_utf8_lossy(&output.stderr),
+        &String::from_utf8_lossy(&output.stdout),
+    )
+}
+
+/// Parse the step lines from the child's stderr (where systemctl logs them)
+/// and then its stdout, preserving the order within each stream.
+fn parse_change_text(stderr: &str, stdout: &str) -> Vec<ChangeTuple> {
     let mut changes = Vec::new();
-    for stream in [&output.stderr, &output.stdout] {
-        for line in String::from_utf8_lossy(stream).lines() {
+    for text in [stderr, stdout] {
+        for line in text.lines() {
             if let Some(change) = parse_change_line(line) {
                 changes.push(change);
             }
@@ -421,6 +430,27 @@ fn fallback(verb: &Verb, names: &[String], runtime: bool, force: bool) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    /// Create an executable fake `systemctl` with the given script body.
+    fn fake_systemctl(tag: &str, body: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "systema-sysw-systemctl-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("systemctl");
+        fs::write(&script, body).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
 
     #[test]
     fn parses_client_side_change_lines() {
@@ -477,6 +507,145 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn parses_every_change_type() {
+        let path = "/etc/systemd/system/multi-user.target.wants/a.service";
+        let cases = [
+            (
+                format!("Masked dependency '{path}'."),
+                ("mask-dependency", path, ""),
+            ),
+            (
+                format!("Unmasked dependency '{path}'."),
+                ("unmask-dependency", path, ""),
+            ),
+            (
+                "Unit foo.service is masked via a generator and cannot be unmasked, skipping."
+                    .to_string(),
+                ("masked by generator", "foo.service", ""),
+            ),
+            (
+                "Unit dangling.service is an alias to a non-existent unit, ignoring.".to_string(),
+                ("dangling", "dangling.service", ""),
+            ),
+            (
+                "Failed to enable auxiliary unit also.service, ignoring.".to_string(),
+                ("auxiliary unit failed", "also.service", ""),
+            ),
+        ];
+        for (line, (kind, change_path, source)) in cases {
+            assert_eq!(
+                parse_change_line(&line),
+                Some((
+                    kind.to_string(),
+                    change_path.to_string(),
+                    source.to_string()
+                )),
+                "line: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn aggregates_streams_in_order_and_skips_noise() {
+        let stderr = "\
+Synchronizing state of ssh.service with SysV service script with /usr/lib/systemd/systemd-sysv-install.
+Executing: /usr/lib/systemd/systemd-sysv-install enable ssh
+Created symlink '/etc/systemd/system/a.service' -> '/usr/lib/systemd/system/a.service'.
+Removed '/etc/systemd/system/b.service'.
+";
+        let stdout = "Created symlink '/etc/systemd/system/c.service' -> '/usr/lib/systemd/system/c.service'.\n";
+        assert_eq!(
+            parse_change_text(stderr, stdout),
+            vec![
+                (
+                    "symlink".to_string(),
+                    "/etc/systemd/system/a.service".to_string(),
+                    "/usr/lib/systemd/system/a.service".to_string(),
+                ),
+                (
+                    "unlink".to_string(),
+                    "/etc/systemd/system/b.service".to_string(),
+                    String::new(),
+                ),
+                (
+                    "symlink".to_string(),
+                    "/etc/systemd/system/c.service".to_string(),
+                    "/usr/lib/systemd/system/c.service".to_string(),
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn run_systemctl_relays_changes_and_offline_environment() {
+        let dir = std::env::temp_dir().join(format!(
+            "systema-sysw-systemctl-env-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let env_file = dir.join("env");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf '%s|%s|%s|%s' \"$SYSTEMD_OFFLINE\" \"$SYSTEMCTL_INSTALL_CLIENT_SIDE\" \"$LC_ALL\" \"$SYSTEMD_LOG_LEVEL\" > '{}'\n\
+             echo \"Created symlink '/etc/systemd/system/a.service' -> '/usr/lib/systemd/system/a.service'.\" >&2\n\
+             echo \"Removed '/etc/systemd/system/b.service'.\" >&2\n\
+             exit 0\n",
+            env_file.display()
+        );
+        let systemctl = fake_systemctl("relay", &script);
+
+        let outcome = run_systemctl(
+            &systemctl,
+            &Verb::Mask,
+            &["a.service".to_string()],
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome.changes,
+            vec![
+                (
+                    "symlink".to_string(),
+                    "/etc/systemd/system/a.service".to_string(),
+                    "/usr/lib/systemd/system/a.service".to_string(),
+                ),
+                (
+                    "unlink".to_string(),
+                    "/etc/systemd/system/b.service".to_string(),
+                    String::new(),
+                ),
+            ]
+        );
+        assert!(outcome.carries_install_info.is_none());
+        assert_eq!(fs::read_to_string(&env_file).unwrap(), "1|1|C|info");
+    }
+
+    #[tokio::test]
+    async fn failing_systemctl_reports_stderr() {
+        let systemctl = fake_systemctl(
+            "failure",
+            "#!/bin/sh\necho 'boom: cannot install' >&2\nexit 3\n",
+        );
+        let error = run_systemctl(
+            &systemctl,
+            &Verb::Mask,
+            &["a.service".to_string()],
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("boom: cannot install"), "{error}");
     }
 
     #[test]
