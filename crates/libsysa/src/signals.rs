@@ -42,7 +42,7 @@ pub async fn shutdown_signal() -> &'static str {
 /// Forward SIGTERM/SIGINT to a [`ShutdownHandle`] in a background task.
 ///
 /// A worker's IPC loop deliberately watches no process signals
-/// ([`libsystema_shared_rs::worker_ipc::WorkerIpc::run`] only leaves when asked to), so
+/// ([`systema_shared::worker_ipc::WorkerIpc::run`] only leaves when asked to), so
 /// binaries call this right before `run` to turn the signal into
 /// [`ShutdownHandle::shutdown`].  The loop then leaves between iterations
 /// instead of the signal killing the process mid-frame.

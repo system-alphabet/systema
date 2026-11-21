@@ -1,19 +1,19 @@
 //! Server-side half of the IPC version handshake.
 //!
 //! The wire contract and every client-side primitive live in
-//! [`libsystema_shared_rs::ipc`]; this module re-exports them unchanged and adds
+//! [`systema_shared::ipc`]; this module re-exports them unchanged and adds
 //! the functions only System A's accept paths call: the version verdict and
 //! the pre-hello session gate.  `sysa::ipc::*` therefore keeps exposing the
 //! whole pre-split surface.
 
-pub use libsystema_shared_rs::ipc::*;
+pub use systema_shared::ipc::*;
 
 use anyhow::Result;
 use prost::Message;
 use tracing::{debug, warn};
 
-use libsystema_shared_rs::error_code::{ErrorCode, SysError};
-use libsystema_shared_rs::proto::{Envelope, IpcVersionRequest, IpcVersionResult};
+use systema_shared::error_code::{ErrorCode, SysError};
+use systema_shared::proto::{Envelope, IpcVersionRequest, IpcVersionResult};
 
 /// Decode the leading version-exchange frame on the server side, when the
 /// session's first envelope is one.  `None` — this peer skipped the
@@ -99,7 +99,7 @@ pub async fn gate_session_first(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libsystema_shared_rs::proto::ManagerHelloRequest;
+    use systema_shared::proto::ManagerHelloRequest;
 
     async fn duplex() -> (EnvelopeFramed, EnvelopeFramed) {
         let (a, b) = tokio::net::UnixStream::pair().unwrap();

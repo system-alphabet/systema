@@ -10,7 +10,7 @@
 //! stays free of gettext and of every user-facing string.
 
 use anyhow::Error;
-use libsystema_shared_rs::error_code::{ErrorCode, SysError};
+use systema_shared::error_code::{ErrorCode, SysError};
 
 use crate::l10n;
 

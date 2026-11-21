@@ -19,10 +19,10 @@
 //! - The gettext/gettext wiring and the English msgid helpers (`l10n`)
 //! - Localized rendering of the IPC kernel's error codes (`errors`)
 
-pub use libsystema_shared_rs::{
+pub use libsystema_sysa::ipc;
+pub use systema_shared::{
     controller, error_code, finder, ir, proto, staging_admin, unitstate_admin, worker_ipc,
 };
-pub use libsystema_sysa::ipc;
 
 pub mod errors;
 pub mod event_bus;

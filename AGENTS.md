@@ -25,6 +25,10 @@ changes do **not** need to be written back into these docs.
   `crates/libsystema-sysa` and `lib/libsystema-shared-rs` keep their own
   names. `cargo test -p libsysa` fails with "did not match any packages" —
   always target packages `sysa`/`libsystema-sysa`/`libsystema-shared-rs` etc.
+- The shared crate's package is `libsystema-shared-rs` but its **lib target**
+  is `systema_shared`: rustc always prefixes library artifacts with `lib`,
+  so the output is `libsystema_shared.rlib` (not `liblibsystema_shared_rs`).
+  Rust imports therefore use `systema_shared::…`.
 - The IPC layer is two crates, with the dependency direction strictly
   **shared → nothing, sysa → shared**: **`libsystema-shared-rs`** owns the wire
   contract (proto, framing, version constants, IR, error codes), the
@@ -33,7 +37,7 @@ changes do **not** need to be written back into these docs.
   depends on it and adds only the server-side handshake helpers
   (`version_request_from`, `version_verdict`, `version_result_envelope`,
   `gate_session_first`).  `libsysa` re-exports both
-  (`pub use libsystema_shared_rs::{…}` / `pub use libsystema_sysa::ipc`)
+  (`pub use systema_shared::{…}` / `pub use libsystema_sysa::ipc`)
   precisely so every consumer keeps the old `sysa::ipc`/`sysa::proto`/
   `sysa::worker_ipc` paths. Never move modules without preserving
   re-exports.  `libsystema-shared-rs` must never depend on `libsystema-sysa`.

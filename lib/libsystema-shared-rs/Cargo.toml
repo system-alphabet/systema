@@ -5,6 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# The package name already starts with "lib", but rustc always prefixes a
+# library artifact with "lib" on Unix.  Naming the target without that prefix
+# yields `libsystema_shared.rlib` instead of `liblibsystema_shared_rs.rlib`.
+[lib]
+name = "systema_shared"
+
 [dependencies]
 prost.workspace = true
 serde.workspace = true
