@@ -1882,12 +1882,7 @@ async fn prepare_batch_start(
         if state.worker_for_unit(unit_name).is_none() {
             bail!(
                 "{}",
-                missing_worker_error(
-                    &state,
-                    unit_name,
-                    &unit_type,
-                    &format!("{:?}", JobKind::Start)
-                )
+                missing_worker_error(&state, unit_name, &unit_type, &format!("{:?}", JobKind::Start))
             );
         }
     }

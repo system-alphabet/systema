@@ -1880,12 +1880,8 @@ mod tests {
         let mut state = AllocatorState::new();
         let (service_worker, _service_rx) = worker_entry("service-worker", &["service"]);
         let (custom_worker, _custom_rx) = worker_entry("custom-worker", &["timer"]);
-        state
-            .workers
-            .insert("service-worker".to_string(), service_worker);
-        state
-            .workers
-            .insert("custom-worker".to_string(), custom_worker);
+        state.workers.insert("service-worker".to_string(), service_worker);
+        state.workers.insert("custom-worker".to_string(), custom_worker);
 
         // Without a pin, the unit type picks the worker.
         state
