@@ -259,6 +259,9 @@ void check_clients() {
 
     auto empty = unitstate->list(sysa::UnitStateAdmin::EntryHandler{});
     require(!empty && empty.error().status() == sysa::Status::invalid_argument, "empty unit-state handler is rejected");
+
+    auto manager = sysa::ControlClient::create("/nonexistent/sysa-smoke.sock", "systemd");
+    require(!manager && manager.error().status() == sysa::Status::io, "control client reports a connect failure");
 }
 
 void check_worker() {

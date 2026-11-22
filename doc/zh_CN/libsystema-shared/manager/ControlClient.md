@@ -28,6 +28,7 @@ pub type ControlEventStream = mpsc::UnboundedReceiver<ControlEvent>;
 | `connect(socket_path: &str, flavor: &str, worker_id: Option<&str>) -> Result<ControlClient>` | 连接控制 socket，依次完成版本协商与 `manager.hello`。`flavor` 是桥身份（如 `"systemd"`）；`worker_id` 供受监督的桥声明身份（如 `"system-w-1"`）。 |
 | `connect_on(stream: UnixStream, flavor: &str, worker_id: Option<&str>) -> Result<ControlClient>` | 在已建立的流上完成 hello 握手并启动读写任务；用于嵌入方自备 socket 或 socketpair 测试。 |
 | `call<Q, R>(&self, method: &str, request: &Q) -> Result<R>` | 发送一个 `manager.*` 请求并等待应答。`Q` 为请求消息，`R` 为应答消息；服务端回 `manager.error` 时转为 `anyhow::Error`。 |
+| `call_raw(&self, method: &str, request: &[u8]) -> Result<Vec<u8>>` | 以已编码的 protobuf 载荷发送请求并返回原始应答载荷；供 protobuf 类型在本 crate 之外的嵌入方（如 C API）使用。 |
 | `events(&self) -> Arc<Mutex<ControlEventStream>>` | 取事件流。会话断开时接收端关闭（`recv()` 返回 `None`）。 |
 | `flavor(&self) -> &str` | 握手时声明的桥身份。 |
 

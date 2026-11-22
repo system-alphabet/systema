@@ -2,8 +2,8 @@
 
 Header-only C++26 wrapper around the `libsystema-shared-capi` C ABI.  It covers
 the IPC-facing data model (`ConfigMap`, `UnitIR`, `UnitStatus`), the clients
-(`Finder`, `StagingAdmin`, `UnitStateAdmin`) and the worker side (`Worker`,
-`Controller` and its hooks).
+(`Finder`, `StagingAdmin`, `UnitStateAdmin`, `ControlClient`) and the worker
+side (`Worker`, `Controller` and its hooks).
 
 Everything lives in namespace `sysa`; include the umbrella header:
 
@@ -73,6 +73,10 @@ itself.
   worker's run result, and a join or runtime failure comes back as the error.
   `sysa::MethodResultInfo::failure_kind()` distinguishes a unit's own failure
   (`sysa::FailureKind::unit`) from a task fault (`sysa::FailureKind::task`).
-- Wire payloads returned by `Finder`, `StagingAdmin` and
+- `sysa::ControlClient` performs the version + `manager.hello` handshake in
+  `create`.  Requests block the calling thread; server-pushed events are pulled
+  with `next_event(timeout_ms)` (zero waits indefinitely) and returned as
+  `sysa::ControlEvent`, so no callback runs on a library thread.
+- Wire payloads returned by `Finder`, `StagingAdmin`, `ControlClient` and
   `Worker::query_unit_cgroup` are protobuf messages defined in `proto/`; the
   wrapper exposes them as `sysa::Bytes`.

@@ -6,6 +6,7 @@
 #include "sysa/controller.hpp"
 #include "sysa/error.hpp"
 #include "sysa/finder.hpp"
+#include "sysa/manager.hpp"
 #include "sysa/publisher.hpp"
 #include "sysa/shutdown_handle.hpp"
 #include "sysa/staging_admin.hpp"

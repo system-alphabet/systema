@@ -268,12 +268,42 @@ impl ControlClient {
         R: ProstMessage + Default,
     {
         let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let env = make_envelope(id, self.flavor.clone(), "system-a", method, request.clone())
+            .with_context(|| format!("encoding {method} request"))?;
+        let received = self.exchange(method, env).await?;
+        R::decode(received.payload.as_slice()).with_context(|| format!("decoding {method} reply"))
+    }
+
+    /// Issue one `manager.*` request with an already-encoded payload and
+    /// return the reply payload bytes.
+    ///
+    /// This is the raw form of [`ControlClient::call`] for embedders whose
+    /// protobuf types live outside this crate (for example the C API).  A
+    /// `manager.error` reply is still turned into an [`anyhow::Error`].
+    pub async fn call_raw(&self, method: &str, request: &[u8]) -> Result<Vec<u8>> {
+        let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let env = Envelope {
+            request_id: id,
+            source: self.flavor.clone(),
+            target: "system-a".to_string(),
+            method: method.to_string(),
+            payload: request.to_vec(),
+        };
+        let received = self.exchange(method, env).await?;
+        Ok(received.payload)
+    }
+
+    /// Send `envelope` and await the matching reply.
+    ///
+    /// Shared by [`ControlClient::call`] and [`ControlClient::call_raw`]; a
+    /// `manager.error` reply becomes an error, and a dead session fails every
+    /// in-flight request.
+    async fn exchange(&self, method: &str, envelope: Envelope) -> Result<Envelope> {
+        let id = envelope.request_id;
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
 
-        let env = make_envelope(id, self.flavor.clone(), "system-a", method, request.clone())
-            .with_context(|| format!("encoding {method} request"))?;
-        if self.writer.send(env).is_err() {
+        if self.writer.send(envelope).is_err() {
             self.pending.lock().await.remove(&id);
             bail!("control session closed (writer task gone)");
         }
@@ -297,8 +327,7 @@ impl ControlClient {
                         self.flavor, expected
                     );
                 }
-                R::decode(received.payload.as_slice())
-                    .with_context(|| format!("decoding {method} reply"))
+                Ok(received)
             }
         }
     }

@@ -46,6 +46,7 @@ pub mod config_map;
 pub mod controller;
 mod error;
 pub mod finder;
+pub mod manager;
 mod runtime;
 pub mod staging_admin;
 pub mod status;
