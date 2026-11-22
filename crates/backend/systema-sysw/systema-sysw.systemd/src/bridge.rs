@@ -9,8 +9,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use zbus::OwnedObjectPath;
 
-use systema_sysw_common::event::{ControlEvent, ControlEventKind};
-use systema_sysw_common::ControlClient;
+use systema_sysw_common::{ControlClient, ControlEvent, ControlEventKind};
 
 use crate::dbus;
 use crate::dbus::manager::{job_object_path, ManagerInterface};
@@ -18,8 +17,8 @@ use crate::mirror::{MirrorHandle, UnitMirror};
 
 /// Prime the mirror from the initial snapshot + job listings.
 async fn seed(ctx: &Arc<dbus::BridgeContext>) -> Result<()> {
-    let units = systema_sysw_common::client::calls::list_snapshots(&ctx.client).await?;
-    let jobs = systema_sysw_common::client::calls::list_jobs(&ctx.client).await?;
+    let units = systema_sysw_common::calls::list_snapshots(&ctx.client).await?;
+    let jobs = systema_sysw_common::calls::list_jobs(&ctx.client).await?;
     info!(
         "Primed mirror from control plane: {} unit(s), {} job(s)",
         units.len(),
@@ -160,7 +159,14 @@ pub async fn run(
     install_fallback: crate::service_install::ServiceInstallFallback,
 ) -> Result<()> {
     let flavor = "systemd";
-    let client = Arc::new(ControlClient::connect(flavor, Some("system-w-1")).await?);
+    let client = Arc::new(
+        ControlClient::connect(
+            sysa::paths::instance().control_socket_path,
+            flavor,
+            Some("system-w-1"),
+        )
+        .await?,
+    );
 
     let mirror: MirrorHandle = Arc::new(parking_lot::RwLock::new(UnitMirror::new()));
     let ctx = dbus::BridgeContext::new(mirror, client.clone(), bus_address, install_fallback);

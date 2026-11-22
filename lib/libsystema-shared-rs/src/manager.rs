@@ -1,14 +1,18 @@
-//! Control-port client — how System Wrapper bridge flavors talk to System A.
+//! Control-port client — how bridge flavors talk to System A.
 //!
-//! A single `ControlClient` per bridge process:
+//! A single [`ControlClient`] per bridge process:
 //! - performs the `manager.hello` handshake,
 //! - issues `manager.*` request/reply envelopes (RPC),
 //! - receives server-pushed lifecycle events on a separate stream.
 //!
-//! Reconnection is the caller's job: `connect` returns an error when the
-//! session cannot be established, and the event stream / pending RPCs fail
-//! closed once the peer disconnects so the flavor can reconnect and rebuild
-//! its mirror from `list_snapshots`.
+//! Reconnection is the caller's job: [`ControlClient::connect`] returns an
+//! error when the session cannot be established, and the event stream /
+//! pending RPCs fail closed once the peer disconnects so the flavor can
+//! reconnect and rebuild its mirror from `list_snapshots`.
+//!
+//! The socket path is a parameter instead of being discovered here: the
+//! path registry lives in `sysa`, which depends on this crate, so the crate
+//! must stay free of that dependency.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,10 +27,65 @@ use tokio::select;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tracing::{debug, warn};
 
-use sysa::ipc::{frame_stream, make_envelope};
-use sysa::proto::{Envelope, ManagerHelloRequest, ManagerHelloResult, SimpleManagerResult};
+use crate::ipc::{connect_control, exchange_version, frame_stream, make_envelope};
+use crate::proto::{Envelope, ManagerHelloRequest, ManagerHelloResult, SimpleManagerResult};
 
-use crate::event::{ControlEvent, ControlEventKind};
+/// The well-known event methods System A pushes to control sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlEventKind {
+    /// Full `UnitSnapshot`; the unit's configuration or active state changed.
+    UnitChanged,
+    /// Full `UnitSnapshot`; a unit was loaded into memory.
+    UnitNew,
+    /// `UnitRemovedEvent`; a unit was unloaded / removed from memory.
+    UnitRemoved,
+    /// Raw `UnitCgroupMetrics`.
+    UnitMetrics,
+    /// `JobEvent`; a job was newly enqueued.
+    JobNew,
+    /// `JobEvent`; a job reached a terminal state (`result` is set).
+    JobCompleted,
+}
+
+impl ControlEventKind {
+    /// The envelope method string for this event kind.
+    pub fn method(&self) -> &'static str {
+        match self {
+            ControlEventKind::UnitChanged => "unit.changed",
+            ControlEventKind::UnitNew => "unit.new",
+            ControlEventKind::UnitRemoved => "unit.removed",
+            ControlEventKind::UnitMetrics => "unit.metrics",
+            ControlEventKind::JobNew => "job.new",
+            ControlEventKind::JobCompleted => "job.completed",
+        }
+    }
+
+    /// Classify an envelope method string, or `None` if it is not a control
+    /// event (e.g. a reply to one of our own requests).
+    pub fn from_method(method: &str) -> Option<ControlEventKind> {
+        match method {
+            "unit.changed" => Some(ControlEventKind::UnitChanged),
+            "unit.new" => Some(ControlEventKind::UnitNew),
+            "unit.removed" => Some(ControlEventKind::UnitRemoved),
+            "unit.metrics" => Some(ControlEventKind::UnitMetrics),
+            "job.new" => Some(ControlEventKind::JobNew),
+            "job.completed" => Some(ControlEventKind::JobCompleted),
+            _ => None,
+        }
+    }
+
+    /// Convenience predicate for the job terminal state.
+    pub fn is_job_completed(&self) -> bool {
+        matches!(self, ControlEventKind::JobCompleted)
+    }
+}
+
+/// One control-port event: the classified kind plus the raw envelope.
+#[derive(Debug)]
+pub struct ControlEvent {
+    pub kind: ControlEventKind,
+    pub envelope: Envelope,
+}
 
 type PendingRequests = Arc<Mutex<HashMap<u64, oneshot::Sender<Envelope>>>>;
 
@@ -59,33 +118,28 @@ impl ControlClient {
         }
     }
 
-    /// Connect to the control socket and perform the `manager.hello` handshake.
+    /// Connect to `socket_path` and perform the `manager.hello` handshake.
     ///
     /// `flavor` is the bridge identity reported to System A (e.g. `"systemd"`).
     /// `worker_id` is an optional supervised-worker identity (e.g.
     /// `"system-w-1"`) that lets the control session handler broadcast
     /// `WORKER_READY` on the notify channel for SysAInit.
-    pub async fn connect(flavor: &str, worker_id: Option<&str>) -> Result<ControlClient> {
-        let path = sysa::paths::instance().control_socket_path;
-        let stream = UnixStream::connect(path).await.with_context(|| {
-            sysa::l10n::fmt(
-                sysa::l10n::t_("connecting to control socket {path}"),
-                &[("path", &path.to_string())],
-            )
-        })?;
-        debug!("Connected to control socket {path}");
+    pub async fn connect(
+        socket_path: &str,
+        flavor: &str,
+        worker_id: Option<&str>,
+    ) -> Result<ControlClient> {
+        let stream = connect_control(socket_path)
+            .await
+            .with_context(|| format!("connecting to control socket {socket_path}"))?;
+        debug!("Connected to control socket {socket_path}");
         // IPC version exchange precedes the hello: the allocator pins one
         // wire version; a mismatch gets an "incompatible" verdict and an
         // immediate close, surfaced here as an ordinary connect error.
         let mut framed = frame_stream(stream);
-        let ipc_version = sysa::ipc::exchange_version(&mut framed, flavor)
+        let ipc_version = exchange_version(&mut framed, flavor)
             .await
-            .with_context(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("IPC version exchange with System A failed"),
-                    &[],
-                )
-            })?;
+            .context("IPC version exchange with System A failed")?;
         debug!("[{flavor}] IPC version {ipc_version} negotiated");
         let stream = framed.into_inner();
         Self::connect_on(stream, flavor, worker_id).await
@@ -195,12 +249,9 @@ impl ControlClient {
         let reply: ManagerHelloResult = client
             .call("manager.hello", &hello)
             .await
-            .context(sysa::l10n::t_("manager.hello handshake"))?;
+            .context("manager.hello handshake")?;
         if !reply.success {
-            bail!(sysa::l10n::fmt(
-                sysa::l10n::t_("control bus rejected us: {message}"),
-                &[("message", &(reply.message).to_string())]
-            ));
+            bail!("control bus rejected us: {}", reply.message);
         }
         debug!("Control handshake OK: {}", reply.message);
 
@@ -221,27 +272,22 @@ impl ControlClient {
         self.pending.lock().await.insert(id, tx);
 
         let env = make_envelope(id, self.flavor.clone(), "system-a", method, request.clone())
-            .with_context(|| {
-                sysa::l10n::fmt(
-                    sysa::l10n::t_("encoding {method} request"),
-                    &[("method", &method.to_string())],
-                )
-            })?;
+            .with_context(|| format!("encoding {method} request"))?;
         if self.writer.send(env).is_err() {
             self.pending.lock().await.remove(&id);
-            bail!(sysa::l10n::t_("control session closed (writer task gone)"));
+            bail!("control session closed (writer task gone)");
         }
 
         let mut closed = self.closed_rx.clone();
         let received = select! {
-            r = rx => r.map_err(|_| anyhow::anyhow!(sysa::l10n::t_("control session closed")))?,
-            _ = closed.changed() => bail!(sysa::l10n::t_("control session closed (disconnected)")),
+            r = rx => r.map_err(|_| anyhow::anyhow!("control session closed"))?,
+            _ = closed.changed() => bail!("control session closed (disconnected)"),
         };
 
         match received.method.as_str() {
             "manager.error" => {
                 let err = SimpleManagerResult::decode(received.payload.as_slice())
-                    .context(sysa::l10n::t_("decoding manager.error payload"))?;
+                    .context("decoding manager.error payload")?;
                 bail!("{}: {}", method, err.message);
             }
             expected => {
@@ -251,12 +297,8 @@ impl ControlClient {
                         self.flavor, expected
                     );
                 }
-                R::decode(received.payload.as_slice()).with_context(|| {
-                    sysa::l10n::fmt(
-                        sysa::l10n::t_("decoding {method} reply"),
-                        &[("method", &method.to_string())],
-                    )
-                })
+                R::decode(received.payload.as_slice())
+                    .with_context(|| format!("decoding {method} reply"))
             }
         }
     }
@@ -281,7 +323,7 @@ impl ControlClient {
 pub mod calls {
     use anyhow::Result;
 
-    use sysa::proto::{
+    use crate::proto::{
         GetUnitByInvocationRequest, GetUnitByPidRequest, GetUnitByPidResult, JobInfo,
         ListJobsRequest, ListJobsResult, ListSnapshotsRequest, ListSnapshotsResult,
         LoadUnitRequest, LoadUnitResult, UnitSnapshot, UnitSnapshotRequest, UnitSnapshotResult,
@@ -395,8 +437,8 @@ pub mod calls {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sysa::ipc::{make_envelope, recv_envelope, send_envelope};
-    use sysa::proto::{
+    use crate::ipc::{make_envelope, recv_envelope, send_envelope};
+    use crate::proto::{
         EnqueueJobRequest, EnqueueJobResult, JobEvent, ListSnapshotsResult, ManagerHelloResult,
         SimpleManagerResult, UnitSnapshot,
     };
@@ -409,7 +451,7 @@ mod tests {
     /// a one-way event (request_id 0).  This mirrors how System A's control
     /// bus serves bridge flavors.
     struct MockControlServer {
-        framed: sysa::ipc::EnvelopeFramed,
+        framed: crate::ipc::EnvelopeFramed,
         script: Vec<Envelope>,
     }
 
@@ -417,7 +459,7 @@ mod tests {
         async fn spawn(stream: UnixStream, script: Vec<Envelope>) {
             tokio::spawn(async move {
                 let mut server = Self {
-                    framed: sysa::ipc::frame_stream(stream),
+                    framed: crate::ipc::frame_stream(stream),
                     script,
                 };
                 if let Err(e) = server.run().await {
@@ -485,7 +527,7 @@ mod tests {
                         send_envelope(&mut self.framed, &reply).await?;
                     }
                     "manager.list_jobs" => {
-                        let reply = sysa::proto::ListJobsResult {
+                        let reply = crate::proto::ListJobsResult {
                             success: true,
                             message: String::new(),
                             jobs: vec![],

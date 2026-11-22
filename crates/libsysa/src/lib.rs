@@ -21,7 +21,7 @@
 
 pub use libsystema_sysa::ipc;
 pub use systema_shared::{
-    controller, error_code, finder, ir, proto, staging_admin, unitstate_admin, worker_ipc,
+    controller, error_code, finder, ir, manager, proto, staging_admin, unitstate_admin, worker_ipc,
 };
 
 pub mod errors;

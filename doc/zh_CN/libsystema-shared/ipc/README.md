@@ -34,6 +34,8 @@ worker 之间走工作负载面（`allocator.sock`），System A 与 SysW、SysI
 ## 与其它模块的关系
 
 - [worker_ipc](../worker_ipc/README.md)：用本模块建立连接、发送/接收信封。
+- [manager](../manager/README.md)：控制面客户端，用本模块建立 `control.socket`
+  会话并分发 `manager.*` 应答与推送事件。
 - [error_code](../error_code/README.md)：本模块所有失败的结构化表达。
 - [ir](../ir/README.md)：信封载荷里的单元模型以 JSON 字节承载。
 

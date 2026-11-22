@@ -71,6 +71,7 @@
 | [finder/](finder/README.md) | 单元提供者接口：IR 的提交与 staging |
 | [staging_admin/](staging_admin/README.md) | 运维视角查询/提交 staging 区 |
 | [unitstate_admin/](unitstate_admin/README.md) | 运维视角导出实际状态快照 |
+| [manager/](manager/README.md) | 控制面客户端：连接、RPC 与事件分类 |
 | [ir/](ir/README.md) | 统一单元中间表示 |
 | [ir/config/](ir/config/README.md) | 扁平指令字典的读取约定 |
 | [ipc/](ipc/README.md) | 线协议：分帧、信封、版本握手、fd 传递 |
@@ -103,4 +104,6 @@
   与 [finder/](finder/README.md)；
 - 想写运维/调试工具：读 [staging_admin/](staging_admin/README.md)、
   [unitstate_admin/](unitstate_admin/README.md) 与 [error_code/](error_code/README.md)；
+- 想写 SysW 或控制面前端：读 [manager/](manager/README.md) 与
+  [ipc/](ipc/README.md)；
 - 想理解传输与握手：读 [ipc/](ipc/README.md)。

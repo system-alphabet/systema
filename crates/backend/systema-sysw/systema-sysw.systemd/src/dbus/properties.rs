@@ -82,9 +82,7 @@ impl FallbackProperties {
             super::ensure_unit_object(&self.ctx, &canonical).await;
             return Ok(canonical);
         }
-        match systema_sysw_common::client::calls::load_unit_snapshot(&self.ctx.client, &canonical)
-            .await
-        {
+        match systema_sysw_common::calls::load_unit_snapshot(&self.ctx.client, &canonical).await {
             Ok((load, snapshot)) => {
                 self.ctx.mirror.write().upsert(snapshot);
                 super::ensure_unit_object(&self.ctx, &load.name).await;

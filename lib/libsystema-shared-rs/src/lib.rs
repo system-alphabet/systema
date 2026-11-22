@@ -15,6 +15,7 @@ pub mod error_code;
 pub mod finder;
 pub mod ipc;
 pub mod ir;
+pub mod manager;
 pub mod proto {
     //! Generated protobuf types for the IPC protocol.
     //!

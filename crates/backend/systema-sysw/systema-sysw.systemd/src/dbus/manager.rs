@@ -634,8 +634,7 @@ impl ManagerInterface {
         // starting it, so `status` behaves like it does under systemd.  The
         // fresh snapshot replaces the `not-found` one before the object is
         // registered, otherwise its properties would lie.
-        match systema_sysw_common::client::calls::load_unit_snapshot(&self.ctx.client, &name).await
-        {
+        match systema_sysw_common::calls::load_unit_snapshot(&self.ctx.client, &name).await {
             Ok((load, snapshot)) => {
                 self.ctx.mirror.write().upsert(snapshot);
                 super::ensure_unit_object(&self.ctx, &load.name).await;

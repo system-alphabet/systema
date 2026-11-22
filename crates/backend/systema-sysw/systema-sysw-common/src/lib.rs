@@ -5,11 +5,8 @@
 //! consume that bus: they mirror unit state off snapshots + events and publish
 //! it on their native bus (e.g. D-Bus) on behalf of System A.
 //!
-//! This crate is the flavor-independent foundation: the control-port client,
-//! event classification, and (later) the shared mirror.
+//! The control-port client and its event model live in `libsystema-shared`
+//! (module `manager`); this crate re-exports them so flavor crates have one
+//! bridge-facing namespace.
 
-pub mod client;
-pub mod event;
-
-pub use client::{ControlClient, ControlEventStream};
-pub use event::{ControlEvent, ControlEventKind};
+pub use sysa::manager::{calls, ControlClient, ControlEvent, ControlEventKind, ControlEventStream};

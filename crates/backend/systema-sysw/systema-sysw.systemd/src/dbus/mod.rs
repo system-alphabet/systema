@@ -372,7 +372,7 @@ pub async fn resolve_canonical(ctx: &BridgeContext, name: &str) -> String {
     if let Some(snap) = ctx.mirror.read().get(name) {
         return snap.name.clone();
     }
-    match systema_sysw_common::client::calls::unit_snapshot(&ctx.client, name).await {
+    match systema_sysw_common::calls::unit_snapshot(&ctx.client, name).await {
         Ok(snap) => {
             ctx.mirror.write().upsert(snap.clone());
             snap.name

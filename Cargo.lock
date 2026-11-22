@@ -1442,14 +1442,7 @@ dependencies = [
 name = "systema-sysw-common"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "prost",
  "sysa",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]

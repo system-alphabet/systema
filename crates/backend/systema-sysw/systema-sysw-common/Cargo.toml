@@ -7,11 +7,3 @@ license.workspace = true
 
 [dependencies]
 sysa = { path = "../../../libsysa" }
-
-tokio.workspace = true
-tokio-util = { workspace = true }
-anyhow.workspace = true
-prost.workspace = true
-bytes.workspace = true
-tracing.workspace = true
-futures.workspace = true
