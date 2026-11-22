@@ -9,17 +9,22 @@
 #include <unordered_map>
 #include <vector>
 
-namespace {
+namespace
+{
 
-void require(bool condition, std::string_view what) {
-    if (!condition) {
+void require(bool condition, std::string_view what)
+{
+    if (!condition)
+    {
         std::fprintf(stderr, "smoke check failed: %.*s\n", static_cast<int>(what.size()), what.data());
         std::exit(EXIT_FAILURE);
     }
 }
 
-template <typename T> [[nodiscard]] T checked(T value, std::string_view what) {
-    if (!value) {
+template <typename T> [[nodiscard]] T checked(T value, std::string_view what)
+{
+    if (!value)
+    {
         const std::string message = value.error().to_string();
         std::fprintf(stderr, "smoke check failed: %.*s: %s\n", static_cast<int>(what.size()), what.data(),
                      message.c_str());
@@ -28,16 +33,19 @@ template <typename T> [[nodiscard]] T checked(T value, std::string_view what) {
     return value;
 }
 
-void checked(sysa::Result const& result, std::string_view what) {
+void checked(sysa::Result const& result, std::string_view what)
+{
     require(result.has_value(), what);
 }
 
-void check_version() {
+void check_version()
+{
     require(sysa::abi_version() == SYSA_SHARED_ABI_VERSION, "ABI version matches the C header");
     require(!sysa::version().empty(), "runtime version is reported");
 }
 
-void check_config_map() {
+void check_config_map()
+{
     constexpr std::string_view json = R"({
     "Type": "notify",
     "ExecStart": ["/bin/true", "--flag"],
@@ -113,7 +121,8 @@ void check_config_map() {
     require(!invalid.error().message().empty(), "invalid config map has a message");
 }
 
-void check_unit_ir() {
+void check_unit_ir()
+{
     constexpr std::string_view json = R"({
     "id": "example.service",
     "unit_type": "Service",
@@ -188,7 +197,8 @@ void check_unit_ir() {
     require(!invalid.error().message().empty(), "invalid unit IR has a message");
 }
 
-void check_unit_type() {
+void check_unit_type()
+{
     const sysa::UnitType standard = sysa::UnitType::parse("timer");
     require(standard.kind() == sysa::UnitKind::timer, "standard unit kind");
     require(standard.is_standard(), "standard unit type is standard");
@@ -206,7 +216,8 @@ void check_unit_type() {
     require(!(custom == sysa::UnitType::parse("other-script")), "custom types with different names differ");
 }
 
-void check_unit_status() {
+void check_unit_status()
+{
     auto status = checked(sysa::UnitStatus::create("example.service", "active", "running", 42, "invocation-1"),
                           "unit status create");
 
@@ -247,7 +258,8 @@ void check_unit_status() {
     require(invalid.error().status() == sysa::Status::protocol, "malformed status reports a protocol error");
 }
 
-void check_clients() {
+void check_clients()
+{
     auto finder = checked(sysa::Finder::create("/tmp/sysa-smoke.sock"), "finder create");
     require(finder->native_handle() != nullptr, "finder handle");
 
@@ -264,7 +276,8 @@ void check_clients() {
     require(!manager && manager.error().status() == sysa::Status::io, "control client reports a connect failure");
 }
 
-void check_worker() {
+void check_worker()
+{
     std::vector<std::string_view> unit_types{"service"};
     auto worker = checked(sysa::Worker::create("smoke", unit_types), "worker create");
 
@@ -319,7 +332,8 @@ void check_worker() {
 
 } // namespace
 
-int main() {
+int main()
+{
     check_version();
     check_config_map();
     check_unit_ir();

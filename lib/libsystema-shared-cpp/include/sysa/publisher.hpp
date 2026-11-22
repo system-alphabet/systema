@@ -11,7 +11,8 @@
 #include <systema_shared.h>
 #include <vector>
 
-namespace sysa {
+namespace sysa
+{
 
 /// A non-owning publisher handle for a running worker.
 ///
@@ -19,7 +20,8 @@ namespace sysa {
 /// hands one out, a controller can copy it and keep it in its handlers, and
 /// every call is routed through the worker's IPC loop.  The handle does not
 /// own the worker; it stays valid until the `Worker` is destroyed.
-class EventPublisher {
+class EventPublisher
+{
 public:
     EventPublisher() noexcept = default;
     explicit EventPublisher(SysaWorker* worker) noexcept : worker_{worker} {}
@@ -29,12 +31,15 @@ public:
 
     /// Publish a `unit.state_update` snapshot (`full_snapshot` on reconnect).
     template <SequenceOf<UnitStatus> Statuses>
-    Result publish_unit_states(Statuses const& statuses, bool full_snapshot) const {
+    Result publish_unit_states(Statuses const& statuses, bool full_snapshot) const
+    {
         std::vector<const SysaUnitStatus*> pointers;
-        if constexpr (std::ranges::sized_range<Statuses>) {
+        if constexpr (std::ranges::sized_range<Statuses>)
+        {
             pointers.reserve(static_cast<std::size_t>(std::ranges::size(statuses)));
         }
-        for (auto const& status : statuses) {
+        for (auto const& status : statuses)
+        {
             pointers.push_back(status.native_handle());
         }
 
@@ -46,13 +51,15 @@ public:
 
     /// Ask System A where a unit's cgroup lives (protobuf `UnitCgroupResult`).
     template <StringLike UnitName>
-    [[nodiscard]] Expected<Bytes> query_unit_cgroup(UnitName const& unit_name, std::uint32_t timeout_ms = 0) const {
+    [[nodiscard]] Expected<Bytes> query_unit_cgroup(UnitName const& unit_name, std::uint32_t timeout_ms = 0) const
+    {
         detail::CString name_text{unit_name};
         detail::clear_last_error();
         std::uint8_t* data = nullptr;
         std::size_t size = 0;
         const auto raw_status = sysa_worker_query_unit_cgroup(worker_, name_text.get(), timeout_ms, &data, &size);
-        if (raw_status != SYSA_STATUS_OK) {
+        if (raw_status != SYSA_STATUS_OK)
+        {
             return std::unexpected(detail::take_error(detail::to_status(raw_status)));
         }
         return Bytes{data, size};
@@ -60,7 +67,8 @@ public:
 
     /// Send a fire-and-forget envelope with a raw payload.
     template <StringLike Method, ByteSequence Payload>
-    Result send_envelope_bytes(Method const& method, Payload const& payload) const {
+    Result send_envelope_bytes(Method const& method, Payload const& payload) const
+    {
         detail::CString method_text{method};
         detail::clear_last_error();
         const auto raw_status = sysa_worker_send_envelope_bytes(worker_, method_text.get(), detail::byte_data(payload),
@@ -70,7 +78,8 @@ public:
 
     /// Send a reply envelope with a raw payload.
     template <StringLike Method, ByteSequence Payload>
-    Result send_reply(std::uint64_t request_id, Method const& method, Payload const& payload) const {
+    Result send_reply(std::uint64_t request_id, Method const& method, Payload const& payload) const
+    {
         detail::CString method_text{method};
         detail::clear_last_error();
         const auto raw_status = sysa_worker_send_reply(worker_, request_id, method_text.get(),
@@ -79,7 +88,8 @@ public:
     }
 
     /// Subscribe to `event.publish` notifications; an empty list means all units.
-    template <StringSequence Names> Result subscribe_units(Names const& names) const {
+    template <StringSequence Names> Result subscribe_units(Names const& names) const
+    {
         detail::CStringArray array{names};
         detail::clear_last_error();
         const auto raw_status = sysa_worker_subscribe_units(worker_, array.data(), array.size());
@@ -87,7 +97,8 @@ public:
     }
 
     /// Cancel `event.publish` subscriptions; an empty list cancels all of them.
-    template <StringSequence Names> Result unsubscribe_units(Names const& names) const {
+    template <StringSequence Names> Result unsubscribe_units(Names const& names) const
+    {
         detail::CStringArray array{names};
         detail::clear_last_error();
         const auto raw_status = sysa_worker_unsubscribe_units(worker_, array.data(), array.size());

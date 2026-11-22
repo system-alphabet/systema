@@ -5,7 +5,8 @@
 #include <ranges>
 #include <type_traits>
 
-namespace sysa {
+namespace sysa
+{
 
 /// A string argument accepted by the C++ wrapper.
 ///

@@ -7,7 +7,8 @@
 #include <string_view>
 #include <systema_shared.h>
 
-namespace sysa {
+namespace sysa
+{
 
 /// A copyable request to stop a running worker.
 ///
@@ -15,7 +16,8 @@ namespace sysa {
 /// non-owning view of the worker, dropping it does not stop anything, and a
 /// shutdown is requested only by calling `shutdown`.  Repeated calls are
 /// harmless.
-class ShutdownHandle {
+class ShutdownHandle
+{
 public:
     ShutdownHandle() noexcept = default;
     explicit ShutdownHandle(SysaWorker* worker) noexcept : worker_{worker} {}
@@ -27,7 +29,8 @@ public:
     Result shutdown() const { return shutdown(std::string_view{"stop"}); }
 
     /// Request a graceful exit; `reason` names the exit in logs and `worker.exit`.
-    template <StringLike Reason> Result shutdown(Reason const& reason) const {
+    template <StringLike Reason> Result shutdown(Reason const& reason) const
+    {
         detail::CString reason_text{reason};
         detail::clear_last_error();
         return detail::status_to_result(sysa_worker_stop(worker_, reason_text.get()));

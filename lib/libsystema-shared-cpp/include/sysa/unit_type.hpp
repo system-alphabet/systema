@@ -8,10 +8,12 @@
 #include <string_view>
 #include <utility>
 
-namespace sysa {
+namespace sysa
+{
 
 /// The kind of a unit, mirroring `libsystema_shared::ir::UnitType`.
-enum class UnitKind : std::uint8_t {
+enum class UnitKind : std::uint8_t
+{
     service,
     target,
     mount,
@@ -33,7 +35,8 @@ enum class UnitKind : std::uint8_t {
 /// `UnitIR` reports the type as a string.  This class gives consumers a closed
 /// enumeration for the standard kinds while keeping an unknown name verbatim,
 /// which is the same shape as the Rust `UnitType::Other(String)` variant.
-class UnitType {
+class UnitType
+{
 public:
     UnitType() noexcept = default;
 
@@ -43,11 +46,15 @@ public:
     explicit UnitType(std::string name) : kind_{UnitKind::other}, custom_{std::move(name)} {}
 
     /// Parse a type name; unknown names become `UnitKind::other`.
-    template <StringLike S> [[nodiscard]] static UnitType parse(S const& value) {
-        if constexpr (std::convertible_to<S const&, const char*>) {
+    template <StringLike S> [[nodiscard]] static UnitType parse(S const& value)
+    {
+        if constexpr (std::convertible_to<S const&, const char*>)
+        {
             const char* text = value;
             return parse_view(text == nullptr ? std::string_view{} : std::string_view{text});
-        } else {
+        }
+        else
+        {
             return parse_view(std::string_view{value.data(), value.size()});
         }
     }
@@ -55,8 +62,10 @@ public:
     [[nodiscard]] UnitKind kind() const noexcept { return kind_; }
 
     /// The lower-case type name; an unknown type returns its original name.
-    [[nodiscard]] std::string_view name() const noexcept {
-        switch (kind_) {
+    [[nodiscard]] std::string_view name() const noexcept
+    {
+        switch (kind_)
+        {
         case UnitKind::service:
             return "service";
         case UnitKind::target:
@@ -90,49 +99,64 @@ public:
     /// Whether the type is one of the standard kinds.
     [[nodiscard]] bool is_standard() const noexcept { return kind_ != UnitKind::other; }
 
-    [[nodiscard]] friend bool operator==(UnitType const& lhs, UnitType const& rhs) noexcept {
-        if (lhs.kind_ != rhs.kind_) {
+    [[nodiscard]] friend bool operator==(UnitType const& lhs, UnitType const& rhs) noexcept
+    {
+        if (lhs.kind_ != rhs.kind_)
+        {
             return false;
         }
         return lhs.kind_ != UnitKind::other || lhs.custom_ == rhs.custom_;
     }
 
 private:
-    [[nodiscard]] static UnitType parse_view(std::string_view name) {
-        if (name == "service") {
+    [[nodiscard]] static UnitType parse_view(std::string_view name)
+    {
+        if (name == "service")
+        {
             return UnitType{UnitKind::service};
         }
-        if (name == "target") {
+        if (name == "target")
+        {
             return UnitType{UnitKind::target};
         }
-        if (name == "mount") {
+        if (name == "mount")
+        {
             return UnitType{UnitKind::mount};
         }
-        if (name == "automount") {
+        if (name == "automount")
+        {
             return UnitType{UnitKind::automount};
         }
-        if (name == "timer") {
+        if (name == "timer")
+        {
             return UnitType{UnitKind::timer};
         }
-        if (name == "socket") {
+        if (name == "socket")
+        {
             return UnitType{UnitKind::socket};
         }
-        if (name == "slice") {
+        if (name == "slice")
+        {
             return UnitType{UnitKind::slice};
         }
-        if (name == "scope") {
+        if (name == "scope")
+        {
             return UnitType{UnitKind::scope};
         }
-        if (name == "swap") {
+        if (name == "swap")
+        {
             return UnitType{UnitKind::swap};
         }
-        if (name == "path") {
+        if (name == "path")
+        {
             return UnitType{UnitKind::path};
         }
-        if (name == "device") {
+        if (name == "device")
+        {
             return UnitType{UnitKind::device};
         }
-        if (name == "power") {
+        if (name == "power")
+        {
             return UnitType{UnitKind::power};
         }
         return UnitType{std::string{name}};

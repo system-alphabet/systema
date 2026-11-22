@@ -7,10 +7,12 @@
 #include <systema_shared.h>
 #include <utility>
 
-namespace sysa {
+namespace sysa
+{
 
 /// Coarse result category of a C API call.
-enum class Status : std::uint32_t {
+enum class Status : std::uint32_t
+{
     ok = SYSA_STATUS_OK,
     invalid_argument = SYSA_STATUS_INVALID_ARGUMENT,
     not_found = SYSA_STATUS_NOT_FOUND,
@@ -29,7 +31,8 @@ static_assert(static_cast<std::uint32_t>(Status::ok) == SYSA_STATUS_OK);
 static_assert(static_cast<std::uint32_t>(Status::not_running) == SYSA_STATUS_NOT_RUNNING);
 
 /// Stable IPC failure identifier.  The numeric values match the C ABI.
-enum class ErrorCode : std::uint32_t {
+enum class ErrorCode : std::uint32_t
+{
     none = SYSA_ERROR_CODE_NONE,
     connect_failed = SYSA_ERROR_CODE_CONNECT_FAILED,
     connect_permission_denied = SYSA_ERROR_CODE_CONNECT_PERMISSION_DENIED,
@@ -83,24 +86,30 @@ static_assert(static_cast<std::uint32_t>(ErrorCode::unknown_method) == SYSA_ERRO
 [[nodiscard]] inline constexpr std::string_view error_code_name(ErrorCode code) noexcept;
 
 /// A failure reported by the C API.
-class Error {
+class Error
+{
 public:
     Error(Status status, ErrorCode code, std::string message)
-        : status_{status}, code_{code}, message_{std::move(message)} {}
+        : status_{status}, code_{code}, message_{std::move(message)}
+    {
+    }
 
     [[nodiscard]] Status status() const noexcept { return status_; }
     [[nodiscard]] ErrorCode code() const noexcept { return code_; }
     [[nodiscard]] std::string_view message() const noexcept { return message_; }
 
     /// Human-readable diagnostic, suitable for logs but not for end users.
-    [[nodiscard]] std::string to_string() const {
+    [[nodiscard]] std::string to_string() const
+    {
         std::string text{status_name(status_)};
-        if (code_ != ErrorCode::none) {
+        if (code_ != ErrorCode::none)
+        {
             text += " [";
             text += error_code_name(code_);
             text += ']';
         }
-        if (!message_.empty()) {
+        if (!message_.empty())
+        {
             text += ": ";
             text += message_;
         }
@@ -121,8 +130,10 @@ template <typename T> using Expected = std::expected<T, Error>;
 /// A fallible operation without a value.
 using Result = std::expected<void, Error>;
 
-[[nodiscard]] inline constexpr std::string_view status_name(Status status) noexcept {
-    switch (status) {
+[[nodiscard]] inline constexpr std::string_view status_name(Status status) noexcept
+{
+    switch (status)
+    {
     case Status::ok:
         return "ok";
     case Status::invalid_argument:
@@ -151,8 +162,10 @@ using Result = std::expected<void, Error>;
     return "unknown";
 }
 
-[[nodiscard]] inline constexpr std::string_view error_code_name(ErrorCode code) noexcept {
-    switch (code) {
+[[nodiscard]] inline constexpr std::string_view error_code_name(ErrorCode code) noexcept
+{
+    switch (code)
+    {
     case ErrorCode::none:
         return "none";
     case ErrorCode::connect_failed:
@@ -245,13 +258,16 @@ using Result = std::expected<void, Error>;
     return "unknown";
 }
 
-namespace detail {
+namespace detail
+{
 
-[[nodiscard]] inline constexpr Status to_status(SysaStatus status) noexcept {
+[[nodiscard]] inline constexpr Status to_status(SysaStatus status) noexcept
+{
     return static_cast<Status>(status);
 }
 
-[[nodiscard]] inline constexpr SysaStatus to_c_status(Status status) noexcept {
+[[nodiscard]] inline constexpr SysaStatus to_c_status(Status status) noexcept
+{
     return static_cast<SysaStatus>(status);
 }
 
@@ -259,12 +275,14 @@ namespace detail {
 ///
 /// `ok` is not a legal failure status; an error carrying it degrades to
 /// `internal` instead of accidentally telling the library to continue.
-[[nodiscard]] inline SysaStatus error_to_c_status(Error const& error) noexcept {
+[[nodiscard]] inline SysaStatus error_to_c_status(Error const& error) noexcept
+{
     return error.status() == Status::ok ? SYSA_STATUS_INTERNAL : to_c_status(error.status());
 }
 
 /// Copy and clear the thread-local failure recorded by the C API.
-[[nodiscard]] inline Error take_error(Status status) {
+[[nodiscard]] inline Error take_error(Status status)
+{
     const auto code = static_cast<ErrorCode>(sysa_last_error_code());
     const char* raw_message = sysa_last_error_message();
     std::string message = raw_message == nullptr ? std::string{status_name(status)} : std::string{raw_message};
@@ -273,24 +291,29 @@ namespace detail {
 }
 
 /// Copy the thread-local failure, preferring the status recorded by the C API.
-[[nodiscard]] inline Error take_last_error(Status fallback) {
+[[nodiscard]] inline Error take_last_error(Status fallback)
+{
     const auto raw_status = sysa_last_error_status();
     return take_error(raw_status == SYSA_STATUS_OK ? fallback : to_status(raw_status));
 }
 
-[[nodiscard]] inline Result status_to_result(SysaStatus raw_status) {
-    if (raw_status == SYSA_STATUS_OK) {
+[[nodiscard]] inline Result status_to_result(SysaStatus raw_status)
+{
+    if (raw_status == SYSA_STATUS_OK)
+    {
         sysa_clear_error();
         return {};
     }
     return std::unexpected(take_error(to_status(raw_status)));
 }
 
-[[nodiscard]] inline Error internal_error(std::string message) {
+[[nodiscard]] inline Error internal_error(std::string message)
+{
     return Error{Status::internal, ErrorCode::none, std::move(message)};
 }
 
-inline void clear_last_error() noexcept {
+inline void clear_last_error() noexcept
+{
     sysa_clear_error();
 }
 
