@@ -4,9 +4,9 @@
 use std::ffi::{c_char, CStr, CString};
 use std::slice;
 
-use crate::status::SystemaStatus;
+use crate::status::SysaStatus;
 
-/// Wrap an exported body so a Rust panic becomes `SYSTEMA_STATUS_INTERNAL`
+/// Wrap an exported body so a Rust panic becomes `SYSA_STATUS_INTERNAL`
 /// instead of unwinding across the C ABI (which aborts since Rust 1.81).
 macro_rules! ffi_try {
     ($default:expr, $body:block) => {{
@@ -15,8 +15,8 @@ macro_rules! ffi_try {
             Err(payload) => {
                 let message = crate::ffi::panic_message(payload);
                 crate::error::set_error(
-                    crate::status::SystemaStatus::Internal,
-                    crate::status::SystemaErrorCode::None,
+                    crate::status::SysaStatus::Internal,
+                    crate::status::SysaErrorCode::None,
                     &message,
                 );
                 $default
@@ -43,17 +43,17 @@ pub(crate) fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 pub(crate) unsafe fn require_str<'a>(
     ptr: *const c_char,
     what: &str,
-) -> Result<&'a str, SystemaStatus> {
+) -> Result<&'a str, SysaStatus> {
     if ptr.is_null() {
         return Err(crate::error::fail(
-            SystemaStatus::InvalidArgument,
+            SysaStatus::InvalidArgument,
             format!("{what} is null"),
         ));
     }
     match CStr::from_ptr(ptr).to_str() {
         Ok(text) => Ok(text),
         Err(_) => Err(crate::error::fail(
-            SystemaStatus::InvalidArgument,
+            SysaStatus::InvalidArgument,
             format!("{what} is not valid UTF-8"),
         )),
     }
@@ -69,13 +69,13 @@ pub(crate) unsafe fn require_bytes<'a>(
     ptr: *const u8,
     len: usize,
     what: &str,
-) -> Result<&'a [u8], SystemaStatus> {
+) -> Result<&'a [u8], SysaStatus> {
     if len == 0 {
         return Ok(&[]);
     }
     if ptr.is_null() {
         return Err(crate::error::fail(
-            SystemaStatus::InvalidArgument,
+            SysaStatus::InvalidArgument,
             format!("{what} is null"),
         ));
     }
@@ -102,10 +102,10 @@ pub(crate) fn write_out_bytes(
     out: *mut *mut u8,
     out_len: *mut usize,
     data: Vec<u8>,
-) -> Result<(), SystemaStatus> {
+) -> Result<(), SysaStatus> {
     if out.is_null() || out_len.is_null() {
         return Err(crate::error::fail(
-            SystemaStatus::InvalidArgument,
+            SysaStatus::InvalidArgument,
             "output parameter is null",
         ));
     }
@@ -118,20 +118,20 @@ pub(crate) fn write_out_bytes(
 }
 
 /// An owned list of strings, used wherever the Rust API returns `Vec<String>`.
-pub struct SystemaStringList {
+pub struct SysaStringList {
     items: Vec<CString>,
 }
 
-impl SystemaStringList {
+impl SysaStringList {
     fn from_strings(items: Vec<String>) -> Self {
-        SystemaStringList {
+        SysaStringList {
             items: items.iter().map(|item| sanitize(item)).collect(),
         }
     }
 }
 
-pub(crate) fn into_string_list(items: Vec<String>) -> *mut SystemaStringList {
-    Box::into_raw(Box::new(SystemaStringList::from_strings(items)))
+pub(crate) fn into_string_list(items: Vec<String>) -> *mut SysaStringList {
+    Box::into_raw(Box::new(SysaStringList::from_strings(items)))
 }
 
 pub(crate) fn sanitize(text: &str) -> CString {
@@ -140,10 +140,10 @@ pub(crate) fn sanitize(text: &str) -> CString {
 
 /// Number of strings in `list`.
 #[no_mangle]
-pub extern "C" fn systema_shared_string_list_len(list: *const SystemaStringList) -> usize {
+pub extern "C" fn sysa_string_list_len(list: *const SysaStringList) -> usize {
     ffi_try!(0, {
         if list.is_null() {
-            crate::error::fail(SystemaStatus::InvalidArgument, "list is null");
+            crate::error::fail(SysaStatus::InvalidArgument, "list is null");
             return 0;
         }
         unsafe { &*list }.items.len()
@@ -152,13 +152,10 @@ pub extern "C" fn systema_shared_string_list_len(list: *const SystemaStringList)
 
 /// Borrow string `index`; null when the index is out of range.
 #[no_mangle]
-pub extern "C" fn systema_shared_string_list_get(
-    list: *const SystemaStringList,
-    index: usize,
-) -> *const c_char {
+pub extern "C" fn sysa_string_list_get(list: *const SysaStringList, index: usize) -> *const c_char {
     ffi_try!(std::ptr::null(), {
         if list.is_null() {
-            crate::error::fail(SystemaStatus::InvalidArgument, "list is null");
+            crate::error::fail(SysaStatus::InvalidArgument, "list is null");
             return std::ptr::null();
         }
         unsafe { &*list }
@@ -171,7 +168,7 @@ pub extern "C" fn systema_shared_string_list_get(
 
 /// Release a list returned by this library.
 #[no_mangle]
-pub extern "C" fn systema_shared_string_list_free(list: *mut SystemaStringList) {
+pub extern "C" fn sysa_string_list_free(list: *mut SysaStringList) {
     ffi_try!((), {
         if !list.is_null() {
             drop(unsafe { Box::from_raw(list) });
@@ -181,7 +178,7 @@ pub extern "C" fn systema_shared_string_list_free(list: *mut SystemaStringList) 
 
 /// Release a string returned by this library.
 #[no_mangle]
-pub extern "C" fn systema_shared_string_free(text: *mut c_char) {
+pub extern "C" fn sysa_string_free(text: *mut c_char) {
     ffi_try!((), {
         if !text.is_null() {
             drop(unsafe { CString::from_raw(text) });
@@ -191,7 +188,7 @@ pub extern "C" fn systema_shared_string_free(text: *mut c_char) {
 
 /// Release a byte buffer returned by this library.
 #[no_mangle]
-pub extern "C" fn systema_shared_bytes_free(data: *mut u8, len: usize) {
+pub extern "C" fn sysa_bytes_free(data: *mut u8, len: usize) {
     ffi_try!((), {
         if !data.is_null() {
             drop(unsafe { Box::from_raw(slice::from_raw_parts_mut(data, len)) });
@@ -200,9 +197,9 @@ pub extern "C" fn systema_shared_bytes_free(data: *mut u8, len: usize) {
 }
 
 /// Map a fallible FFI helper onto the status convention, reporting the error.
-pub(crate) fn check(result: Result<(), SystemaStatus>) -> SystemaStatus {
+pub(crate) fn check(result: Result<(), SysaStatus>) -> SysaStatus {
     match result {
-        Ok(()) => SystemaStatus::Ok,
+        Ok(()) => SysaStatus::Ok,
         Err(status) => {
             if crate::error::is_empty() {
                 crate::error::fail(status, format!("{status:?}"));

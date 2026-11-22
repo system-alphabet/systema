@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use tokio::runtime::{Builder, Handle};
 
-use crate::status::SystemaStatus;
+use crate::status::SysaStatus;
 
 /// Default budget for a synchronous request when the caller has none.
 pub(crate) const DEFAULT_WAIT: Duration = Duration::from_secs(30);
@@ -95,14 +95,14 @@ fn spawn_client() -> Result<ClientRuntime, String> {
 }
 
 /// Drive `future` on the client runtime and wait for its result.
-pub(crate) fn block_on<F, T>(future: F, wait: Duration) -> Result<T, SystemaStatus>
+pub(crate) fn block_on<F, T>(future: F, wait: Duration) -> Result<T, SysaStatus>
 where
     F: Future<Output = anyhow::Result<T>> + Send + 'static,
     T: Send + 'static,
 {
     if in_library_runtime() || in_callback() {
         return Err(crate::error::fail(
-            SystemaStatus::Reentrant,
+            SysaStatus::Reentrant,
             "a blocking call was made from a library runtime thread or a callback",
         ));
     }
@@ -110,7 +110,7 @@ where
         Ok(client) => client,
         Err(message) => {
             return Err(crate::error::fail(
-                SystemaStatus::Internal,
+                SysaStatus::Internal,
                 format!("client runtime unavailable: {message}"),
             ))
         }
@@ -125,11 +125,11 @@ where
         Ok(Ok(value)) => Ok(value),
         Ok(Err(error)) => Err(crate::error::report(error)),
         Err(mpsc::RecvTimeoutError::Timeout) => Err(crate::error::fail(
-            SystemaStatus::Timeout,
+            SysaStatus::Timeout,
             "the request timed out",
         )),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(crate::error::fail(
-            SystemaStatus::Internal,
+            SysaStatus::Internal,
             "the client runtime stopped",
         )),
     }

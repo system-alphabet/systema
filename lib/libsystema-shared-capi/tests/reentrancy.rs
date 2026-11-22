@@ -19,30 +19,26 @@ use systema_shared::proto::{
     IpcVersionRequest, IpcVersionResult, MethodCall, RegisterAck, UnitStateUpdate,
     UnitStateUpdateAck,
 };
-use systema_shared_capi::controller::SystemaController;
-use systema_shared_capi::finder::{
-    systema_shared_finder_free, systema_shared_finder_new, systema_shared_finder_register_units,
-};
-use systema_shared_capi::status::SystemaStatus;
+use systema_shared_capi::controller::SysaController;
+use systema_shared_capi::finder::{sysa_finder_free, sysa_finder_new, sysa_finder_register_units};
+use systema_shared_capi::status::SysaStatus;
 use systema_shared_capi::unit_status::{
-    systema_shared_unit_status_free, systema_shared_unit_status_new, SystemaUnitStatus,
+    sysa_unit_status_free, sysa_unit_status_new, SysaUnitStatus,
 };
 use systema_shared_capi::worker::{
-    systema_shared_worker_free, systema_shared_worker_new,
-    systema_shared_worker_publish_unit_states, systema_shared_worker_set_controller,
-    systema_shared_worker_set_socket_path, systema_shared_worker_start, systema_shared_worker_stop,
-    systema_shared_worker_wait, SystemaWorker,
+    sysa_worker_free, sysa_worker_new, sysa_worker_publish_unit_states, sysa_worker_set_controller,
+    sysa_worker_set_socket_path, sysa_worker_start, sysa_worker_stop, sysa_worker_wait, SysaWorker,
 };
 
 static PUBLISH_STATUS: AtomicI32 = AtomicI32::new(-1);
 static BLOCKING_STATUS: AtomicI32 = AtomicI32::new(-1);
 
-fn demo_status() -> *mut SystemaUnitStatus {
+fn demo_status() -> *mut SysaUnitStatus {
     let name = CString::new("demo.service").unwrap();
     let active = CString::new("active").unwrap();
     let sub = CString::new("running").unwrap();
     let invocation = CString::new("inv-1").unwrap();
-    systema_shared_unit_status_new(
+    sysa_unit_status_new(
         name.as_ptr(),
         active.as_ptr(),
         sub.as_ptr(),
@@ -54,38 +50,32 @@ fn demo_status() -> *mut SystemaUnitStatus {
 unsafe extern "C" fn status_cb(
     userdata: *mut c_void,
     _unit_name: *const c_char,
-    out: *mut *mut SystemaUnitStatus,
-) -> SystemaStatus {
-    let worker = userdata as *mut SystemaWorker;
+    out: *mut *mut SysaUnitStatus,
+) -> SysaStatus {
+    let worker = userdata as *mut SysaWorker;
 
     let status = demo_status();
-    let units = [status as *const SystemaUnitStatus];
-    let publish = systema_shared_worker_publish_unit_states(worker, units.as_ptr(), 1, 0);
-    systema_shared_unit_status_free(status);
+    let units = [status as *const SysaUnitStatus];
+    let publish = sysa_worker_publish_unit_states(worker, units.as_ptr(), 1, 0);
+    sysa_unit_status_free(status);
     PUBLISH_STATUS.store(publish as i32, Ordering::SeqCst);
 
     let path = CString::new("/tmp/systema-capi-reentrant.sock").unwrap();
-    let finder = systema_shared_finder_new(path.as_ptr());
+    let finder = sysa_finder_new(path.as_ptr());
     let name = CString::new("area").unwrap();
     let mut bytes = ptr::null_mut();
     let mut len = 0usize;
-    let blocking = systema_shared_finder_register_units(
-        finder,
-        name.as_ptr(),
-        ptr::null(),
-        0,
-        &mut bytes,
-        &mut len,
-    );
-    systema_shared_finder_free(finder);
+    let blocking =
+        sysa_finder_register_units(finder, name.as_ptr(), ptr::null(), 0, &mut bytes, &mut len);
+    sysa_finder_free(finder);
     BLOCKING_STATUS.store(blocking as i32, Ordering::SeqCst);
 
     unsafe { *out = demo_status() };
-    SystemaStatus::Ok
+    SysaStatus::Ok
 }
 
-unsafe extern "C" fn ok_cb(_userdata: *mut c_void, _unit_name: *const c_char) -> SystemaStatus {
-    SystemaStatus::Ok
+unsafe extern "C" fn ok_cb(_userdata: *mut c_void, _unit_name: *const c_char) -> SysaStatus {
+    SysaStatus::Ok
 }
 
 unsafe extern "C" fn ok_config_cb(
@@ -93,8 +83,8 @@ unsafe extern "C" fn ok_config_cb(
     _unit_name: *const c_char,
     _config: *const u8,
     _config_len: usize,
-) -> SystemaStatus {
-    SystemaStatus::Ok
+) -> SysaStatus {
+    SysaStatus::Ok
 }
 
 unsafe extern "C" fn ok_start_cb(
@@ -103,8 +93,8 @@ unsafe extern "C" fn ok_start_cb(
     _config: *const u8,
     _config_len: usize,
     _invocation_id: *const c_char,
-) -> SystemaStatus {
-    SystemaStatus::Ok
+) -> SysaStatus {
+    SysaStatus::Ok
 }
 
 fn wait_for_value(slot: &AtomicI32, expected: i32) {
@@ -253,16 +243,15 @@ fn callbacks_can_publish_but_not_block() {
     let worker_id = CString::new("system-r-1").unwrap();
     let unit_type = CString::new("service").unwrap();
     let types = [unit_type.as_ptr()];
-    let worker: *mut SystemaWorker =
-        systema_shared_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
+    let worker: *mut SysaWorker = sysa_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
     assert!(!worker.is_null());
 
     let socket = CString::new(path.to_str().unwrap()).unwrap();
     assert_eq!(
-        systema_shared_worker_set_socket_path(worker, socket.as_ptr()),
-        SystemaStatus::Ok
+        sysa_worker_set_socket_path(worker, socket.as_ptr()),
+        SysaStatus::Ok
     );
-    let table = SystemaController {
+    let table = SysaController {
         userdata: worker as *mut c_void,
         status: Some(status_cb),
         start: Some(ok_start_cb),
@@ -271,24 +260,18 @@ fn callbacks_can_publish_but_not_block() {
         reload: Some(ok_config_cb),
         sync_state: None,
     };
-    assert_eq!(
-        systema_shared_worker_set_controller(worker, &table),
-        SystemaStatus::Ok
-    );
-    assert_eq!(systema_shared_worker_start(worker), SystemaStatus::Ok);
+    assert_eq!(sysa_worker_set_controller(worker, &table), SysaStatus::Ok);
+    assert_eq!(sysa_worker_start(worker), SysaStatus::Ok);
 
     wait_for_ready(&log);
-    wait_for_value(&PUBLISH_STATUS, SystemaStatus::Ok as i32);
-    wait_for_value(&BLOCKING_STATUS, SystemaStatus::Reentrant as i32);
+    wait_for_value(&PUBLISH_STATUS, SysaStatus::Ok as i32);
+    wait_for_value(&BLOCKING_STATUS, SysaStatus::Reentrant as i32);
 
     let reason = CString::new("SIGTERM").unwrap();
-    systema_shared_worker_stop(worker, reason.as_ptr());
-    let mut run = SystemaStatus::Internal;
-    assert_eq!(
-        systema_shared_worker_wait(worker, &mut run),
-        SystemaStatus::Ok
-    );
-    assert_eq!(run, SystemaStatus::Ok);
+    sysa_worker_stop(worker, reason.as_ptr());
+    let mut run = SysaStatus::Internal;
+    assert_eq!(sysa_worker_wait(worker, &mut run), SysaStatus::Ok);
+    assert_eq!(run, SysaStatus::Ok);
     server.join().unwrap();
-    assert_eq!(systema_shared_worker_free(worker), SystemaStatus::Ok);
+    assert_eq!(sysa_worker_free(worker), SysaStatus::Ok);
 }

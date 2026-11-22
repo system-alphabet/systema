@@ -6,38 +6,38 @@ use std::ffi::c_char;
 use prost::Message;
 use systema_shared::finder::UnitFinder;
 
-use crate::status::SystemaStatus;
+use crate::status::SysaStatus;
 
 /// Opaque, library-owned finder client.
-pub struct SystemaFinder {
+pub struct SysaFinder {
     socket_path: String,
 }
 
 /// Create a finder client for the given System A socket path.
 #[no_mangle]
-pub extern "C" fn systema_shared_finder_new(socket_path: *const c_char) -> *mut SystemaFinder {
+pub extern "C" fn sysa_finder_new(socket_path: *const c_char) -> *mut SysaFinder {
     ffi_try!(std::ptr::null_mut(), {
         let path = match unsafe { crate::ffi::require_str(socket_path, "socket_path") } {
             Ok(value) => value.to_string(),
             Err(_) => return std::ptr::null_mut(),
         };
-        Box::into_raw(Box::new(SystemaFinder { socket_path: path }))
+        Box::into_raw(Box::new(SysaFinder { socket_path: path }))
     })
 }
 
 /// Register a batch of units; the answer is a protobuf `UnitRegistrationAck`.
 #[no_mangle]
-pub extern "C" fn systema_shared_finder_register_units(
-    finder: *const SystemaFinder,
+pub extern "C" fn sysa_finder_register_units(
+    finder: *const SysaFinder,
     name: *const c_char,
     units_json: *const u8,
     units_json_len: usize,
     out: *mut *mut u8,
     out_len: *mut usize,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if finder.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "finder is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "finder is null");
         }
         let name = match unsafe { crate::ffi::require_str(name, "name") } {
             Ok(value) => value.to_string(),
@@ -70,15 +70,15 @@ pub extern "C" fn systema_shared_finder_register_units(
 
 /// Commit a staging area; the answer is a protobuf `UnitRegistrationAck`.
 #[no_mangle]
-pub extern "C" fn systema_shared_finder_commit_units(
-    finder: *const SystemaFinder,
+pub extern "C" fn sysa_finder_commit_units(
+    finder: *const SysaFinder,
     name: *const c_char,
     out: *mut *mut u8,
     out_len: *mut usize,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if finder.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "finder is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "finder is null");
         }
         let name = match unsafe { crate::ffi::require_str(name, "name") } {
             Ok(value) => value.to_string(),
@@ -102,15 +102,15 @@ pub extern "C" fn systema_shared_finder_commit_units(
 
 /// Query a staging area; the answer is a protobuf `StagingQueryResult`.
 #[no_mangle]
-pub extern "C" fn systema_shared_finder_query_staging(
-    finder: *const SystemaFinder,
+pub extern "C" fn sysa_finder_query_staging(
+    finder: *const SysaFinder,
     name: *const c_char,
     out: *mut *mut u8,
     out_len: *mut usize,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if finder.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "finder is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "finder is null");
         }
         let name = match unsafe { crate::ffi::require_str(name, "name") } {
             Ok(value) => value.to_string(),
@@ -134,7 +134,7 @@ pub extern "C" fn systema_shared_finder_query_staging(
 
 /// Release a finder client.
 #[no_mangle]
-pub extern "C" fn systema_shared_finder_free(finder: *mut SystemaFinder) {
+pub extern "C" fn sysa_finder_free(finder: *mut SysaFinder) {
     ffi_try!((), {
         if !finder.is_null() {
             drop(unsafe { Box::from_raw(finder) });

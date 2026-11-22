@@ -14,16 +14,16 @@ use systema_shared::proto::{Envelope, MethodCall, MethodResult};
 use systema_shared::worker_ipc::{EventPublisher, ShutdownHandle, WorkerIpc};
 use tokio::runtime::{Builder, Handle};
 
-use crate::controller::{CController, SystemaController};
-use crate::status::SystemaStatus;
-use crate::unit_status::{unit_status_from_ptr, SystemaUnitStatus};
+use crate::controller::{CController, SysaController};
+use crate::status::SysaStatus;
+use crate::unit_status::{unit_status_from_ptr, SysaUnitStatus};
 
 /// `on_shutdown` / `on_reconnect` hook.
-pub type SystemaSyncHook = Option<unsafe extern "C" fn(userdata: *mut c_void)>;
+pub type SysaSyncHook = Option<unsafe extern "C" fn(userdata: *mut c_void)>;
 
 /// `on_method_result(userdata, method, unit_name, success, unit_failure,
 /// error, queued)`.
-pub type SystemaMethodResultHook = Option<
+pub type SysaMethodResultHook = Option<
     unsafe extern "C" fn(
         userdata: *mut c_void,
         method: *const c_char,
@@ -37,7 +37,7 @@ pub type SystemaMethodResultHook = Option<
 
 /// `on_envelope(userdata, request_id, source, method, payload, payload_len,
 /// handled)` — write non-zero to `handled` when the envelope was consumed.
-pub type SystemaEnvelopeHook = Option<
+pub type SysaEnvelopeHook = Option<
     unsafe extern "C" fn(
         userdata: *mut c_void,
         request_id: u64,
@@ -46,7 +46,7 @@ pub type SystemaEnvelopeHook = Option<
         payload: *const u8,
         payload_len: usize,
         handled: *mut u8,
-    ) -> SystemaStatus,
+    ) -> SysaStatus,
 >;
 
 #[derive(Clone, Copy)]
@@ -95,7 +95,7 @@ struct EnvelopeHook {
         *const u8,
         usize,
         *mut u8,
-    ) -> SystemaStatus,
+    ) -> SysaStatus,
     userdata: *mut c_void,
 }
 
@@ -115,11 +115,11 @@ struct WorkerShared {
 }
 
 /// Opaque, library-owned worker handle.
-pub struct SystemaWorker {
+pub struct SysaWorker {
     worker_id: String,
     unit_types: Vec<String>,
     socket_path: Option<String>,
-    controller: Option<SystemaController>,
+    controller: Option<SysaController>,
     supports_unit_define: bool,
     supports_resource_prepare: bool,
     on_shutdown: Option<SyncHook>,
@@ -129,20 +129,20 @@ pub struct SystemaWorker {
     shared: Arc<WorkerShared>,
     handle: Option<Handle>,
     thread: Option<JoinHandle<anyhow::Result<()>>>,
-    run_result: Option<SystemaStatus>,
+    run_result: Option<SysaStatus>,
 }
 
 fn read_string_array(
     items: *const *const c_char,
     count: usize,
     what: &str,
-) -> Result<Vec<String>, SystemaStatus> {
+) -> Result<Vec<String>, SysaStatus> {
     if count == 0 {
         return Ok(Vec::new());
     }
     if items.is_null() {
         return Err(crate::error::fail(
-            SystemaStatus::InvalidArgument,
+            SysaStatus::InvalidArgument,
             format!("{what} is null"),
         ));
     }
@@ -154,7 +154,7 @@ fn read_string_array(
     Ok(values)
 }
 
-fn publisher(worker: &SystemaWorker) -> Option<EventPublisher> {
+fn publisher(worker: &SysaWorker) -> Option<EventPublisher> {
     worker
         .shared
         .publisher
@@ -181,13 +181,13 @@ fn handle_envelope(hook: Option<EnvelopeHook>, envelope: &Envelope) -> anyhow::R
             &mut handled,
         )
     };
-    if status != SystemaStatus::Ok {
+    if status != SysaStatus::Ok {
         anyhow::bail!("the envelope handler returned {status:?}");
     }
     Ok(handled != 0)
 }
 
-fn build_ipc(worker: &SystemaWorker, socket_path: String) -> WorkerIpc {
+fn build_ipc(worker: &SysaWorker, socket_path: String) -> WorkerIpc {
     let unit_types: Vec<&str> = worker.unit_types.iter().map(String::as_str).collect();
     let mut ipc = WorkerIpc::new(&worker.worker_id, &unit_types).with_socket_path(socket_path);
     if worker.supports_unit_define {
@@ -217,11 +217,11 @@ fn build_ipc(worker: &SystemaWorker, socket_path: String) -> WorkerIpc {
 
 /// Create a worker handle.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_new(
+pub extern "C" fn sysa_worker_new(
     worker_id: *const c_char,
     unit_types: *const *const c_char,
     unit_type_count: usize,
-) -> *mut SystemaWorker {
+) -> *mut SysaWorker {
     ffi_try!(std::ptr::null_mut(), {
         let worker_id = match unsafe { crate::ffi::require_str(worker_id, "worker_id") } {
             Ok(value) => value.to_string(),
@@ -231,7 +231,7 @@ pub extern "C" fn systema_shared_worker_new(
             Ok(values) => values,
             Err(_) => return std::ptr::null_mut(),
         };
-        Box::into_raw(Box::new(SystemaWorker {
+        Box::into_raw(Box::new(SysaWorker {
             worker_id,
             unit_types,
             socket_path: None,
@@ -252,161 +252,154 @@ pub extern "C" fn systema_shared_worker_new(
 
 /// Set the System A socket path (required before `_start`).
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_set_socket_path(
-    worker: *mut SystemaWorker,
+pub extern "C" fn sysa_worker_set_socket_path(
+    worker: *mut SysaWorker,
     socket_path: *const c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let path = match unsafe { crate::ffi::require_str(socket_path, "socket_path") } {
             Ok(value) => value.to_string(),
             Err(status) => return status,
         };
         unsafe { &mut *worker }.socket_path = Some(path);
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Copy the controller table into the worker (required before `_start`).
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_set_controller(
-    worker: *mut SystemaWorker,
-    controller: *const SystemaController,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_worker_set_controller(
+    worker: *mut SysaWorker,
+    controller: *const SysaController,
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() || controller.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "argument is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "argument is null");
         }
         unsafe { &mut *worker }.controller = Some(unsafe { *controller });
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Register a hook that runs on the still-open connection before `worker.exit`.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_set_on_shutdown(
-    worker: *mut SystemaWorker,
-    callback: SystemaSyncHook,
+pub extern "C" fn sysa_worker_set_on_shutdown(
+    worker: *mut SysaWorker,
+    callback: SysaSyncHook,
     userdata: *mut c_void,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let hook = callback.map(|callback| SyncHook { callback, userdata });
         unsafe { &mut *worker }.on_shutdown = hook;
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Register a hook that runs after every successful (re)connection.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_set_on_reconnect(
-    worker: *mut SystemaWorker,
-    callback: SystemaSyncHook,
+pub extern "C" fn sysa_worker_set_on_reconnect(
+    worker: *mut SysaWorker,
+    callback: SysaSyncHook,
     userdata: *mut c_void,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let hook = callback.map(|callback| SyncHook { callback, userdata });
         unsafe { &mut *worker }.on_reconnect = hook;
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Register a hook that observes every deferred method result.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_set_on_method_result(
-    worker: *mut SystemaWorker,
-    callback: SystemaMethodResultHook,
+pub extern "C" fn sysa_worker_set_on_method_result(
+    worker: *mut SysaWorker,
+    callback: SysaMethodResultHook,
     userdata: *mut c_void,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let hook = callback.map(|callback| MethodResultHook { callback, userdata });
         unsafe { &mut *worker }.on_method_result = hook;
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Register a handler for envelopes that are neither method calls nor state
 /// sync requests.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_set_on_envelope(
-    worker: *mut SystemaWorker,
-    callback: SystemaEnvelopeHook,
+pub extern "C" fn sysa_worker_set_on_envelope(
+    worker: *mut SysaWorker,
+    callback: SysaEnvelopeHook,
     userdata: *mut c_void,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let hook = callback.map(|callback| EnvelopeHook { callback, userdata });
         unsafe { &mut *worker }.on_envelope = hook;
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Declare support for the `unit.define` protocol.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_enable_unit_define(
-    worker: *mut SystemaWorker,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_worker_enable_unit_define(worker: *mut SysaWorker) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         unsafe { &mut *worker }.supports_unit_define = true;
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Declare support for the `resource.prepare` protocol.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_enable_resource_prepare(
-    worker: *mut SystemaWorker,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_worker_enable_resource_prepare(worker: *mut SysaWorker) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         unsafe { &mut *worker }.supports_resource_prepare = true;
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Start the worker thread.  Requires a socket path and a controller.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_start(worker: *mut SystemaWorker) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_worker_start(worker: *mut SysaWorker) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let worker = unsafe { &mut *worker };
         if worker.thread.is_some() || worker.run_result.is_some() {
-            return crate::error::fail(
-                SystemaStatus::AlreadyRunning,
-                "the worker is already running",
-            );
+            return crate::error::fail(SysaStatus::AlreadyRunning, "the worker is already running");
         }
         let Some(socket_path) = worker.socket_path.clone() else {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "socket path is not set");
+            return crate::error::fail(SysaStatus::InvalidArgument, "socket path is not set");
         };
         let Some(controller) = worker.controller else {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "controller is not set");
+            return crate::error::fail(SysaStatus::InvalidArgument, "controller is not set");
         };
 
         let runtime = match Builder::new_current_thread().enable_all().build() {
             Ok(runtime) => runtime,
             Err(error) => {
                 return crate::error::fail(
-                    SystemaStatus::Internal,
+                    SysaStatus::Internal,
                     format!("cannot create the worker runtime: {error}"),
                 )
             }
@@ -450,7 +443,7 @@ pub extern "C" fn systema_shared_worker_start(worker: *mut SystemaWorker) -> Sys
             Ok(thread) => {
                 worker.handle = Some(handle);
                 worker.thread = Some(thread);
-                SystemaStatus::Ok
+                SysaStatus::Ok
             }
             Err(error) => {
                 *worker
@@ -459,7 +452,7 @@ pub extern "C" fn systema_shared_worker_start(worker: *mut SystemaWorker) -> Sys
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner()) = None;
                 crate::error::fail(
-                    SystemaStatus::Internal,
+                    SysaStatus::Internal,
                     format!("cannot spawn the worker thread: {error}"),
                 )
             }
@@ -469,13 +462,10 @@ pub extern "C" fn systema_shared_worker_start(worker: *mut SystemaWorker) -> Sys
 
 /// Ask the worker to leave gracefully; safe to call more than once.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_stop(
-    worker: *mut SystemaWorker,
-    reason: *const c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_worker_stop(worker: *mut SysaWorker, reason: *const c_char) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let reason = if reason.is_null() {
             "stop".to_string()
@@ -494,23 +484,20 @@ pub extern "C" fn systema_shared_worker_stop(
         if let Some(handle) = handle {
             handle.shutdown(reason);
         }
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Join the worker thread once and report its run result.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_wait(
-    worker: *mut SystemaWorker,
-    out: *mut SystemaStatus,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_worker_wait(worker: *mut SysaWorker, out: *mut SysaStatus) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         if crate::runtime::in_library_runtime() || crate::runtime::in_callback() {
             return crate::error::fail(
-                SystemaStatus::Reentrant,
+                SysaStatus::Reentrant,
                 "cannot wait for a worker from inside a callback",
             );
         }
@@ -518,10 +505,10 @@ pub extern "C" fn systema_shared_worker_wait(
         let status = match worker.thread.take() {
             Some(thread) => {
                 let status = match thread.join() {
-                    Ok(Ok(())) => SystemaStatus::Ok,
+                    Ok(Ok(())) => SysaStatus::Ok,
                     Ok(Err(error)) => crate::error::report(error),
                     Err(_) => {
-                        crate::error::fail(SystemaStatus::Internal, "the worker thread panicked")
+                        crate::error::fail(SysaStatus::Internal, "the worker thread panicked")
                     }
                 };
                 worker.run_result = Some(status);
@@ -531,7 +518,7 @@ pub extern "C" fn systema_shared_worker_wait(
                 Some(status) => status,
                 None => {
                     return crate::error::fail(
-                        SystemaStatus::InvalidArgument,
+                        SysaStatus::InvalidArgument,
                         "the worker has not been started",
                     )
                 }
@@ -546,14 +533,14 @@ pub extern "C" fn systema_shared_worker_wait(
 
 /// Release a worker handle, stopping and joining it first when it is running.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_free(worker: *mut SystemaWorker) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_worker_free(worker: *mut SysaWorker) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return SystemaStatus::Ok;
+            return SysaStatus::Ok;
         }
         if crate::runtime::in_library_runtime() || crate::runtime::in_callback() {
             return crate::error::fail(
-                SystemaStatus::Reentrant,
+                SysaStatus::Reentrant,
                 "cannot free a worker from inside a callback",
             );
         }
@@ -579,31 +566,31 @@ pub extern "C" fn systema_shared_worker_free(worker: *mut SystemaWorker) -> Syst
             .lock()
             .unwrap_or_else(|poison| poison.into_inner()) = None;
         drop(worker);
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Publish a `unit.state_update` snapshot.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_publish_unit_states(
-    worker: *mut SystemaWorker,
-    units: *const *const SystemaUnitStatus,
+pub extern "C" fn sysa_worker_publish_unit_states(
+    worker: *mut SysaWorker,
+    units: *const *const SysaUnitStatus,
     count: usize,
     full_snapshot: u8,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         if count > 0 && units.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "units is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "units is null");
         }
         let worker = unsafe { &*worker };
         let Some(handle) = worker.handle.clone() else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not running");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not running");
         };
         let Some(publisher) = publisher(worker) else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not connected");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not connected");
         };
         let mut statuses = Vec::with_capacity(count);
         for index in 0..count {
@@ -612,7 +599,7 @@ pub extern "C" fn systema_shared_worker_publish_unit_states(
                 Some(status) => statuses.push(status),
                 None => {
                     return crate::error::fail(
-                        SystemaStatus::InvalidArgument,
+                        SysaStatus::InvalidArgument,
                         "units contains a null entry",
                     )
                 }
@@ -621,39 +608,39 @@ pub extern "C" fn systema_shared_worker_publish_unit_states(
         handle.spawn(async move {
             publisher.publish_unit_state_update(statuses, full_snapshot != 0);
         });
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Subscribe to `event.publish` notifications for the given units.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_subscribe_units(
-    worker: *mut SystemaWorker,
+pub extern "C" fn sysa_worker_subscribe_units(
+    worker: *mut SysaWorker,
     unit_names: *const *const c_char,
     count: usize,
-) -> SystemaStatus {
+) -> SysaStatus {
     change_subscription(worker, unit_names, count, true)
 }
 
 /// Cancel `event.publish` subscriptions for the given units.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_unsubscribe_units(
-    worker: *mut SystemaWorker,
+pub extern "C" fn sysa_worker_unsubscribe_units(
+    worker: *mut SysaWorker,
     unit_names: *const *const c_char,
     count: usize,
-) -> SystemaStatus {
+) -> SysaStatus {
     change_subscription(worker, unit_names, count, false)
 }
 
 fn change_subscription(
-    worker: *mut SystemaWorker,
+    worker: *mut SysaWorker,
     unit_names: *const *const c_char,
     count: usize,
     subscribe: bool,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let names = match read_string_array(unit_names, count, "unit_names") {
             Ok(values) => values,
@@ -661,10 +648,10 @@ fn change_subscription(
         };
         let worker = unsafe { &*worker };
         let Some(handle) = worker.handle.clone() else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not running");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not running");
         };
         let Some(publisher) = publisher(worker) else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not connected");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not connected");
         };
         handle.spawn(async move {
             if subscribe {
@@ -673,21 +660,21 @@ fn change_subscription(
                 publisher.unsubscribe_units(&names);
             }
         });
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Send a fire-and-forget envelope with a raw payload.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_send_envelope_bytes(
-    worker: *mut SystemaWorker,
+pub extern "C" fn sysa_worker_send_envelope_bytes(
+    worker: *mut SysaWorker,
     method: *const c_char,
     payload: *const u8,
     payload_len: usize,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let method = match unsafe { crate::ffi::require_str(method, "method") } {
             Ok(value) => value.to_string(),
@@ -699,33 +686,33 @@ pub extern "C" fn systema_shared_worker_send_envelope_bytes(
         };
         let worker = unsafe { &*worker };
         let Some(handle) = worker.handle.clone() else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not running");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not running");
         };
         let Some(publisher) = publisher(worker) else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not connected");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not connected");
         };
         handle.spawn(async move {
             publisher.send_envelope_bytes(&method, payload);
         });
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Send a reply envelope with a raw payload.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_send_reply(
-    worker: *mut SystemaWorker,
+pub extern "C" fn sysa_worker_send_reply(
+    worker: *mut SysaWorker,
     request_id: u64,
     method: *const c_char,
     payload: *const u8,
     payload_len: usize,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         if request_id == 0 {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "request_id is zero");
+            return crate::error::fail(SysaStatus::InvalidArgument, "request_id is zero");
         }
         let method = match unsafe { crate::ffi::require_str(method, "method") } {
             Ok(value) => value.to_string(),
@@ -737,38 +724,38 @@ pub extern "C" fn systema_shared_worker_send_reply(
         };
         let worker = unsafe { &*worker };
         let Some(handle) = worker.handle.clone() else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not running");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not running");
         };
         let Some(publisher) = publisher(worker) else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not connected");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not connected");
         };
         handle.spawn(async move {
             publisher.send_reply(request_id, &method, RawPayload(payload));
         });
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Ask System A where a unit's cgroup lives; the answer is a protobuf-encoded
 /// `UnitCgroupResult`.
 #[no_mangle]
-pub extern "C" fn systema_shared_worker_query_unit_cgroup(
-    worker: *mut SystemaWorker,
+pub extern "C" fn sysa_worker_query_unit_cgroup(
+    worker: *mut SysaWorker,
     unit_name: *const c_char,
     timeout_ms: u32,
     out: *mut *mut u8,
     out_len: *mut usize,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if worker.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "worker is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "worker is null");
         }
         let unit_name = match unsafe { crate::ffi::require_str(unit_name, "unit_name") } {
             Ok(value) => value.to_string(),
             Err(status) => return status,
         };
         let Some(publisher) = publisher(unsafe { &*worker }) else {
-            return crate::error::fail(SystemaStatus::NotRunning, "the worker is not running");
+            return crate::error::fail(SysaStatus::NotRunning, "the worker is not running");
         };
         let timeout = if timeout_ms == 0 {
             crate::runtime::DEFAULT_WAIT

@@ -124,6 +124,25 @@ changes do **not** need to be written back into these docs.
   `systema-sysw.systemd` (and sysw's per-flavor crates); System A and all
   workers stay zbus-free (syss may use D-Bus as a *client* only).
 
+## C / C++ style
+Applies to the only C/C++ code in the repo: `lib/libsystema-shared-capi` and
+`lib/libsystema-shared-cpp`.
+
+- **C++ names**: `class`, `enum`, `struct`, `using` aliases, template
+  parameters and concepts use UpperCamelCase (`UnitType`, `FailureKind`,
+  `StringLike`); namespaces, member/free functions and variables use
+  snake_case (`native_handle`, `unit_name`).
+- **C++ layout**: clang-format with the Microsoft style
+  (`BasedOnStyle: Microsoft`).
+- **C names**: `struct`, `enum` and `typedef` names use UpperCamelCase with
+  the `Sysa` prefix (`SysaWorker`, `SysaStatus`); fields, parameters, locals
+  and other identifiers use snake_case (Microsoft style). Exported functions
+  are named `sysa_<name>` and macros `SYSA_<NAME>` (e.g. `sysa_worker_new`,
+  `SYSA_WORKER_READY`).
+- **Macros**: prefer `#pragma once` and language features over macros in C++;
+  when a macro is unavoidable its name is all-uppercase with the `SYSA_`
+  prefix.
+
 ## Tests
 - Per package: `cargo test -p libsystema-shared-rs` / `-p libsystema-sysa`;
   single test: `cargo test -p <package> <name>`. Unit tests are colocated

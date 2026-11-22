@@ -18,23 +18,21 @@ use systema_shared::proto::{
     UnitStateEntry, UnitStateEof, UnitStateListRequest,
 };
 use systema_shared_capi::finder::{
-    systema_shared_finder_commit_units, systema_shared_finder_free, systema_shared_finder_new,
-    systema_shared_finder_query_staging, systema_shared_finder_register_units, SystemaFinder,
+    sysa_finder_commit_units, sysa_finder_free, sysa_finder_new, sysa_finder_query_staging,
+    sysa_finder_register_units, SysaFinder,
 };
 use systema_shared_capi::staging_admin::{
-    systema_shared_staging_admin_commit, systema_shared_staging_admin_free,
-    systema_shared_staging_admin_list, systema_shared_staging_admin_new,
-    systema_shared_staging_admin_query, systema_shared_staging_admin_query_all,
-    systema_shared_staging_admin_query_by_name, systema_shared_staging_admin_query_by_uid,
-    systema_shared_staging_list_free, systema_shared_staging_list_len,
-    systema_shared_staging_list_name, systema_shared_staging_list_uid, SystemaStagingAdmin,
-    SystemaStagingList,
+    sysa_staging_admin_commit, sysa_staging_admin_free, sysa_staging_admin_list,
+    sysa_staging_admin_new, sysa_staging_admin_query, sysa_staging_admin_query_all,
+    sysa_staging_admin_query_by_name, sysa_staging_admin_query_by_uid, sysa_staging_list_free,
+    sysa_staging_list_len, sysa_staging_list_name, sysa_staging_list_uid, SysaStagingAdmin,
+    SysaStagingList,
 };
-use systema_shared_capi::status::SystemaStatus;
-use systema_shared_capi::systema_shared_bytes_free;
+use systema_shared_capi::status::SysaStatus;
+use systema_shared_capi::sysa_bytes_free;
 use systema_shared_capi::unitstate_admin::{
-    systema_shared_unitstate_admin_free, systema_shared_unitstate_admin_list,
-    systema_shared_unitstate_admin_new, SystemaUnitStateAdmin,
+    sysa_unitstate_admin_free, sysa_unitstate_admin_list, sysa_unitstate_admin_new,
+    SysaUnitStateAdmin,
 };
 
 fn socket_dir(tag: &str) -> PathBuf {
@@ -97,7 +95,7 @@ async fn handshake(framed: &mut EnvelopeFramed) -> systema_shared::proto::Envelo
 
 fn take_bytes(pointer: *mut u8, len: usize) -> Vec<u8> {
     let data = unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec();
-    systema_shared_bytes_free(pointer, len);
+    sysa_bytes_free(pointer, len);
     data
 }
 
@@ -175,22 +173,15 @@ fn finder_operations_round_trip() {
     let server = spawn_server(&path, serve_finder);
 
     let path_text = CString::new(path.to_str().unwrap()).unwrap();
-    let finder: *mut SystemaFinder = systema_shared_finder_new(path_text.as_ptr());
+    let finder: *mut SysaFinder = sysa_finder_new(path_text.as_ptr());
     assert!(!finder.is_null());
 
     let name = CString::new("area").unwrap();
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_finder_register_units(
-            finder,
-            name.as_ptr(),
-            b"{}".as_ptr(),
-            2,
-            &mut out,
-            &mut len
-        ),
-        SystemaStatus::Ok
+        sysa_finder_register_units(finder, name.as_ptr(), b"{}".as_ptr(), 2, &mut out, &mut len),
+        SysaStatus::Ok
     );
     let ack = UnitRegistrationAck::decode(take_bytes(out, len).as_slice()).unwrap();
     assert!(ack.success);
@@ -199,8 +190,8 @@ fn finder_operations_round_trip() {
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_finder_commit_units(finder, name.as_ptr(), &mut out, &mut len),
-        SystemaStatus::Ok
+        sysa_finder_commit_units(finder, name.as_ptr(), &mut out, &mut len),
+        SysaStatus::Ok
     );
     let ack = UnitRegistrationAck::decode(take_bytes(out, len).as_slice()).unwrap();
     assert_eq!(ack.message, "committed");
@@ -208,14 +199,14 @@ fn finder_operations_round_trip() {
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_finder_query_staging(finder, name.as_ptr(), &mut out, &mut len),
-        SystemaStatus::Ok
+        sysa_finder_query_staging(finder, name.as_ptr(), &mut out, &mut len),
+        SysaStatus::Ok
     );
     let result = StagingQueryResult::decode(take_bytes(out, len).as_slice()).unwrap();
     assert!(result.success);
     assert_eq!(result.unit_count, 1);
 
-    systema_shared_finder_free(finder);
+    sysa_finder_free(finder);
     server.join().unwrap();
 }
 
@@ -271,26 +262,23 @@ fn staging_admin_operations_round_trip() {
     let server = spawn_server(&path, serve_staging);
 
     let path_text = CString::new(path.to_str().unwrap()).unwrap();
-    let admin: *mut SystemaStagingAdmin = systema_shared_staging_admin_new(path_text.as_ptr());
+    let admin: *mut SysaStagingAdmin = sysa_staging_admin_new(path_text.as_ptr());
     assert!(!admin.is_null());
 
-    let mut list: *mut SystemaStagingList = ptr::null_mut();
-    assert_eq!(
-        systema_shared_staging_admin_list(admin, &mut list),
-        SystemaStatus::Ok
-    );
-    assert_eq!(systema_shared_staging_list_len(list), 1);
-    assert_eq!(systema_shared_staging_list_uid(list, 0), 1000);
-    let name = systema_shared_staging_list_name(list, 0);
+    let mut list: *mut SysaStagingList = ptr::null_mut();
+    assert_eq!(sysa_staging_admin_list(admin, &mut list), SysaStatus::Ok);
+    assert_eq!(sysa_staging_list_len(list), 1);
+    assert_eq!(sysa_staging_list_uid(list, 0), 1000);
+    let name = sysa_staging_list_name(list, 0);
     assert_eq!(unsafe { CStr::from_ptr(name) }.to_str().unwrap(), "area");
-    systema_shared_staging_list_free(list);
+    sysa_staging_list_free(list);
 
     let name = CString::new("area").unwrap();
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_staging_admin_query_by_uid(admin, 1000, &mut out, &mut len),
-        SystemaStatus::Ok
+        sysa_staging_admin_query_by_uid(admin, 1000, &mut out, &mut len),
+        SysaStatus::Ok
     );
     let result = AdminStagingResult::decode(take_bytes(out, len).as_slice()).unwrap();
     assert_eq!(result.message, "by_uid");
@@ -298,8 +286,8 @@ fn staging_admin_operations_round_trip() {
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_staging_admin_query_by_name(admin, name.as_ptr(), &mut out, &mut len),
-        SystemaStatus::Ok
+        sysa_staging_admin_query_by_name(admin, name.as_ptr(), &mut out, &mut len),
+        SysaStatus::Ok
     );
     let result = AdminStagingResult::decode(take_bytes(out, len).as_slice()).unwrap();
     assert_eq!(result.message, "by_name");
@@ -307,8 +295,8 @@ fn staging_admin_operations_round_trip() {
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_staging_admin_query(admin, 1000, name.as_ptr(), &mut out, &mut len),
-        SystemaStatus::Ok
+        sysa_staging_admin_query(admin, 1000, name.as_ptr(), &mut out, &mut len),
+        SysaStatus::Ok
     );
     let result = AdminStagingResult::decode(take_bytes(out, len).as_slice()).unwrap();
     assert_eq!(result.message, "by_id");
@@ -316,8 +304,8 @@ fn staging_admin_operations_round_trip() {
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_staging_admin_query_all(admin, &mut out, &mut len),
-        SystemaStatus::Ok
+        sysa_staging_admin_query_all(admin, &mut out, &mut len),
+        SysaStatus::Ok
     );
     let result = AdminStagingResult::decode(take_bytes(out, len).as_slice()).unwrap();
     assert_eq!(result.message, "all");
@@ -325,13 +313,13 @@ fn staging_admin_operations_round_trip() {
     let mut out = ptr::null_mut();
     let mut len = 0usize;
     assert_eq!(
-        systema_shared_staging_admin_commit(admin, 1000, name.as_ptr(), &mut out, &mut len),
-        SystemaStatus::Ok
+        sysa_staging_admin_commit(admin, 1000, name.as_ptr(), &mut out, &mut len),
+        SysaStatus::Ok
     );
     let result = AdminStagingResult::decode(take_bytes(out, len).as_slice()).unwrap();
     assert_eq!(result.message, "commit");
 
-    systema_shared_staging_admin_free(admin);
+    sysa_staging_admin_free(admin);
     server.join().unwrap();
 }
 
@@ -374,14 +362,14 @@ unsafe extern "C" fn collect(
     name: *const c_char,
     json: *const u8,
     json_len: usize,
-) -> SystemaStatus {
+) -> SysaStatus {
     let sink = unsafe { &mut *(userdata as *mut Vec<(String, Vec<u8>)>) };
     let name = unsafe { CStr::from_ptr(name) }
         .to_string_lossy()
         .into_owned();
     let json = unsafe { std::slice::from_raw_parts(json, json_len) }.to_vec();
     sink.push((name, json));
-    SystemaStatus::Ok
+    SysaStatus::Ok
 }
 
 #[test]
@@ -391,24 +379,24 @@ fn unitstate_admin_streams_entries() {
     let server = spawn_server(&path, serve_unitstate);
 
     let path_text = CString::new(path.to_str().unwrap()).unwrap();
-    let admin: *mut SystemaUnitStateAdmin = systema_shared_unitstate_admin_new(path_text.as_ptr());
+    let admin: *mut SysaUnitStateAdmin = sysa_unitstate_admin_new(path_text.as_ptr());
     assert!(!admin.is_null());
 
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     let mut total = 0u32;
-    let status = systema_shared_unitstate_admin_list(
+    let status = sysa_unitstate_admin_list(
         admin,
         Some(collect),
         &mut entries as *mut _ as *mut c_void,
         &mut total,
     );
-    assert_eq!(status, SystemaStatus::Ok);
+    assert_eq!(status, SysaStatus::Ok);
     assert_eq!(total, 2);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].0, "a.service");
     assert_eq!(entries[0].1, b"{\"active\":true}".to_vec());
     assert_eq!(entries[1].0, "b.service");
 
-    systema_shared_unitstate_admin_free(admin);
+    sysa_unitstate_admin_free(admin);
     server.join().unwrap();
 }

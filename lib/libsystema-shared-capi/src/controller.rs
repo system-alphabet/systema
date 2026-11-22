@@ -10,89 +10,89 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, bail};
 use systema_shared::controller::{UnitController, UnitStatus};
 
-use crate::status::SystemaStatus;
-use crate::unit_status::SystemaUnitStatus;
+use crate::status::SysaStatus;
+use crate::unit_status::SysaUnitStatus;
 
 /// `status(userdata, unit_name, out)` — fill `*out` with a status created by
-/// `systema_shared_unit_status_new`; the library takes ownership.
-pub type SystemaStatusCallback = Option<
+/// `sysa_unit_status_new`; the library takes ownership.
+pub type SysaStatusCallback = Option<
     unsafe extern "C" fn(
         userdata: *mut c_void,
         unit_name: *const c_char,
-        out: *mut *mut SystemaUnitStatus,
-    ) -> SystemaStatus,
+        out: *mut *mut SysaUnitStatus,
+    ) -> SysaStatus,
 >;
 
 /// `start(userdata, unit_name, config, config_len, invocation_id)`.
-pub type SystemaStartCallback = Option<
+pub type SysaStartCallback = Option<
     unsafe extern "C" fn(
         userdata: *mut c_void,
         unit_name: *const c_char,
         config: *const u8,
         config_len: usize,
         invocation_id: *const c_char,
-    ) -> SystemaStatus,
+    ) -> SysaStatus,
 >;
 
 /// `stop(userdata, unit_name)`.
-pub type SystemaStopCallback =
-    Option<unsafe extern "C" fn(userdata: *mut c_void, unit_name: *const c_char) -> SystemaStatus>;
+pub type SysaStopCallback =
+    Option<unsafe extern "C" fn(userdata: *mut c_void, unit_name: *const c_char) -> SysaStatus>;
 
 /// `restart(userdata, unit_name, config, config_len, invocation_id)`.
-pub type SystemaRestartCallback = SystemaStartCallback;
+pub type SysaRestartCallback = SysaStartCallback;
 
 /// `reload(userdata, unit_name, config, config_len)`.
-pub type SystemaReloadCallback = Option<
+pub type SysaReloadCallback = Option<
     unsafe extern "C" fn(
         userdata: *mut c_void,
         unit_name: *const c_char,
         config: *const u8,
         config_len: usize,
-    ) -> SystemaStatus,
+    ) -> SysaStatus,
 >;
 
 /// `sync_state(userdata, out, count)` — fill `out` with an array allocated by
-/// `systema_shared_unit_status_array_alloc`; the library takes ownership.
-pub type SystemaSyncStateCallback = Option<
+/// `sysa_unit_status_array_alloc`; the library takes ownership.
+pub type SysaSyncStateCallback = Option<
     unsafe extern "C" fn(
         userdata: *mut c_void,
-        out: *mut *mut *mut SystemaUnitStatus,
+        out: *mut *mut *mut SysaUnitStatus,
         count: *mut usize,
-    ) -> SystemaStatus,
+    ) -> SysaStatus,
 >;
 
 /// The controller table a worker dispatches method calls to.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct SystemaController {
+pub struct SysaController {
     pub userdata: *mut c_void,
-    pub status: SystemaStatusCallback,
-    pub start: SystemaStartCallback,
-    pub stop: SystemaStopCallback,
-    pub restart: SystemaRestartCallback,
-    pub reload: SystemaReloadCallback,
-    pub sync_state: SystemaSyncStateCallback,
+    pub status: SysaStatusCallback,
+    pub start: SysaStartCallback,
+    pub stop: SysaStopCallback,
+    pub restart: SysaRestartCallback,
+    pub reload: SysaReloadCallback,
+    pub sync_state: SysaSyncStateCallback,
 }
 
 // The table is only ever handed out behind the per-worker serialization gate,
 // so the C-provided `userdata` is never touched concurrently.
-unsafe impl Send for SystemaController {}
-unsafe impl Sync for SystemaController {}
+unsafe impl Send for SysaController {}
+unsafe impl Sync for SysaController {}
 
 /// A `UnitController` whose operations call back into C.
 pub(crate) struct CController {
-    vtable: SystemaController,
+    vtable: SysaController,
     gate: Arc<Mutex<()>>,
 }
 
 impl CController {
-    pub(crate) fn new(vtable: SystemaController, gate: Arc<Mutex<()>>) -> Self {
+    pub(crate) fn new(vtable: SysaController, gate: Arc<Mutex<()>>) -> Self {
         CController { vtable, gate }
     }
 
     async fn invoke<T, F>(&self, what: &'static str, call: F) -> anyhow::Result<T>
     where
-        F: FnOnce() -> (SystemaStatus, T) + Send + 'static,
+        F: FnOnce() -> (SysaStatus, T) + Send + 'static,
         T: Send + 'static,
     {
         let gate = self.gate.clone();
@@ -103,7 +103,7 @@ impl CController {
         })
         .await
         {
-            Ok((SystemaStatus::Ok, value)) => Ok(value),
+            Ok((SysaStatus::Ok, value)) => Ok(value),
             Ok((status, _)) => Err(anyhow!("{what}: the C controller returned {status:?}")),
             Err(error) => Err(anyhow!(
                 "{what}: the C controller callback panicked: {error}"
@@ -122,9 +122,9 @@ impl UnitController for CController {
         let name = crate::ffi::sanitize(unit_name);
         let value = self
             .invoke("status", move || {
-                let mut out: *mut SystemaUnitStatus = std::ptr::null_mut();
+                let mut out: *mut SysaUnitStatus = std::ptr::null_mut();
                 let status = unsafe { callback(userdata as *mut c_void, name.as_ptr(), &mut out) };
-                let value = if status == SystemaStatus::Ok {
+                let value = if status == SysaStatus::Ok {
                     unsafe { crate::unit_status::take_unit_status(out) }
                 } else {
                     if !out.is_null() {
@@ -235,7 +235,7 @@ impl UnitController for CController {
         let userdata = self.vtable.userdata as usize;
         match self
             .invoke("sync_state", move || {
-                let mut out: *mut *mut SystemaUnitStatus = std::ptr::null_mut();
+                let mut out: *mut *mut SysaUnitStatus = std::ptr::null_mut();
                 let mut count = 0usize;
                 let status = unsafe { callback(userdata as *mut c_void, &mut out, &mut count) };
                 let mut values = Vec::new();

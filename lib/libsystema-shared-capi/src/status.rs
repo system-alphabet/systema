@@ -5,7 +5,7 @@ use systema_shared::error_code::ErrorCode;
 /// Result of every C entry point.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SystemaStatus {
+pub enum SysaStatus {
     Ok = 0,
     InvalidArgument = 1,
     NotFound = 2,
@@ -27,7 +27,7 @@ pub enum SystemaStatus {
 /// crate's build until the C header is updated too.
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SystemaErrorCode {
+pub enum SysaErrorCode {
     None = 0,
     ConnectFailed = 1,
     ConnectPermissionDenied = 2,
@@ -75,9 +75,9 @@ pub enum SystemaErrorCode {
 }
 
 /// Map an IPC error code to its C code and the coarse status it belongs to.
-pub(crate) fn map_code(code: ErrorCode) -> (SystemaStatus, SystemaErrorCode) {
-    use SystemaErrorCode as C;
-    use SystemaStatus as S;
+pub(crate) fn map_code(code: ErrorCode) -> (SysaStatus, SysaErrorCode) {
+    use SysaErrorCode as C;
+    use SysaStatus as S;
     match code {
         ErrorCode::ConnectFailed => (S::Io, C::ConnectFailed),
         ErrorCode::ConnectPermissionDenied => (S::Io, C::ConnectPermissionDenied),

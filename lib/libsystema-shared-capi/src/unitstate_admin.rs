@@ -4,35 +4,33 @@ use std::ffi::{c_char, c_void};
 
 use systema_shared::unitstate_admin::UnitStateAdmin;
 
-use crate::status::SystemaStatus;
+use crate::status::SysaStatus;
 
-/// `callback(userdata, name, json, json_len)` — return `SYSTEMA_STATUS_OK` to
+/// `callback(userdata, name, json, json_len)` — return `SYSA_STATUS_OK` to
 /// keep streaming; any other status aborts the iteration.
-pub type SystemaUnitStateCallback = Option<
+pub type SysaUnitStateCallback = Option<
     unsafe extern "C" fn(
         userdata: *mut c_void,
         name: *const c_char,
         json: *const u8,
         json_len: usize,
-    ) -> SystemaStatus,
+    ) -> SysaStatus,
 >;
 
 /// Opaque, library-owned unit-state admin client.
-pub struct SystemaUnitStateAdmin {
+pub struct SysaUnitStateAdmin {
     socket_path: String,
 }
 
 /// Create a unit-state admin client for the given control socket path.
 #[no_mangle]
-pub extern "C" fn systema_shared_unitstate_admin_new(
-    socket_path: *const c_char,
-) -> *mut SystemaUnitStateAdmin {
+pub extern "C" fn sysa_unitstate_admin_new(socket_path: *const c_char) -> *mut SysaUnitStateAdmin {
     ffi_try!(std::ptr::null_mut(), {
         let path = match unsafe { crate::ffi::require_str(socket_path, "socket_path") } {
             Ok(value) => value.to_string(),
             Err(_) => return std::ptr::null_mut(),
         };
-        Box::into_raw(Box::new(SystemaUnitStateAdmin { socket_path: path }))
+        Box::into_raw(Box::new(SysaUnitStateAdmin { socket_path: path }))
     })
 }
 
@@ -42,18 +40,18 @@ pub extern "C" fn systema_shared_unitstate_admin_new(
 /// The snapshot is collected inside the library runtime first; the callback
 /// then runs on the calling thread.
 #[no_mangle]
-pub extern "C" fn systema_shared_unitstate_admin_list(
-    admin: *const SystemaUnitStateAdmin,
-    callback: SystemaUnitStateCallback,
+pub extern "C" fn sysa_unitstate_admin_list(
+    admin: *const SysaUnitStateAdmin,
+    callback: SysaUnitStateCallback,
     userdata: *mut c_void,
     out_total: *mut u32,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if admin.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "admin is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "admin is null");
         }
         let Some(callback) = callback else {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "callback is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "callback is null");
         };
         let path = unsafe { &*admin }.socket_path.clone();
         let (result, entries) = match crate::runtime::block_on(
@@ -79,17 +77,17 @@ pub extern "C" fn systema_shared_unitstate_admin_list(
         for (name, json) in entries {
             let name = crate::ffi::sanitize(&name);
             let status = unsafe { callback(userdata, name.as_ptr(), json.as_ptr(), json.len()) };
-            if status != SystemaStatus::Ok {
+            if status != SysaStatus::Ok {
                 return status;
             }
         }
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
 /// Release a unit-state admin client.
 #[no_mangle]
-pub extern "C" fn systema_shared_unitstate_admin_free(admin: *mut SystemaUnitStateAdmin) {
+pub extern "C" fn sysa_unitstate_admin_free(admin: *mut SysaUnitStateAdmin) {
     ffi_try!((), {
         if !admin.is_null() {
             drop(unsafe { Box::from_raw(admin) });

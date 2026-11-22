@@ -6,7 +6,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-11-20 20:01+0800\n"
+        "POT-Creation-Date: 2026-11-21 23:56+0800\n"
         "PO-Revision-Date: 2026-10-05 12:18+0800\n"
         "Last-Translator: Automatically generated\n"
         "Language-Team: none\n"
@@ -529,6 +529,26 @@ msgstr  "Transaction is destructive"
 msgid   "Unit {u} is not loaded"
 msgstr  "Unit {u} is not loaded"
 #
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 48
+#, rust-format
+msgid   "Owner worker '{owner}' of unit '{unit_name}' is not registered. Cannot execute {kind} operation."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 770
+#, rust-format
+msgid   "No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"
+msgstr  "No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 67
+#, rust-format
+msgid   "Owner worker '{owner}' of unit '{unit_name}' is not registered. Cannot process dependency chain for '{name}'."
+msgstr  "Owner worker '{owner}' of unit '{unit_name}' is not registered. Cannot process dependency chain for '{name}'."
+#
+# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1242
+#, rust-format
+msgid   "No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."
+msgstr  "No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 66
 msgid   "--job-mode=triggering is only valid for stop."
 msgstr  "--job-mode=triggering is only valid for stop."
@@ -623,11 +643,6 @@ msgstr  ""
 msgid   "Scope {unit_name} is not transient and cannot be started."
 msgstr  "Scope {unit_name} is not transient and cannot be started."
 #
-# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 770
-#, rust-format
-msgid   "No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"
-msgstr  "No worker available for unit type '{unit_type}' (unit: {unit_name}). Cannot execute {kind} operation. Is the corresponding System Worker running?"
-#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 900
 #, rust-format
 msgid   "Start rate limit exceeded for {unit_name} (interval={interval_sec}s burst={burst})."
@@ -637,11 +652,6 @@ msgstr  "Start rate limit exceeded for {unit_name} (interval={interval_sec}s bur
 #, rust-format
 msgid   "Job already exists for unit {unit_name} (kind={kind}, id={existing_id})."
 msgstr  "Job already exists for unit {unit_name} (kind={kind}, id={existing_id})."
-#
-# File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1242
-#, rust-format
-msgid   "No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."
-msgstr  "No worker registered for unit type '{unit_type}' (unit: {unit_name}). Cannot process dependency chain for '{name}'."
 #
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1511
 #, rust-format
@@ -765,8 +775,8 @@ msgid   "Log level (trace, debug, info, warn, error)."
 msgstr  "Log level (trace, debug, info, warn, error)."
 #
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 90
-msgid   "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan)."
-msgstr  "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan)."
+msgid   "Finder selection to run on daemon-reload, PATH-style list (default: Finder= from init.conf; empty disables the scan)."
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 68
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 98
@@ -819,8 +829,8 @@ msgstr  "System F — System Finder Worker"
 msgid   "Name for the staging area."
 msgstr  "Name for the staging area."
 #
-# File: ../crates/backend/systema-sysf/src/main.rs, line: 107
-msgid   "Run only the selected finders: a file name, a file path, or a directory (default: every finder found)."
+# File: ../crates/backend/systema-sysf/src/main.rs, line: 110
+msgid   "Run only the selected finders: file names, file paths, or directories; may be repeated and ':' separates values (default: every finder found)."
 msgstr  ""
 #
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 78
@@ -2002,9 +2012,9 @@ msgstr  "Workers to skip (short names or full binary names)."
 msgid   "Search for the systema-* binaries only in this directory (default: the executable directory, then PATH)."
 msgstr  "Search for the systema-* binaries only in this directory (default: the executable directory, then PATH)."
 #
-# File: ../crates/backend/systema-sysi/src/main.rs, line: 341
-msgid   "Override one module from the command line (Key=Value; an empty value disables it)."
-msgstr  "Override one module from the command line (Key=Value; an empty value disables it)."
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 342
+msgid   "Override one module from the command line (Key=Value, Value may be a PATH-style list; an empty value disables it)."
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 257
 msgid   "Do not abort when an executable is missing; log an ERROR and skip it."
@@ -2232,6 +2242,18 @@ msgstr  "Properties are read-only"
 msgid   "timed out connecting to the bus"
 msgstr  "timed out connecting to the bus"
 #
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 100
+msgid   "Invalid unit file flags."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 105
+msgid   "Portable unit files are not supported."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 111
+msgid   "The force flag is not accepted here."
+msgstr  ""
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 66
 #, rust-format
 msgid   "Job mode {mode} invalid"
@@ -2287,6 +2309,106 @@ msgstr  "control session ended — reconnect required"
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 39
 msgid   "System Wrapper — systemd D-Bus bridge"
 msgstr  "System Wrapper — systemd D-Bus bridge"
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/mod.rs, line: 222
+#, rust-format
+msgid   "Too many levels of symbolic links while resolving {name}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/mod.rs, line: 331
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 112
+#, rust-format
+msgid   "Failed to inspect {path}: {e}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/mod.rs, line: 339
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/mod.rs, line: 358
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 94
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 850
+#, rust-format
+msgid   "Failed to read {path}: {e}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/mod.rs, line: 437
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 58
+#, rust-format
+msgid   "Invalid unit name {name}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/mod.rs, line: 444
+#, rust-format
+msgid   "Unit file {name} not found."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 83
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 119
+#, rust-format
+msgid   "Failed to create {path}: {e}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 89
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 101
+#, rust-format
+msgid   "File {path} already exists."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 106
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 710
+#, rust-format
+msgid   "Failed to remove {path}: {e}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 256
+#, rust-format
+msgid   "Cannot enable template unit {name} without an instance."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 304
+#, rust-format
+msgid   "Invalid alias path {path}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 332
+#, rust-format
+msgid   "Invalid alias {alias} for unit {name}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 743
+#, rust-format
+msgid   "Unit file {path} is not a regular file."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 854
+msgid   "Unit file is masked."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/ops.rs, line: 862
+msgid   "Too many levels of symbolic links while resolving default.target."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/service_install.rs, line: 103
+#, rust-format
+msgid   "Invalid preset mode {mode}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/service_install.rs, line: 116
+#, rust-format
+msgid   "Failed to install unit files: {e}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/service_install.rs, line: 120
+msgid   "systemctl was not found."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/service_install.rs, line: 197
+#, rust-format
+msgid   "Failed to execute {path}: {e}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/service_install.rs, line: 366
+#, rust-format
+msgid   "The install fallback task failed: {e}."
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 113
 msgid   "System U — per-user instance launcher"
@@ -2533,10 +2655,22 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+# File: ../crates/backend/systema-sysa/src/main.rs, line: 90
+#~ msgid        "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan)."
+#~ msgstr       "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan)."
+#
+#
+# File: ../crates/backend/systema-sysi/src/main.rs, line: 341
+#~ msgid        "Override one module from the command line (Key=Value; an empty value disables it)."
+#~ msgstr       "Override one module from the command line (Key=Value; an empty value disables it)."
+#
+#
+#
 #
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 106
 #~ msgid        "Run only the finder executable with this file name (default: every finder found)."
 #~ msgstr       "Run only the finder executable with this file name (default: every finder found)."
+#
 #
 #
 #
@@ -2548,9 +2682,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 302
 #~ msgid        "Search for the systema-* binaries only in this directory (default: PATH)."
 #~ msgstr       "Search for the systema-* binaries only in this directory (default: PATH)."
+#
 #
 #
 #
@@ -2566,9 +2702,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 38
 #~ msgid        "chmod for mount point failed"
 #~ msgstr       "chmod for mount point failed"
+#
 #
 #
 #
@@ -2586,9 +2724,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
 #~ msgid        "Worker disconnected"
 #~ msgstr       "Worker disconnected"
+#
 #
 #
 #
@@ -2613,9 +2753,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "failed to load unit"
+#
 #
 #
 #
@@ -2640,6 +2782,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2654,10 +2797,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "Unit {name} is a template and cannot be loaded directly"
+#
 #
 #
 #
@@ -2684,10 +2829,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "Unable to resolve dependency cycles after removing {count} edges."
+#
 #
 #
 #
@@ -2717,10 +2864,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') failed: {r}"
+#
 #
 #
 #
@@ -2752,10 +2901,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "Invalid log level '{level}' ({e}); using info"
+#
 #
 #
 #
@@ -2789,9 +2940,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "Directory for per-process log files (systema-sysa.log, ...)."
+#
 #
 #
 #
@@ -2829,10 +2982,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "timed out connecting to the system bus"
+#
 #
 #
 #
@@ -2873,10 +3028,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "INI parse error in {name}: {error}."
+#
 #
 #
 #

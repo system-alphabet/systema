@@ -19,18 +19,15 @@ use systema_shared::proto::{
     IpcVersionRequest, IpcVersionResult, MethodCall, MethodResult, RegisterAck, UnitStateUpdate,
     UnitStateUpdateAck,
 };
-use systema_shared_capi::controller::SystemaController;
-use systema_shared_capi::status::SystemaStatus;
+use systema_shared_capi::controller::SysaController;
+use systema_shared_capi::status::SysaStatus;
 use systema_shared_capi::unit_status::{
-    systema_shared_unit_status_array_alloc, systema_shared_unit_status_free,
-    systema_shared_unit_status_new, SystemaUnitStatus,
+    sysa_unit_status_array_alloc, sysa_unit_status_free, sysa_unit_status_new, SysaUnitStatus,
 };
 use systema_shared_capi::worker::{
-    systema_shared_worker_free, systema_shared_worker_new,
-    systema_shared_worker_publish_unit_states, systema_shared_worker_set_controller,
-    systema_shared_worker_set_on_method_result, systema_shared_worker_set_socket_path,
-    systema_shared_worker_start, systema_shared_worker_stop, systema_shared_worker_wait,
-    SystemaWorker,
+    sysa_worker_free, sysa_worker_new, sysa_worker_publish_unit_states, sysa_worker_set_controller,
+    sysa_worker_set_on_method_result, sysa_worker_set_socket_path, sysa_worker_start,
+    sysa_worker_stop, sysa_worker_wait, SysaWorker,
 };
 
 static START_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -59,12 +56,12 @@ fn wait_for(log: &Log, needle: &str) {
     panic!("{needle:?} never appeared in {:?}", log.lock().unwrap());
 }
 
-fn demo_status() -> *mut SystemaUnitStatus {
+fn demo_status() -> *mut SysaUnitStatus {
     let name = CString::new("demo.service").unwrap();
     let active = CString::new("active").unwrap();
     let sub = CString::new("running").unwrap();
     let invocation = CString::new("inv-1").unwrap();
-    systema_shared_unit_status_new(
+    sysa_unit_status_new(
         name.as_ptr(),
         active.as_ptr(),
         sub.as_ptr(),
@@ -76,14 +73,14 @@ fn demo_status() -> *mut SystemaUnitStatus {
 unsafe extern "C" fn status_cb(
     _userdata: *mut c_void,
     _unit_name: *const c_char,
-    out: *mut *mut SystemaUnitStatus,
-) -> SystemaStatus {
+    out: *mut *mut SysaUnitStatus,
+) -> SysaStatus {
     let status = demo_status();
     if status.is_null() {
-        return SystemaStatus::Internal;
+        return SysaStatus::Internal;
     }
     unsafe { *out = status };
-    SystemaStatus::Ok
+    SysaStatus::Ok
 }
 
 unsafe extern "C" fn start_cb(
@@ -92,14 +89,14 @@ unsafe extern "C" fn start_cb(
     _config: *const u8,
     _config_len: usize,
     _invocation_id: *const c_char,
-) -> SystemaStatus {
+) -> SysaStatus {
     START_CALLS.fetch_add(1, Ordering::SeqCst);
-    SystemaStatus::Ok
+    SysaStatus::Ok
 }
 
-unsafe extern "C" fn stop_cb(_userdata: *mut c_void, _unit_name: *const c_char) -> SystemaStatus {
+unsafe extern "C" fn stop_cb(_userdata: *mut c_void, _unit_name: *const c_char) -> SysaStatus {
     STOP_CALLS.fetch_add(1, Ordering::SeqCst);
-    SystemaStatus::Ok
+    SysaStatus::Ok
 }
 
 unsafe extern "C" fn reload_cb(
@@ -107,29 +104,29 @@ unsafe extern "C" fn reload_cb(
     _unit_name: *const c_char,
     _config: *const u8,
     _config_len: usize,
-) -> SystemaStatus {
-    SystemaStatus::Ok
+) -> SysaStatus {
+    SysaStatus::Ok
 }
 
 unsafe extern "C" fn sync_state_cb(
     _userdata: *mut c_void,
-    out: *mut *mut *mut SystemaUnitStatus,
+    out: *mut *mut *mut SysaUnitStatus,
     count: *mut usize,
-) -> SystemaStatus {
-    let mut array: *mut *mut SystemaUnitStatus = ptr::null_mut();
-    if systema_shared_unit_status_array_alloc(1, &mut array) != SystemaStatus::Ok {
-        return SystemaStatus::Internal;
+) -> SysaStatus {
+    let mut array: *mut *mut SysaUnitStatus = ptr::null_mut();
+    if sysa_unit_status_array_alloc(1, &mut array) != SysaStatus::Ok {
+        return SysaStatus::Internal;
     }
     let status = demo_status();
     if status.is_null() {
-        return SystemaStatus::Internal;
+        return SysaStatus::Internal;
     }
     unsafe {
         *array = status;
         *out = array;
         *count = 1;
     }
-    SystemaStatus::Ok
+    SysaStatus::Ok
 }
 
 unsafe extern "C" fn on_method_result(
@@ -153,8 +150,8 @@ unsafe extern "C" fn on_method_result(
         .push(format!("{method}:{unit_name}:{success}:{queued}"));
 }
 
-fn controller() -> SystemaController {
-    SystemaController {
+fn controller() -> SysaController {
+    SysaController {
         userdata: ptr::null_mut(),
         status: Some(status_cb),
         start: Some(start_cb),
@@ -288,26 +285,19 @@ fn start_requires_a_socket_and_a_controller() {
     let worker_id = CString::new("system-t-1").unwrap();
     let unit_type = CString::new("service").unwrap();
     let types = [unit_type.as_ptr()];
-    let worker: *mut SystemaWorker =
-        systema_shared_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
+    let worker: *mut SysaWorker = sysa_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
     assert!(!worker.is_null());
 
-    assert_eq!(
-        systema_shared_worker_start(worker),
-        SystemaStatus::InvalidArgument
-    );
+    assert_eq!(sysa_worker_start(worker), SysaStatus::InvalidArgument);
 
     let path = CString::new("/tmp/systema-capi-missing.sock").unwrap();
     assert_eq!(
-        systema_shared_worker_set_socket_path(worker, path.as_ptr()),
-        SystemaStatus::Ok
+        sysa_worker_set_socket_path(worker, path.as_ptr()),
+        SysaStatus::Ok
     );
-    assert_eq!(
-        systema_shared_worker_start(worker),
-        SystemaStatus::InvalidArgument
-    );
+    assert_eq!(sysa_worker_start(worker), SysaStatus::InvalidArgument);
 
-    assert_eq!(systema_shared_worker_free(worker), SystemaStatus::Ok);
+    assert_eq!(sysa_worker_free(worker), SysaStatus::Ok);
 }
 
 #[test]
@@ -332,50 +322,40 @@ fn worker_runs_a_full_lifecycle() {
     let worker_id = CString::new("system-t-1").unwrap();
     let unit_type = CString::new("service").unwrap();
     let types = [unit_type.as_ptr()];
-    let worker: *mut SystemaWorker =
-        systema_shared_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
+    let worker: *mut SysaWorker = sysa_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
     assert!(!worker.is_null());
 
     let socket = CString::new(path.to_str().unwrap()).unwrap();
     assert_eq!(
-        systema_shared_worker_set_socket_path(worker, socket.as_ptr()),
-        SystemaStatus::Ok
+        sysa_worker_set_socket_path(worker, socket.as_ptr()),
+        SysaStatus::Ok
     );
     let table = controller();
+    assert_eq!(sysa_worker_set_controller(worker, &table), SysaStatus::Ok);
     assert_eq!(
-        systema_shared_worker_set_controller(worker, &table),
-        SystemaStatus::Ok
+        sysa_worker_set_on_method_result(worker, Some(on_method_result), ptr::null_mut()),
+        SysaStatus::Ok
     );
-    assert_eq!(
-        systema_shared_worker_set_on_method_result(worker, Some(on_method_result), ptr::null_mut()),
-        SystemaStatus::Ok
-    );
-    assert_eq!(systema_shared_worker_start(worker), SystemaStatus::Ok);
+    assert_eq!(sysa_worker_start(worker), SysaStatus::Ok);
 
     wait_for(&log, "ready");
     wait_for(&log, "result:start:true");
 
     let status = demo_status();
     assert!(!status.is_null());
-    let units = [status as *const SystemaUnitStatus];
+    let units = [status as *const SysaUnitStatus];
     assert_eq!(
-        systema_shared_worker_publish_unit_states(worker, units.as_ptr(), units.len(), 0),
-        SystemaStatus::Ok
+        sysa_worker_publish_unit_states(worker, units.as_ptr(), units.len(), 0),
+        SysaStatus::Ok
     );
     wait_for(&log, "state_update:demo.service:false");
-    systema_shared_unit_status_free(status);
+    sysa_unit_status_free(status);
 
     let reason = CString::new("SIGTERM").unwrap();
-    assert_eq!(
-        systema_shared_worker_stop(worker, reason.as_ptr()),
-        SystemaStatus::Ok
-    );
-    let mut run = SystemaStatus::Internal;
-    assert_eq!(
-        systema_shared_worker_wait(worker, &mut run),
-        SystemaStatus::Ok
-    );
-    assert_eq!(run, SystemaStatus::Ok);
+    assert_eq!(sysa_worker_stop(worker, reason.as_ptr()), SysaStatus::Ok);
+    let mut run = SysaStatus::Internal;
+    assert_eq!(sysa_worker_wait(worker, &mut run), SysaStatus::Ok);
+    assert_eq!(run, SysaStatus::Ok);
     server.join().unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -394,7 +374,7 @@ fn worker_runs_a_full_lifecycle() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    assert_eq!(systema_shared_worker_free(worker), SystemaStatus::Ok);
+    assert_eq!(sysa_worker_free(worker), SysaStatus::Ok);
     assert!(log.lock().unwrap().iter().any(|entry| entry == "exit"));
 }
 
@@ -420,16 +400,15 @@ fn freeing_a_running_worker_exits_gracefully() {
     let worker_id = CString::new("system-t-2").unwrap();
     let unit_type = CString::new("service").unwrap();
     let types = [unit_type.as_ptr()];
-    let worker: *mut SystemaWorker =
-        systema_shared_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
+    let worker: *mut SysaWorker = sysa_worker_new(worker_id.as_ptr(), types.as_ptr(), types.len());
     let socket = CString::new(path.to_str().unwrap()).unwrap();
-    systema_shared_worker_set_socket_path(worker, socket.as_ptr());
+    sysa_worker_set_socket_path(worker, socket.as_ptr());
     let table = controller();
-    systema_shared_worker_set_controller(worker, &table);
-    assert_eq!(systema_shared_worker_start(worker), SystemaStatus::Ok);
+    sysa_worker_set_controller(worker, &table);
+    assert_eq!(sysa_worker_start(worker), SysaStatus::Ok);
 
     wait_for(&log, "ready");
-    assert_eq!(systema_shared_worker_free(worker), SystemaStatus::Ok);
+    assert_eq!(sysa_worker_free(worker), SysaStatus::Ok);
     server.join().unwrap();
     assert!(log.lock().unwrap().iter().any(|entry| entry == "exit"));
 }

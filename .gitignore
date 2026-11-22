@@ -23,6 +23,9 @@ lib/libsystema-shared-capi/include/systema_shared.h
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# XMake
+.xmake/
+
 # Trae
 .trae/
 .marscode/

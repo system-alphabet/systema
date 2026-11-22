@@ -5,23 +5,23 @@ use std::ffi::c_char;
 use systema_shared::ir::UnitIR;
 
 use crate::ffi::{require_bytes, write_out_bytes};
-use crate::status::SystemaStatus;
+use crate::status::SysaStatus;
 
 /// Opaque, library-owned `UnitIR`.
-pub struct SystemaUnitIR {
+pub struct SysaUnitIR {
     ir: UnitIR,
 }
 
 /// Parse a unit IR from JSON.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_from_json(
+pub extern "C" fn sysa_unit_ir_from_json(
     data: *const u8,
     len: usize,
-    out: *mut *mut SystemaUnitIR,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+    out: *mut *mut SysaUnitIR,
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if out.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "out is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "out is null");
         }
         let bytes = match unsafe { require_bytes(data, len, "data") } {
             Ok(bytes) => bytes,
@@ -29,8 +29,8 @@ pub extern "C" fn systema_shared_unit_ir_from_json(
         };
         match serde_json::from_slice::<UnitIR>(bytes) {
             Ok(ir) => {
-                unsafe { *out = Box::into_raw(Box::new(SystemaUnitIR { ir })) };
-                SystemaStatus::Ok
+                unsafe { *out = Box::into_raw(Box::new(SysaUnitIR { ir })) };
+                SysaStatus::Ok
             }
             Err(error) => {
                 unsafe { *out = std::ptr::null_mut() };
@@ -42,14 +42,14 @@ pub extern "C" fn systema_shared_unit_ir_from_json(
 
 /// Serialize the IR back to JSON.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_to_json(
-    ir: *const SystemaUnitIR,
+pub extern "C" fn sysa_unit_ir_to_json(
+    ir: *const SysaUnitIR,
     out: *mut *mut u8,
     out_len: *mut usize,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if ir.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "ir is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "ir is null");
         }
         match serde_json::to_vec(&unsafe { &*ir }.ir) {
             Ok(bytes) => crate::ffi::check(write_out_bytes(out, out_len, bytes)),
@@ -58,61 +58,58 @@ pub extern "C" fn systema_shared_unit_ir_to_json(
     })
 }
 
-fn with_ir<T>(ir: *const SystemaUnitIR, read: impl FnOnce(&UnitIR) -> T) -> Option<T> {
+fn with_ir<T>(ir: *const SysaUnitIR, read: impl FnOnce(&UnitIR) -> T) -> Option<T> {
     if ir.is_null() {
-        crate::error::fail(SystemaStatus::InvalidArgument, "ir is null");
+        crate::error::fail(SysaStatus::InvalidArgument, "ir is null");
         return None;
     }
     Some(read(&unsafe { &*ir }.ir))
 }
 
-fn optional_string(value: Option<&str>, out: *mut *mut c_char, what: &str) -> SystemaStatus {
+fn optional_string(value: Option<&str>, out: *mut *mut c_char, what: &str) -> SysaStatus {
     if out.is_null() {
-        return crate::error::fail(SystemaStatus::InvalidArgument, "out is null");
+        return crate::error::fail(SysaStatus::InvalidArgument, "out is null");
     }
     match value {
         Some(value) => {
             unsafe { *out = crate::ffi::into_c_string(value) };
-            SystemaStatus::Ok
+            SysaStatus::Ok
         }
         None => {
             unsafe { *out = std::ptr::null_mut() };
-            crate::error::fail(SystemaStatus::NotFound, format!("{what} is not set"))
+            crate::error::fail(SysaStatus::NotFound, format!("{what} is not set"))
         }
     }
 }
 
 fn string_field(
-    ir: *const SystemaUnitIR,
+    ir: *const SysaUnitIR,
     out: *mut *mut c_char,
     what: &str,
     read: impl FnOnce(&UnitIR) -> Option<String>,
-) -> SystemaStatus {
+) -> SysaStatus {
     if ir.is_null() {
-        return crate::error::fail(SystemaStatus::InvalidArgument, "ir is null");
+        return crate::error::fail(SysaStatus::InvalidArgument, "ir is null");
     }
     let value = read(&unsafe { &*ir }.ir);
     optional_string(value.as_deref(), out, what)
 }
 
-/// Copy the unit ID (free with `systema_shared_string_free`).
+/// Copy the unit ID (free with `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_id(
-    ir: *const SystemaUnitIR,
-    out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_unit_ir_id(ir: *const SysaUnitIR, out: *mut *mut c_char) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "id", |ir| Some(ir.id.clone()))
     })
 }
 
-/// Copy the unit type name (free with `systema_shared_string_free`).
+/// Copy the unit type name (free with `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_unit_type(
-    ir: *const SystemaUnitIR,
+pub extern "C" fn sysa_unit_ir_unit_type(
+    ir: *const SysaUnitIR,
     out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "unit_type", |ir| {
             ir.unit_type
                 .as_ref()
@@ -121,47 +118,44 @@ pub extern "C" fn systema_shared_unit_ir_unit_type(
     })
 }
 
-/// Copy the description (free with `systema_shared_string_free`).
+/// Copy the description (free with `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_description(
-    ir: *const SystemaUnitIR,
+pub extern "C" fn sysa_unit_ir_description(
+    ir: *const SysaUnitIR,
     out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "description", |ir| ir.description.clone())
     })
 }
 
-/// Copy the source format (free with `systema_shared_string_free`).
+/// Copy the source format (free with `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_source_format(
-    ir: *const SystemaUnitIR,
+pub extern "C" fn sysa_unit_ir_source_format(
+    ir: *const SysaUnitIR,
     out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "source_format", |ir| ir.source_format.clone())
     })
 }
 
-/// Copy the source path (free with `systema_shared_string_free`).
+/// Copy the source path (free with `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_source_path(
-    ir: *const SystemaUnitIR,
+pub extern "C" fn sysa_unit_ir_source_path(
+    ir: *const SysaUnitIR,
     out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "source_path", |ir| ir.source_path.clone())
     })
 }
 
-/// Copy the pinned owner worker (free with `systema_shared_string_free`);
+/// Copy the pinned owner worker (free with `sysa_string_free`);
 /// `NOT_FOUND` when type-based routing applies.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_owner(
-    ir: *const SystemaUnitIR,
-    out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_unit_ir_owner(ir: *const SysaUnitIR, out: *mut *mut c_char) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "owner", |ir| ir.owner.clone())
     })
 }
@@ -172,13 +166,10 @@ pub extern "C" fn systema_shared_unit_ir_owner(
 /// every task and event for this unit goes to that worker even when it does
 /// not advertise the unit's type; clearing it restores type-based routing.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_set_owner(
-    ir: *mut SystemaUnitIR,
-    owner: *const c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_unit_ir_set_owner(ir: *mut SysaUnitIR, owner: *const c_char) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if ir.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "ir is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "ir is null");
         }
         let owner = if owner.is_null() {
             None
@@ -189,40 +180,37 @@ pub extern "C" fn systema_shared_unit_ir_set_owner(
             }
         };
         unsafe { &mut *ir }.ir.owner = owner;
-        SystemaStatus::Ok
+        SysaStatus::Ok
     })
 }
 
-/// Copy the alias target (free with `systema_shared_string_free`).
+/// Copy the alias target (free with `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_alias_of(
-    ir: *const SystemaUnitIR,
+pub extern "C" fn sysa_unit_ir_alias_of(
+    ir: *const SysaUnitIR,
     out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "alias_of", |ir| ir.alias_of.clone())
     })
 }
 
-/// Copy the slice name (free with `systema_shared_string_free`).
+/// Copy the slice name (free with `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_slice(
-    ir: *const SystemaUnitIR,
-    out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_unit_ir_slice(ir: *const SysaUnitIR, out: *mut *mut c_char) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "slice", |ir| ir.slice.clone())
     })
 }
 
 /// Copy the template this IR belongs to (free with
-/// `systema_shared_string_free`).
+/// `sysa_string_free`).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_template_of(
-    ir: *const SystemaUnitIR,
+pub extern "C" fn sysa_unit_ir_template_of(
+    ir: *const SysaUnitIR,
     out: *mut *mut c_char,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         string_field(ir, out, "template_of", |ir| {
             ir.template_of().map(str::to_string)
         })
@@ -231,53 +219,53 @@ pub extern "C" fn systema_shared_unit_ir_template_of(
 
 /// Copy the reported alias list.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_aliases(
-    ir: *const SystemaUnitIR,
-    out: *mut *mut crate::ffi::SystemaStringList,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_unit_ir_aliases(
+    ir: *const SysaUnitIR,
+    out: *mut *mut crate::ffi::SysaStringList,
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if out.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "out is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "out is null");
         }
         match with_ir(ir, |ir| ir.aliases.clone()) {
             Some(aliases) => {
                 unsafe { *out = crate::ffi::into_string_list(aliases) };
-                SystemaStatus::Ok
+                SysaStatus::Ok
             }
-            None => SystemaStatus::InvalidArgument,
+            None => SysaStatus::InvalidArgument,
         }
     })
 }
 
 /// Copy the type-specific directive map; `NOT_FOUND` when the IR carries none.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_config(
-    ir: *const SystemaUnitIR,
-    out: *mut *mut crate::config_map::SystemaConfigMap,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_unit_ir_config(
+    ir: *const SysaUnitIR,
+    out: *mut *mut crate::config_map::SysaConfigMap,
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if out.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "out is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "out is null");
         }
         match with_ir(ir, |ir| ir.config.clone()) {
             Some(Some(map)) => {
                 unsafe {
-                    *out = Box::into_raw(Box::new(crate::config_map::SystemaConfigMap::new(map)))
+                    *out = Box::into_raw(Box::new(crate::config_map::SysaConfigMap::new(map)))
                 };
-                SystemaStatus::Ok
+                SysaStatus::Ok
             }
             Some(None) => {
                 unsafe { *out = std::ptr::null_mut() };
-                crate::error::fail(SystemaStatus::NotFound, "config is not reported")
+                crate::error::fail(SysaStatus::NotFound, "config is not reported")
             }
-            None => SystemaStatus::InvalidArgument,
+            None => SysaStatus::InvalidArgument,
         }
     })
 }
 
 /// Whether the IR is a template definition.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_is_template(ir: *const SystemaUnitIR) -> u8 {
+pub extern "C" fn sysa_unit_ir_is_template(ir: *const SysaUnitIR) -> u8 {
     ffi_try!(0, {
         match with_ir(ir, UnitIR::is_template) {
             Some(value) => u8::from(value),
@@ -288,7 +276,7 @@ pub extern "C" fn systema_shared_unit_ir_is_template(ir: *const SystemaUnitIR) -
 
 /// Whether the IR is an instance of a template.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_is_template_instance(ir: *const SystemaUnitIR) -> u8 {
+pub extern "C" fn sysa_unit_ir_is_template_instance(ir: *const SysaUnitIR) -> u8 {
     ffi_try!(0, {
         match with_ir(ir, UnitIR::is_template_instance) {
             Some(value) => u8::from(value),
@@ -299,13 +287,13 @@ pub extern "C" fn systema_shared_unit_ir_is_template_instance(ir: *const Systema
 
 /// Copy the template parameter list (empty when the IR has no template).
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_template_parameters(
-    ir: *const SystemaUnitIR,
-    out: *mut *mut crate::ffi::SystemaStringList,
-) -> SystemaStatus {
-    ffi_try!(SystemaStatus::Internal, {
+pub extern "C" fn sysa_unit_ir_template_parameters(
+    ir: *const SysaUnitIR,
+    out: *mut *mut crate::ffi::SysaStringList,
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
         if out.is_null() {
-            return crate::error::fail(SystemaStatus::InvalidArgument, "out is null");
+            return crate::error::fail(SysaStatus::InvalidArgument, "out is null");
         }
         match with_ir(ir, |ir| {
             ir.template_parameters()
@@ -315,16 +303,16 @@ pub extern "C" fn systema_shared_unit_ir_template_parameters(
         }) {
             Some(values) => {
                 unsafe { *out = crate::ffi::into_string_list(values) };
-                SystemaStatus::Ok
+                SysaStatus::Ok
             }
-            None => SystemaStatus::InvalidArgument,
+            None => SysaStatus::InvalidArgument,
         }
     })
 }
 
 /// Release an IR returned by this library.
 #[no_mangle]
-pub extern "C" fn systema_shared_unit_ir_free(ir: *mut SystemaUnitIR) {
+pub extern "C" fn sysa_unit_ir_free(ir: *mut SysaUnitIR) {
     ffi_try!((), {
         if !ir.is_null() {
             drop(unsafe { Box::from_raw(ir) });

@@ -17,11 +17,11 @@ fn header_path() -> PathBuf {
 fn header_has_expected_anchors() {
     let header = std::fs::read_to_string(header_path()).expect("generated header is readable");
     assert!(
-        header.contains("typedef struct SystemaWorker SystemaWorker;"),
+        header.contains("typedef struct SysaWorker SysaWorker;"),
         "opaque worker handle missing from the header"
     );
     assert!(
-        header.contains("SYSTEMA_STATUS_OK"),
+        header.contains("SYSA_STATUS_OK"),
         "success status constant missing from the header"
     );
 }
