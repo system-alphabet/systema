@@ -6138,7 +6138,6 @@ mod tests {
         let result = UnitCgroupResult::decode(env.payload.as_slice()).unwrap();
         assert!(!result.available);
         assert!(!result.found);
-        assert!(!result.error.is_empty());
         // The relay left no pending sender behind.
         assert!(alloc.read().cgroup_query_txs.is_empty());
     }

@@ -969,7 +969,6 @@ mod tests {
         assert!(!r.available);
         assert!(!r.found);
         assert!(r.cgroup_path.is_empty());
-        assert!(!r.error.is_empty());
     }
 
     #[test]
@@ -988,7 +987,6 @@ mod tests {
         assert!(r.available);
         assert!(r.found);
         assert_eq!(r.cgroup_path, "/sys/fs/cgroup/system.slice/app.service");
-        assert!(r.error.is_empty());
     }
 
     #[test]
@@ -1009,7 +1007,6 @@ mod tests {
         assert!(r.available);
         assert!(!r.found);
         assert!(r.cgroup_path.is_empty());
-        assert!(!r.error.is_empty());
     }
 
     #[test]

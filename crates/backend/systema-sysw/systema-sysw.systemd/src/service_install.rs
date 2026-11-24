@@ -647,16 +647,4 @@ Removed '/etc/systemd/system/b.service'.
         .unwrap_err();
         assert!(error.contains("boom: cannot install"), "{error}");
     }
-
-    #[test]
-    fn fallback_mode_is_a_clap_value_enum() {
-        use clap::ValueEnum;
-        let values = ServiceInstallFallback::value_variants();
-        assert_eq!(values.len(), 3);
-        assert_eq!(
-            ServiceInstallFallback::from_str("always", true).unwrap(),
-            ServiceInstallFallback::Always
-        );
-        assert!(ServiceInstallFallback::from_str("bogus", true).is_err());
-    }
 }

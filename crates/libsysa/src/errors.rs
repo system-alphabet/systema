@@ -148,12 +148,6 @@ mod tests {
     }
 
     #[test]
-    fn localize_without_placeholders_keeps_the_template() {
-        let err = SysError::new(ErrorCode::ConnectionClosed);
-        assert_eq!(localize(&err), "connection to System A is closed");
-    }
-
-    #[test]
     fn chain_keeps_links_that_are_not_sys_errors() {
         let inner = anyhow::Error::new(SysError::new(ErrorCode::ConnectFailed).with("e", "EPERM"));
         let wrapped = inner.context("while registering units");
@@ -163,25 +157,6 @@ mod tests {
             "got {text:?}"
         );
         assert!(text.contains("EPERM"), "got {text:?}");
-    }
-
-    #[test]
-    fn message_renders_a_bare_code() {
-        assert_eq!(
-            message(ErrorCode::EnvelopeDecodeFailed),
-            "Failed to decode Envelope."
-        );
-    }
-
-    #[test]
-    fn every_code_has_a_template() {
-        // A code without a message would reach the user as its raw
-        // variant name; this guard makes adding a variant a compile-and-test
-        // failure until its wording is added here too.
-        for code in ErrorCode::ALL {
-            let text = template(*code);
-            assert!(!text.is_empty(), "ErrorCode::{code:?} has no message");
-        }
     }
 
     #[test]

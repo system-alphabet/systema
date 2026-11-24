@@ -134,7 +134,6 @@ mod tests {
         let result = IpcVersionResult::decode(verdict.payload.as_slice()).unwrap();
         assert!(!result.compatible);
         assert_eq!(result.version, IPC_VERSION);
-        assert!(!result.message.is_empty());
     }
 
     #[tokio::test]

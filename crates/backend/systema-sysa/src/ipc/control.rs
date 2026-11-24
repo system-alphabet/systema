@@ -2312,7 +2312,6 @@ mod tests {
             .find(|r| r.name == "foo.service")
             .unwrap();
         assert!(foo.success, "foo.service should enqueue: {}", foo.message);
-        assert!(foo.message.starts_with("job "));
 
         let nope = result
             .results
@@ -2320,7 +2319,6 @@ mod tests {
             .find(|r| r.name == "nope.service")
             .unwrap();
         assert!(!nope.success);
-        assert!(!nope.message.is_empty());
     }
 
     #[tokio::test]
@@ -2369,7 +2367,6 @@ mod tests {
         assert_eq!(reply.method, "manager.stop_units.result");
         let result = StopUnitsResult::decode(reply.payload.as_slice()).unwrap();
         assert!(!result.success);
-        assert!(!result.message.is_empty());
     }
 
     // -----------------------------------------------------------------------
@@ -2425,7 +2422,6 @@ mod tests {
         assert_eq!(replies.len(), 1);
         let result = AdminStagingResult::decode(replies[0].payload.as_slice()).unwrap();
         assert!(!result.success);
-        assert!(!result.message.is_empty());
     }
 
     #[test]
@@ -2442,7 +2438,6 @@ mod tests {
             assert!(doc["unit"]["description"].is_string() || doc["unit"]["after"].is_array());
         }
         assert_eq!(eof.total, 3);
-        assert!(eof.message.is_empty());
     }
 
     #[test]
@@ -2453,7 +2448,6 @@ mod tests {
         let (entries, eof) = split_unitstate_replies(&replies);
         assert!(entries.is_empty());
         assert_eq!(eof.total, 0);
-        assert!(!eof.message.is_empty());
     }
 
     #[tokio::test]

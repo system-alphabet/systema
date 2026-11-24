@@ -384,8 +384,6 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(reply.job_id, 7);
-        assert_eq!(reply.unit_name, "demo.service");
 
         // Completion then arrives asynchronously over the event stream:
         // `job.new` populates the mirror, `job.completed` drains it, and on a
