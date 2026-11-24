@@ -155,6 +155,36 @@ Applies to the only C/C++ code in the repo: `lib/libsystema-shared-capi` and
   user-domain instance is `systema-sysu --login` with all sockets under
   `$XDG_RUNTIME_DIR/systema` (strict separation; see `doc/user-session.md`).
 
+## Test rules
+
+### Do not add tests by default
+
+Do not add a test unless all of the following hold:
+
+1. Reverting this code change would make the test fail.
+2. It asserts hard-coded expected behavior, not implementation details
+   or copied logic.
+3. It runs at the single layer that owns the behavior (unit/integration/
+   E2E do not cover the same contract twice).
+4. Type checking, schema validation, or an existing test does not already
+   cover the behavior.
+
+### Forbidden test patterns (delete them if they already exist; do not update them)
+
+- Testing literal version numbers, constants, or configuration fields.
+- Testing whether human-readable message text is "text" or non-empty.
+- Testing the behavior of a framework, library, or third-party tool
+  instead of this project's own code.
+- Tautological assertions (asserting a value equals itself, or asserting
+  that a mock called the method it mocks).
+- Tests written only to raise coverage numbers, without targeting a
+  concrete failure mode.
+
+### Cleanup authorization
+
+When modifying any module, if you find the patterns above, report them to
+the user promptly and let the user decide whether to clean them up.
+
 ## Workflow rules
 - Do **not** `git commit` or `git add` (stage) anything after making
   changes — only on the user's explicit request.
