@@ -1544,17 +1544,23 @@ async fn dispatch_plan(
             }
         }
 
-        // --- Delegate= gate: `resource.prepare` before the start goes out ---
-        // The prepared placement path rides in UnitConfig.cgroup_path and
-        // System S inserts the spawned process into that cgroup inside its
-        // pre_exec hook (as root, before the credentials drop), so the unit
-        // starts inside an already-delegated hierarchy.  A failed prepare
-        // fails the job through the normal result machinery (dependency
-        // propagation, OnFailure=, state revert) instead of dispatching a
-        // unit that would die later on its own cgroup operations.
+        // --- cgroup placement gate: `resource.prepare` before the start ---
+        // Every service/scope gets a placement path, not only Delegate=
+        // units: systemd puts every unit in its own cgroup, and a forking
+        // service without PIDFile= needs that membership to find its main
+        // process.  The prepared path rides in UnitConfig.cgroup_path and
+        // System S inserts the spawned process into that cgroup in pre_exec
+        // (as root, before the credentials drop).
+        //
+        // Delegate= preparation keeps its old failure semantics; for a plain
+        // unit a missing cgroup backend degrades to starting without
+        // placement, in line with the platform fallback rule.
         let mut cgroup_path = String::new();
+        let delegated = unit_file.as_ref().is_some_and(unit_delegates);
         if matches!(step_kind, JobKind::Start | JobKind::Restart)
-            && unit_file.as_ref().is_some_and(|uf| unit_delegates(uf))
+            && unit_file
+                .as_ref()
+                .is_some_and(|uf| unit_placeable(uf) || unit_delegates(uf))
         {
             let prepare_worker = {
                 let state = allocator.read();
@@ -1582,6 +1588,11 @@ async fn dispatch_plan(
                     };
                     match prepared {
                         Ok(path) => cgroup_path = path,
+                        Err(e) if !delegated => {
+                            warn!(
+                                "resource.prepare failed for {name}: {e}; starting without cgroup placement"
+                            );
+                        }
                         Err(e) => {
                             warn!("resource.prepare failed for {name}: {e}");
                             handle_task_result(
@@ -1600,11 +1611,18 @@ async fn dispatch_plan(
                 None => {
                     // Capability gap (System R absent or pre-protocol): keep
                     // today's behaviour — the unit starts, its cgroup just is
-                    // not delegated — and make the gap visible.
-                    warn!(
-                        "Delegate= unit {}: no worker implements resource.prepare; starting without cgroup delegation",
-                        name
-                    );
+                    // not placed/delegated — and make the gap visible.
+                    if delegated {
+                        warn!(
+                            "Delegate= unit {}: no worker implements resource.prepare; starting without cgroup delegation",
+                            name
+                        );
+                    } else {
+                        warn!(
+                            "unit {}: no worker implements resource.prepare; starting without cgroup placement",
+                            name
+                        );
+                    }
                 }
             }
         }
@@ -1882,7 +1900,12 @@ async fn prepare_batch_start(
         if state.worker_for_unit(unit_name).is_none() {
             bail!(
                 "{}",
-                missing_worker_error(&state, unit_name, &unit_type, &format!("{:?}", JobKind::Start))
+                missing_worker_error(
+                    &state,
+                    unit_name,
+                    &unit_type,
+                    &format!("{:?}", JobKind::Start)
+                )
             );
         }
     }
@@ -2658,6 +2681,14 @@ enum PostAction {
     Start(String),
 }
 
+/// Whether the unit kind owns a cgroup that should be prepared before the
+/// start is dispatched.  Slices are event-managed unless they delegate; the
+/// pre-start path covers service and scope units, whose spawned processes
+/// need a known cgroup from the first instruction.
+fn unit_placeable(uf: &UnitFile) -> bool {
+    matches!(uf.kind, UnitKind::Service | UnitKind::Scope)
+}
+
 /// Whether the unit's own section carries `Delegate=` — the signal that its
 /// cgroup must be prepared (and handed over) before it starts.  Only the
 /// unit kinds that own a cgroup sub-tree can delegate.
@@ -2752,9 +2783,8 @@ fn build_unit_config(
     UnitConfig {
         unit_name: uf.name.clone(),
         description: uf.unit.description.clone(),
-        // Delegate= placement path prepared via `resource.prepare` before
-        // dispatch; empty = the unit does not delegate and System S must
-        // leave the spawned process's cgroup alone.
+        // Placement path prepared via `resource.prepare` before dispatch;
+        // empty = no cgroup backend, so System S leaves the process alone.
         cgroup_path: cgroup_path.to_string(),
         config_json: sysa::ir::config::to_json_bytes(&config),
         socket_units,
@@ -3664,6 +3694,14 @@ mod tests {
 
     fn make_unit(name: &str) -> UnitFile {
         UnitFile::new(name)
+    }
+
+    #[test]
+    fn test_unit_placeable() {
+        assert!(unit_placeable(&make_unit("plain.service")));
+        assert!(unit_placeable(&make_unit("session.scope")));
+        assert!(!unit_placeable(&make_unit("multi-user.target")));
+        assert!(!unit_placeable(&make_unit("app.slice")));
     }
 
     #[test]

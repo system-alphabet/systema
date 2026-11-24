@@ -283,12 +283,15 @@ impl ResourceWorker {
     /// start job is dispatched, then return the absolute path System S
     /// must place the spawned process into before exec.
     ///
-    /// Unlike the event flow this is not best-effort: a failed prepare
-    /// fails the start job with a visible message instead of letting the
-    /// unit start unconstrained and die later on its own cgroup
-    /// operations.  The empty path means "no placement": there is no cgroup
-    /// backend here, or the unit does not delegate — the unit then starts
-    /// exactly as it did before delegation existed.
+    /// Unlike the event flow this is not best-effort for the cgroup setup
+    /// itself: a failed prepare fails the start job with a visible message
+    /// instead of letting the unit start unconstrained and die later on its
+    /// own cgroup operations.  Every unit that owns a cgroup gets a placement
+    /// path — not only `Delegate=` units — because systemd places every unit
+    /// in its own cgroup, and a forking service without `PIDFile=` relies on
+    /// that membership to discover its main process.  The empty path means
+    /// "no cgroup backend here", which keeps FreeBSD/OpenBSD/Android on the
+    /// pre-cgroup behavior.
     pub fn prepare(&self, event: &UnitResourceEvent) -> Result<String, String> {
         if !self.available() {
             debug!(
@@ -306,13 +309,11 @@ impl ResourceWorker {
             .ensure(&cgroup_path, &config)
             .map_err(|e| e.to_string())?;
         if !config.delegate {
-            // Defensive: only Delegate= units get a placement path, so a
-            // mis-routed prepare can never move a process somewhere new.
             debug!(
-                "resource.prepare for {}: no Delegate= — no placement",
+                "Prepared cgroup for {} at {cgroup_path} (no delegation)",
                 event.unit_name
             );
-            return Ok(String::new());
+            return Ok(cgroup_path);
         }
         self.controller
             .delegate(&cgroup_path, &event.owner_user, &event.owner_group, &config)
@@ -1101,10 +1102,13 @@ mod tests {
     }
 
     #[test]
-    fn prepare_without_delegate_ensures_but_places_nothing() {
+    fn prepare_without_delegate_returns_the_unit_root() {
         let (w, ctrl) = recording_worker();
         let ev = resource_event("plain.service", "", false);
-        assert_eq!(w.prepare(&ev), Ok(String::new()));
+        assert_eq!(
+            w.prepare(&ev),
+            Ok(ResourceWorker::cgroup_path("plain.service", ""))
+        );
         assert_eq!(ctrl.ensured.lock().unwrap().len(), 1);
         assert!(ctrl.delegated.lock().unwrap().is_empty());
     }
