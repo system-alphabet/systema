@@ -17,6 +17,9 @@ pub struct ServiceConfig {
     pub working_directory: String,
     pub user: String,
     pub group: String,
+    pub ambient_capabilities: Vec<String>,
+    pub capability_bounding_set: Option<Vec<String>>,
+    pub no_new_privileges: bool,
     pub pam_name: String,
     pub environment: Vec<String>,
     pub service_type: String,
@@ -68,6 +71,14 @@ impl ServiceConfig {
             working_directory: get_string(map, "WorkingDirectory").unwrap_or_default(),
             user: get_string(map, "User").unwrap_or_default(),
             group: get_string(map, "Group").unwrap_or_default(),
+            ambient_capabilities: get_strings(map, "AmbientCapabilities"),
+            capability_bounding_set: map.contains_key("CapabilityBoundingSet").then(|| {
+                get_strings(map, "CapabilityBoundingSet")
+                    .into_iter()
+                    .filter(|value| !value.is_empty())
+                    .collect()
+            }),
+            no_new_privileges: get_bool(map, "NoNewPrivileges"),
             pam_name: get_string(map, "PAMName").unwrap_or_default(),
             environment: get_strings(map, "Environment"),
             service_type: get_string(map, "Type").unwrap_or_default(),
@@ -138,6 +149,19 @@ impl ServiceConfig {
         }
         if !self.environment.is_empty() {
             put("Environment", json!(self.environment));
+        }
+        if !self.ambient_capabilities.is_empty() {
+            put("AmbientCapabilities", json!(self.ambient_capabilities));
+        }
+        if let Some(bounds) = &self.capability_bounding_set {
+            if bounds.is_empty() {
+                put("CapabilityBoundingSet", json!(""));
+            } else {
+                put("CapabilityBoundingSet", json!(bounds));
+            }
+        }
+        if self.no_new_privileges {
+            put("NoNewPrivileges", json!(true));
         }
         if !self.state_directory.is_empty() {
             put("StateDirectory", json!(self.state_directory));

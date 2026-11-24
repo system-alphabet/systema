@@ -364,6 +364,35 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
                     svc.standard_error = v;
                 }
 
+                // Capability lists use systemd's list semantics: repeated
+                // assignments add to the accumulated set, and an empty value
+                // resets it.  `CapabilityBoundingSet=` must distinguish
+                // "absent" (keep the inherited bounding set) from an explicit
+                // empty value (drop every capability).
+                for val in collect_key_lines(&processed, "service", "ambientcapabilities") {
+                    if val.is_empty() {
+                        svc.ambient_capabilities.clear();
+                    } else {
+                        svc.ambient_capabilities
+                            .extend(split_vec(&expand_specifiers(&val, &unit.name)));
+                    }
+                }
+                let bounds = collect_key_lines(&processed, "service", "capabilityboundingset");
+                if !bounds.is_empty() {
+                    let mut set = svc.capability_bounding_set.clone().unwrap_or_default();
+                    for val in bounds {
+                        if val.is_empty() {
+                            set.clear();
+                        } else {
+                            set.extend(split_vec(&expand_specifiers(&val, &unit.name)));
+                        }
+                    }
+                    svc.capability_bounding_set = Some(set);
+                }
+                if config.get("service", "nonewprivileges").is_some() {
+                    svc.no_new_privileges = get_bool(&config, "service", "nonewprivileges", false);
+                }
+
                 // Resource-control directives override individually so keys
                 // absent from the drop-in keep the base values.
                 apply_dropin_resource_control(&config, "service", &mut svc.rc);
@@ -1391,6 +1420,15 @@ fn parse_service_section(config: &Ini, svc: &mut ServiceSection, name: &str) -> 
     // systemd's manager_load_unit_from_path() + unit_full_printf().
     svc.user = expand_specifiers(&get_str(config, "service", "user"), name);
     svc.group = expand_specifiers(&get_str(config, "service", "group"), name);
+    svc.ambient_capabilities = split_vec(&get_str(config, "service", "ambientcapabilities"));
+    if config.get("service", "capabilityboundingset").is_some() {
+        svc.capability_bounding_set = Some(split_vec(&get_str(
+            config,
+            "service",
+            "capabilityboundingset",
+        )));
+    }
+    svc.no_new_privileges = get_bool(config, "service", "nonewprivileges", false);
     svc.pam_name = expand_specifiers(&get_str(config, "service", "pamname"), name);
     svc.pid_file = expand_specifiers(&get_str(config, "service", "pidfile"), name);
     svc.bus_name = expand_specifiers(&get_str(config, "service", "busname"), name);
@@ -3242,5 +3280,43 @@ AllowedCPUs=0-3
         let unit = parse_unit("simple.service", content).unwrap();
         let svc = unit.service.unwrap();
         assert!(svc.sockets.is_empty());
+    }
+
+    #[test]
+    fn service_capabilities_and_no_new_privileges_are_parsed() {
+        let unit = parse_unit(
+            "caps.service",
+            "[Service]\nExecStart=/bin/true\nUser=systemd-resolve\nAmbientCapabilities=CAP_NET_BIND_SERVICE cap_net_raw\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW\nNoNewPrivileges=yes\n",
+        )
+        .unwrap();
+        let svc = unit.service.unwrap();
+        assert_eq!(
+            svc.ambient_capabilities,
+            vec![
+                "CAP_NET_BIND_SERVICE".to_string(),
+                "cap_net_raw".to_string()
+            ]
+        );
+        assert_eq!(
+            svc.capability_bounding_set,
+            Some(vec![
+                "CAP_NET_BIND_SERVICE".to_string(),
+                "CAP_NET_RAW".to_string()
+            ])
+        );
+        assert!(svc.no_new_privileges);
+    }
+
+    #[test]
+    fn explicit_empty_capability_bounding_set_is_preserved() {
+        let unit = parse_unit(
+            "caps.service",
+            "[Service]\nExecStart=/bin/true\nCapabilityBoundingSet=\n",
+        )
+        .unwrap();
+        assert_eq!(
+            unit.service.unwrap().capability_bounding_set,
+            Some(Vec::new())
+        );
     }
 }

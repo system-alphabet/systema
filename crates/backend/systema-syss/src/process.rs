@@ -190,6 +190,8 @@ pub async fn start_service(
         "Starting {}: {} {:?}",
         unit_name, parsed.program, parsed.args
     );
+    let capabilities = crate::capability::CapabilityPlan::from_service(&svc, &unit_name)
+        .with_no_new_privileges(parsed.flags.no_new_privileges);
 
     // Whether the service gets its credentials switched (User=/Group=) and
     // its PAM session opened.  The `+` (FULLY_PRIVILEGED) and `!`/`!!`
@@ -479,6 +481,7 @@ pub async fn start_service(
         &listen_fd_names,
         creds,
         config.cgroup_path.clone(),
+        capabilities,
     );
     // Whether the TTY hook below acquires a new session for the child.  That
     // is mutually exclusive with `process_group(0)`: `setsid()` fails with
@@ -752,8 +755,16 @@ async fn run_exec_commands(
             }
         }
 
-        if let Some(mut pre) = build_pre_exec(child_envs, &[], &[], creds, cgroup_path.to_string())
-        {
+        let capabilities = crate::capability::CapabilityPlan::from_service(svc, unit_name)
+            .with_no_new_privileges(parsed.flags.no_new_privileges);
+        if let Some(mut pre) = build_pre_exec(
+            child_envs,
+            &[],
+            &[],
+            creds,
+            cgroup_path.to_string(),
+            capabilities,
+        ) {
             unsafe {
                 cmd.pre_exec(move || pre());
             }
@@ -1506,6 +1517,7 @@ fn build_pre_exec(
     listen_fd_names: &[String],
     creds: Option<Creds>,
     cgroup_path: String,
+    capabilities: crate::capability::CapabilityPlan,
 ) -> Option<PreExecFn> {
     let fds = listen_fds.to_vec();
     // Pre-build the `LISTEN_FDNAMES` value outside the hook: pre_exec must
@@ -1607,6 +1619,13 @@ fn build_pre_exec(
                 }
             }
         }
+        // Capability bounding set: drop below the inherited set while the
+        // process is still privileged.  AmbientCapabilities= was already
+        // folded into the bounding set by `CapabilityPlan::from_service`.
+        capabilities.apply_bounding_set()?;
+        if capabilities.needs_keep_caps(creds.is_some()) {
+            capabilities.set_keep_caps()?;
+        }
         if let Some(creds) = &creds {
             // An unprivileged System S (the per-user instance) cannot call
             // initgroups(2)/setgroups(2) — they need CAP_SETGID — and
@@ -1651,6 +1670,10 @@ fn build_pre_exec(
                 }
             }
         }
+        // Ambient capabilities are raised after setuid(), then the no-new-
+        // privileges promise is applied last, matching systemd's exec order.
+        capabilities.apply_ambient_set()?;
+        capabilities.apply_no_new_privileges()?;
         Ok(())
     }))
 }

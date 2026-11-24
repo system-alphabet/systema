@@ -97,6 +97,13 @@ fn put_service(map: &mut ConfigMap, section: &ServiceSection) {
     put_str(map, "WorkingDirectory", &section.working_directory);
     put_str(map, "User", &section.user);
     put_str(map, "Group", &section.group);
+    put_strings(map, "AmbientCapabilities", &section.ambient_capabilities);
+    put_opt_strings(
+        map,
+        "CapabilityBoundingSet",
+        &section.capability_bounding_set,
+    );
+    put_bool(map, "NoNewPrivileges", section.no_new_privileges);
     put_str(map, "PAMName", &section.pam_name);
     put_strings(map, "Environment", &section.environment);
     put_strings(map, "EnvironmentFile", &section.environment_file);
@@ -277,6 +284,18 @@ fn put_strings(map: &mut ConfigMap, key: &str, values: &[String]) {
     }
 }
 
+/// Serialize an optional list so `None` (directive absent) and `Some([])`
+/// (directive explicitly emptied) stay distinguishable across the wire.
+fn put_opt_strings(map: &mut ConfigMap, key: &str, values: &Option<Vec<String>>) {
+    if let Some(values) = values {
+        if values.is_empty() {
+            map.insert(key.to_string(), Value::String(String::new()));
+        } else {
+            map.insert(key.to_string(), json!(values));
+        }
+    }
+}
+
 fn put_execs(map: &mut ConfigMap, key: &str, commands: &[ExecCommand]) {
     if !commands.is_empty() {
         let raw: Vec<&str> = commands
@@ -349,6 +368,17 @@ fn apply_service(section: &mut ServiceSection, map: &ConfigMap) {
     apply_str(map, "WorkingDirectory", &mut section.working_directory);
     apply_str(map, "User", &mut section.user);
     apply_str(map, "Group", &mut section.group);
+    apply_strings(
+        map,
+        "AmbientCapabilities",
+        &mut section.ambient_capabilities,
+    );
+    apply_opt_strings(
+        map,
+        "CapabilityBoundingSet",
+        &mut section.capability_bounding_set,
+    );
+    apply_bool(map, "NoNewPrivileges", &mut section.no_new_privileges);
     apply_str(map, "PAMName", &mut section.pam_name);
     apply_strings(map, "Environment", &mut section.environment);
     apply_strings(map, "EnvironmentFile", &mut section.environment_file);
@@ -551,6 +581,19 @@ fn apply_strings(map: &ConfigMap, key: &str, target: &mut Vec<String>) {
     }
 }
 
+fn apply_opt_strings(map: &ConfigMap, key: &str, target: &mut Option<Vec<String>>) {
+    if map.contains_key(key) {
+        // The empty-string sentinel written by `put_opt_strings` represents
+        // "present but empty"; `get_strings` would turn it into `[""]`.
+        *target = Some(
+            config::get_strings(map, key)
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect(),
+        );
+    }
+}
+
 fn apply_execs(map: &ConfigMap, key: &str, target: &mut Vec<ExecCommand>) {
     if map.contains_key(key) {
         *target = config::get_strings(map, key)
@@ -569,5 +612,40 @@ fn apply_bool(map: &ConfigMap, key: &str, target: &mut bool) {
 fn apply_u32(map: &ConfigMap, key: &str, target: &mut u32) {
     if let Some(value) = config::get_u32(map, key) {
         *target = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_directives_round_trip_with_explicit_empty_bounding_set() {
+        let mut unit = UnitFile::new("caps.service");
+        let svc = unit.service.get_or_insert_with(Default::default);
+        svc.ambient_capabilities = vec!["CAP_NET_BIND_SERVICE".to_string()];
+        svc.capability_bounding_set = Some(Vec::new());
+        svc.no_new_privileges = true;
+
+        let map = to_config_map(&unit);
+        assert_eq!(
+            map.get("AmbientCapabilities"),
+            Some(&json!(["CAP_NET_BIND_SERVICE"]))
+        );
+        assert_eq!(
+            map.get("CapabilityBoundingSet"),
+            Some(&Value::String(String::new()))
+        );
+        assert_eq!(map.get("NoNewPrivileges"), Some(&Value::Bool(true)));
+
+        let mut back = UnitFile::new("caps.service");
+        apply_config_map(&mut back, &map);
+        let back = back.service.unwrap();
+        assert_eq!(
+            back.ambient_capabilities,
+            vec!["CAP_NET_BIND_SERVICE".to_string()]
+        );
+        assert_eq!(back.capability_bounding_set, Some(Vec::new()));
+        assert!(back.no_new_privileges);
     }
 }

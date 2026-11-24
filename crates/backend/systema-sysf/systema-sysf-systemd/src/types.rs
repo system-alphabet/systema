@@ -586,6 +586,15 @@ pub struct ServiceSection {
     pub working_directory: String,
     pub user: String,
     pub group: String,
+    /// `AmbientCapabilities=` — capabilities raised into the ambient set of
+    /// the executed process, which keeps them across `setuid()`.
+    pub ambient_capabilities: Vec<String>,
+    /// `CapabilityBoundingSet=` — capabilities kept in the bounding set.
+    /// `None` means the directive was absent (keep the inherited set);
+    /// `Some([])` means it was explicitly cleared.
+    pub capability_bounding_set: Option<Vec<String>>,
+    /// `NoNewPrivileges=` — set `PR_SET_NO_NEW_PRIVS` before exec.
+    pub no_new_privileges: bool,
     pub pam_name: String,
     pub environment: Vec<String>,
     pub environment_file: Vec<String>,
