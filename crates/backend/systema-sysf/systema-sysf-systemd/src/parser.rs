@@ -167,16 +167,12 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
         ))
     })?;
 
-    // Re-apply each section that is present in the drop-in.
-    // NOTE: We probe for a subset of common [Unit] keys rather than scanning all
-    // keys. A drop-in that contains only less-common [Unit] directives (e.g.
-    // PartOf=) would be silently ignored. This is a known Phase-1 limitation;
-    // full coverage will be added when configparser exposes a section-exists API.
-    if config.get("unit", "description").is_some()
-        || config.get("unit", "after").is_some()
-        || config.get("unit", "requires").is_some()
-        || config.get("unit", "wants").is_some()
-    {
+    // Re-apply every section that is present in the drop-in.  Probing for a
+    // fixed subset of keys silently dropped drop-ins that only carry
+    // less-common directives (e.g. `PartOf=` or `OnSuccess=`); configparser
+    // keeps the section in its map even when it contains only unknown keys,
+    // so the section key is the reliable presence test.
+    if config.get_map_ref().contains_key("unit") {
         // systemd drop-in semantics (systemd.unit(5), "Adding drop-in config
         // snippets"): list-typed dependency settings ACCUMULATE over the main
         // unit file and its drop-ins; an EMPTY assignment RESETS the
@@ -3328,6 +3324,19 @@ AllowedCPUs=0-3
             ])
         );
         assert!(svc.no_new_privileges);
+    }
+
+    #[test]
+    fn dropin_with_only_uncommon_unit_keys_is_applied() {
+        let mut unit = parse_unit("app.service", "[Service]\nExecStart=/bin/true\n").unwrap();
+        apply_dropin_content(
+            &mut unit,
+            "[Unit]\nPartOf=new.target\nUpholds=new.service\nOnSuccess=success.target\n",
+        )
+        .unwrap();
+        assert!(unit.unit.part_of.contains("new.target"));
+        assert!(unit.unit.upholds.contains("new.service"));
+        assert!(unit.unit.on_success.contains("success.target"));
     }
 
     #[test]
