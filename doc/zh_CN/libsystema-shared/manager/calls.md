@@ -40,9 +40,11 @@ println!("{} -> {}", load.name, snapshot.active_state);
 
 ## 说明
 
-- start / stop / restart / reload 不单独封装：控制面统一走
-  `call("manager.enqueue", &EnqueueJobRequest { .. })`，用 `job_type` 区分动作。
-  完整示例见 [`ControlClient`](./ControlClient.md#使用示例)。
+- start / stop / restart / reload / try-restart / reload-or-restart 已作为
+  [`ControlClient`](./ControlClient.md#方法) 的方法封装（内部统一走
+  `manager.enqueue`，用 `job_type` 区分动作）；只有需要自定义作业模式时才直接
+  调用 `client.enqueue(..)`。完整示例见
+  [`ControlClient`](./ControlClient.md#使用示例)。
 - 这些函数都是“一问一答”；推送事件请用
   [`ControlClient::events`](./ControlClient.md#方法) 配合
   [`ControlEvent`](./ControlEvent.md)。

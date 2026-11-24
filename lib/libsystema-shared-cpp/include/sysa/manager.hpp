@@ -115,6 +115,90 @@ public:
         return enqueue_names(names, job_type, mode, reload_if_possible);
     }
 
+    /// Enqueue a `start` job for `name` (job mode `replace`).
+    template <StringLike Name> [[nodiscard]] Expected<Bytes> start(Name const& name) const
+    {
+        detail::CString name_text{name};
+        std::array names{name_text.get()};
+        return job_reply(sysa_control_client_start, names);
+    }
+
+    /// Enqueue `start` jobs for all `names` (job mode `replace`).
+    template <StringSequence Names> [[nodiscard]] Expected<Bytes> start(Names const& names) const
+    {
+        return job_reply(sysa_control_client_start, names);
+    }
+
+    /// Enqueue a `stop` job for `name` (job mode `replace`).
+    template <StringLike Name> [[nodiscard]] Expected<Bytes> stop(Name const& name) const
+    {
+        detail::CString name_text{name};
+        std::array names{name_text.get()};
+        return job_reply(sysa_control_client_stop, names);
+    }
+
+    /// Enqueue `stop` jobs for all `names` (job mode `replace`).
+    template <StringSequence Names> [[nodiscard]] Expected<Bytes> stop(Names const& names) const
+    {
+        return job_reply(sysa_control_client_stop, names);
+    }
+
+    /// Enqueue a `restart` job for `name` (job mode `replace`).
+    template <StringLike Name> [[nodiscard]] Expected<Bytes> restart(Name const& name) const
+    {
+        detail::CString name_text{name};
+        std::array names{name_text.get()};
+        return job_reply(sysa_control_client_restart, names);
+    }
+
+    /// Enqueue `restart` jobs for all `names` (job mode `replace`).
+    template <StringSequence Names> [[nodiscard]] Expected<Bytes> restart(Names const& names) const
+    {
+        return job_reply(sysa_control_client_restart, names);
+    }
+
+    /// Enqueue a `reload` job for `name` (job mode `replace`).
+    template <StringLike Name> [[nodiscard]] Expected<Bytes> reload(Name const& name) const
+    {
+        detail::CString name_text{name};
+        std::array names{name_text.get()};
+        return job_reply(sysa_control_client_reload, names);
+    }
+
+    /// Enqueue `reload` jobs for all `names` (job mode `replace`).
+    template <StringSequence Names> [[nodiscard]] Expected<Bytes> reload(Names const& names) const
+    {
+        return job_reply(sysa_control_client_reload, names);
+    }
+
+    /// Enqueue a `try-restart` job for `name` (job mode `replace`).
+    template <StringLike Name> [[nodiscard]] Expected<Bytes> try_restart(Name const& name) const
+    {
+        detail::CString name_text{name};
+        std::array names{name_text.get()};
+        return job_reply(sysa_control_client_try_restart, names);
+    }
+
+    /// Enqueue `try-restart` jobs for all `names` (job mode `replace`).
+    template <StringSequence Names> [[nodiscard]] Expected<Bytes> try_restart(Names const& names) const
+    {
+        return job_reply(sysa_control_client_try_restart, names);
+    }
+
+    /// Enqueue a `reload-or-restart` job for `name` (job mode `replace`).
+    template <StringLike Name> [[nodiscard]] Expected<Bytes> reload_or_restart(Name const& name) const
+    {
+        detail::CString name_text{name};
+        std::array names{name_text.get()};
+        return job_reply(sysa_control_client_reload_or_restart, names);
+    }
+
+    /// Enqueue `reload-or-restart` jobs for all `names` (job mode `replace`).
+    template <StringSequence Names> [[nodiscard]] Expected<Bytes> reload_or_restart(Names const& names) const
+    {
+        return job_reply(sysa_control_client_reload_or_restart, names);
+    }
+
 private:
     template <StringSequence Names, StringLike JobType, StringLike Mode>
     [[nodiscard]] Expected<Bytes> enqueue_names(Names const& names, JobType const& job_type, Mode const& mode,
@@ -129,6 +213,24 @@ private:
         const auto raw_status =
             sysa_control_client_enqueue(handle_, names_text.data(), names_text.size(), type_text.get(), mode_text.get(),
                                         reload_if_possible ? 1 : 0, &data, &size);
+        if (raw_status != SYSA_STATUS_OK)
+        {
+            return std::unexpected(detail::take_error(detail::to_status(raw_status)));
+        }
+        return Bytes{data, size};
+    }
+
+    using JobFn = SysaStatus (*)(const SysaControlClient*, const char* const*, std::size_t, std::uint8_t**,
+                                 std::size_t*);
+
+    /// Shared body of the fixed-action job wrappers (`start`, `stop`, ...).
+    template <StringSequence Names> [[nodiscard]] Expected<Bytes> job_reply(JobFn fn, Names const& names) const
+    {
+        detail::CStringArray names_text{names};
+        detail::clear_last_error();
+        std::uint8_t* data = nullptr;
+        std::size_t size = 0;
+        const auto raw_status = fn(handle_, names_text.data(), names_text.size(), &data, &size);
         if (raw_status != SYSA_STATUS_OK)
         {
             return std::unexpected(detail::take_error(detail::to_status(raw_status)));

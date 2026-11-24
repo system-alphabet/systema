@@ -28,7 +28,10 @@ use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tracing::{debug, warn};
 
 use crate::ipc::{connect_control, exchange_version, frame_stream, make_envelope};
-use crate::proto::{Envelope, ManagerHelloRequest, ManagerHelloResult, SimpleManagerResult};
+use crate::proto::{
+    EnqueueJobRequest, EnqueueJobResult, Envelope, ManagerHelloRequest, ManagerHelloResult,
+    SimpleManagerResult,
+};
 
 /// The well-known event methods System A pushes to control sessions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,6 +349,63 @@ impl ControlClient {
     pub fn flavor(&self) -> &str {
         &self.flavor
     }
+
+    /// Enqueue `job_type` for every name in `names` under `mode`.
+    ///
+    /// This is the shared body of the [`start`](Self::start) /
+    /// [`stop`](Self::stop) / [`restart`](Self::restart) / [`reload`](Self::reload)
+    /// convenience methods; it issues the same `manager.enqueue` RPC a caller
+    /// would send directly.  The reply keeps the per-unit outcomes in
+    /// [`EnqueueJobResult::results`], so a partially failed transaction is
+    /// still observable.
+    pub async fn enqueue<S: AsRef<str>>(
+        &self,
+        names: &[S],
+        job_type: &str,
+        mode: &str,
+        reload_if_possible: bool,
+    ) -> Result<EnqueueJobResult> {
+        let request = EnqueueJobRequest {
+            names: names.iter().map(|name| name.as_ref().to_string()).collect(),
+            job_type: job_type.to_string(),
+            mode: mode.to_string(),
+            reload_if_possible,
+        };
+        self.call("manager.enqueue", &request).await
+    }
+
+    /// Enqueue a `start` job for every name in `names` (job mode `replace`).
+    pub async fn start<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult> {
+        self.enqueue(names, "start", "replace", false).await
+    }
+
+    /// Enqueue a `stop` job for every name in `names` (job mode `replace`).
+    pub async fn stop<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult> {
+        self.enqueue(names, "stop", "replace", false).await
+    }
+
+    /// Enqueue a `restart` job for every name in `names` (job mode `replace`).
+    pub async fn restart<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult> {
+        self.enqueue(names, "restart", "replace", false).await
+    }
+
+    /// Enqueue a `reload` job for every name in `names` (job mode `replace`).
+    pub async fn reload<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult> {
+        self.enqueue(names, "reload", "replace", false).await
+    }
+
+    /// Enqueue a `try-restart` job for every name in `names` (job mode
+    /// `replace`): units that are not running collapse to a no-op.
+    pub async fn try_restart<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult> {
+        self.enqueue(names, "try-restart", "replace", false).await
+    }
+
+    /// Enqueue a `reload-or-restart` job for every name in `names` (job mode
+    /// `replace`): prefer a reload and fall back to a restart.
+    pub async fn reload_or_restart<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult> {
+        self.enqueue(names, "reload-or-restart", "replace", true)
+            .await
+    }
 }
 
 /// Convenience accessors for the RPC payload types used by bridge flavors.
@@ -617,6 +677,12 @@ mod tests {
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0].name, "sshd.service");
         assert_eq!(snaps[0].active_state, "active");
+
+        // The fixed-action convenience method funnels into `manager.enqueue`.
+        let started = client.start(&["sshd.service"]).await.unwrap();
+        assert!(started.success);
+        assert_eq!(started.job_id, 42);
+        assert_eq!(started.unit_name, "sshd.service");
 
         // A second round-trip on the same session keeps working.
         let enqueued = calls::list_jobs(&client).await;

@@ -213,6 +213,41 @@ pub extern "C" fn sysa_control_client_call(
     })
 }
 
+/// Shared body of `sysa_control_client_enqueue` and the fixed-action
+/// convenience wrappers: parse the name array and issue `manager.enqueue`.
+fn enqueue_names(
+    client: *const SysaControlClient,
+    names: *const *const c_char,
+    name_count: usize,
+    job_type: &str,
+    mode: &str,
+    reload_if_possible: bool,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> SysaStatus {
+    ffi_try!(SysaStatus::Internal, {
+        if client.is_null() {
+            return crate::error::fail(SysaStatus::InvalidArgument, "client is null");
+        }
+        let names = match read_string_array(names, name_count, "names") {
+            Ok(values) => values,
+            Err(status) => return status,
+        };
+        let request = EnqueueJobRequest {
+            names,
+            job_type: job_type.to_string(),
+            mode: mode.to_string(),
+            reload_if_possible,
+        };
+        let handle = unsafe { &*client };
+        write_reply(
+            out,
+            out_len,
+            raw_call(handle, "manager.enqueue", request.encode_to_vec()),
+        )
+    })
+}
+
 /// Enqueue one transaction with all `names` as roots (protobuf
 /// `EnqueueJobResult`).
 ///
@@ -228,35 +263,126 @@ pub extern "C" fn sysa_control_client_enqueue(
     out: *mut *mut u8,
     out_len: *mut usize,
 ) -> SysaStatus {
-    ffi_try!(SysaStatus::Internal, {
-        if client.is_null() {
-            return crate::error::fail(SysaStatus::InvalidArgument, "client is null");
-        }
-        let names = match read_string_array(names, name_count, "names") {
-            Ok(values) => values,
-            Err(status) => return status,
-        };
-        let job_type = match unsafe { crate::ffi::require_str(job_type, "job_type") } {
-            Ok(value) => value.to_string(),
-            Err(status) => return status,
-        };
-        let mode = match unsafe { crate::ffi::require_str(mode, "mode") } {
-            Ok(value) => value.to_string(),
-            Err(status) => return status,
-        };
-        let request = EnqueueJobRequest {
-            names,
-            job_type,
-            mode,
-            reload_if_possible: reload_if_possible != 0,
-        };
-        let handle = unsafe { &*client };
-        write_reply(
-            out,
-            out_len,
-            raw_call(handle, "manager.enqueue", request.encode_to_vec()),
-        )
-    })
+    let job_type = match unsafe { crate::ffi::require_str(job_type, "job_type") } {
+        Ok(value) => value.to_string(),
+        Err(status) => return status,
+    };
+    let mode = match unsafe { crate::ffi::require_str(mode, "mode") } {
+        Ok(value) => value.to_string(),
+        Err(status) => return status,
+    };
+    enqueue_names(
+        client,
+        names,
+        name_count,
+        &job_type,
+        &mode,
+        reload_if_possible != 0,
+        out,
+        out_len,
+    )
+}
+
+/// Enqueue a `start` job for every name in `names` (job mode `replace`).
+///
+/// The reply is a protobuf `EnqueueJobResult`.
+#[no_mangle]
+pub extern "C" fn sysa_control_client_start(
+    client: *const SysaControlClient,
+    names: *const *const c_char,
+    name_count: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> SysaStatus {
+    enqueue_names(
+        client, names, name_count, "start", "replace", false, out, out_len,
+    )
+}
+
+/// Enqueue a `stop` job for every name in `names` (job mode `replace`).
+#[no_mangle]
+pub extern "C" fn sysa_control_client_stop(
+    client: *const SysaControlClient,
+    names: *const *const c_char,
+    name_count: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> SysaStatus {
+    enqueue_names(
+        client, names, name_count, "stop", "replace", false, out, out_len,
+    )
+}
+
+/// Enqueue a `restart` job for every name in `names` (job mode `replace`).
+#[no_mangle]
+pub extern "C" fn sysa_control_client_restart(
+    client: *const SysaControlClient,
+    names: *const *const c_char,
+    name_count: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> SysaStatus {
+    enqueue_names(
+        client, names, name_count, "restart", "replace", false, out, out_len,
+    )
+}
+
+/// Enqueue a `reload` job for every name in `names` (job mode `replace`).
+#[no_mangle]
+pub extern "C" fn sysa_control_client_reload(
+    client: *const SysaControlClient,
+    names: *const *const c_char,
+    name_count: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> SysaStatus {
+    enqueue_names(
+        client, names, name_count, "reload", "replace", false, out, out_len,
+    )
+}
+
+/// Enqueue a `try-restart` job for every name in `names` (job mode
+/// `replace`); units that are not running collapse to a no-op.
+#[no_mangle]
+pub extern "C" fn sysa_control_client_try_restart(
+    client: *const SysaControlClient,
+    names: *const *const c_char,
+    name_count: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> SysaStatus {
+    enqueue_names(
+        client,
+        names,
+        name_count,
+        "try-restart",
+        "replace",
+        false,
+        out,
+        out_len,
+    )
+}
+
+/// Enqueue a `reload-or-restart` job for every name in `names` (job mode
+/// `replace`): prefer a reload and fall back to a restart.
+#[no_mangle]
+pub extern "C" fn sysa_control_client_reload_or_restart(
+    client: *const SysaControlClient,
+    names: *const *const c_char,
+    name_count: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> SysaStatus {
+    enqueue_names(
+        client,
+        names,
+        name_count,
+        "reload-or-restart",
+        "replace",
+        true,
+        out,
+        out_len,
+    )
 }
 
 /// Fetch the full current unit set (protobuf `ListSnapshotsResult`).

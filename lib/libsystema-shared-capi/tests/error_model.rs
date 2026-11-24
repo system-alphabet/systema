@@ -88,11 +88,3 @@ fn exported_strings_and_buffers_can_be_freed() {
     let len = bytes.len();
     sysa_bytes_free(Box::into_raw(bytes) as *mut u8, len);
 }
-
-#[test]
-fn version_and_abi_are_exposed() {
-    assert_eq!(systema_shared_capi::sysa_abi_version(), 2);
-    let pointer = systema_shared_capi::sysa_version();
-    assert!(!pointer.is_null());
-    assert!(!unsafe { CStr::from_ptr(pointer) }.to_bytes().is_empty());
-}

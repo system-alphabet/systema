@@ -278,6 +278,13 @@ void check_clients()
     {
         std::array names{"a.service", "b.target"};
         static_cast<void>(manager->enqueue(names, "start", "replace"));
+        static_cast<void>(manager->start(names));
+        static_cast<void>(manager->stop(names));
+        static_cast<void>(manager->restart(names));
+        static_cast<void>(manager->reload(names));
+        static_cast<void>(manager->try_restart(names));
+        static_cast<void>(manager->reload_or_restart(names));
+        static_cast<void>(manager->start("a.service"));
     }
 }
 

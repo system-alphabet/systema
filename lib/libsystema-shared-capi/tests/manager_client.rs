@@ -4,6 +4,7 @@ use std::ffi::{CStr, CString};
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use prost::Message;
@@ -19,7 +20,10 @@ use systema_shared::proto::{
 use systema_shared_capi::manager::{
     sysa_control_client_call, sysa_control_client_enqueue, sysa_control_client_flavor,
     sysa_control_client_free, sysa_control_client_list_snapshots, sysa_control_client_new,
-    sysa_control_client_next_event, SysaControlClient, SysaControlEventKind,
+    sysa_control_client_next_event, sysa_control_client_reload,
+    sysa_control_client_reload_or_restart, sysa_control_client_restart, sysa_control_client_start,
+    sysa_control_client_stop, sysa_control_client_try_restart, SysaControlClient,
+    SysaControlEventKind,
 };
 use systema_shared_capi::status::SysaStatus;
 use systema_shared_capi::sysa_bytes_free;
@@ -309,4 +313,147 @@ fn control_client_round_trips_and_streams_events() {
 
     sysa_control_client_free(client);
     server.join().unwrap();
+}
+
+#[test]
+fn convenience_methods_send_expected_job_types() {
+    let dir = socket_dir("manager-jobs");
+    let path = dir.join("control.socket");
+    let recorded = Arc::new(Mutex::new(Vec::<EnqueueJobRequest>::new()));
+    let server_recorded = Arc::clone(&recorded);
+
+    let server = spawn_server(&path, move |listener| async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut framed = frame_stream(stream);
+
+        let first = recv_envelope(&mut framed)
+            .await
+            .unwrap()
+            .expect("a version request arrives first");
+        assert_eq!(first.method, METHOD_VERSION);
+        reply(
+            &mut framed,
+            first.request_id,
+            METHOD_VERSION_RESULT,
+            IpcVersionResult {
+                version: IPC_VERSION,
+                compatible: true,
+                message: String::new(),
+            },
+        )
+        .await;
+
+        while let Some(env) = recv_envelope(&mut framed).await.unwrap() {
+            match env.method.as_str() {
+                "manager.hello" => {
+                    reply(
+                        &mut framed,
+                        env.request_id,
+                        "manager.hello.result",
+                        ManagerHelloResult {
+                            success: true,
+                            message: "ok".to_string(),
+                        },
+                    )
+                    .await;
+                }
+                "manager.enqueue" => {
+                    let request = EnqueueJobRequest::decode(env.payload.as_slice()).unwrap();
+                    let finished = {
+                        let mut jobs = server_recorded.lock().unwrap();
+                        jobs.push(request.clone());
+                        jobs.len() == 6
+                    };
+                    let results = request
+                        .names
+                        .iter()
+                        .map(|name| EnqueueJobUnitResult {
+                            success: true,
+                            message: String::new(),
+                            job_id: 1,
+                            unit_name: name.clone(),
+                        })
+                        .collect();
+                    reply(
+                        &mut framed,
+                        env.request_id,
+                        "manager.enqueue.result",
+                        EnqueueJobResult {
+                            success: true,
+                            message: String::new(),
+                            job_id: 1,
+                            unit_name: request.names[0].clone(),
+                            results,
+                        },
+                    )
+                    .await;
+                    if finished {
+                        return;
+                    }
+                }
+                other => panic!("unexpected request {other}"),
+            }
+        }
+    });
+
+    let path_text = CString::new(path.to_str().unwrap()).unwrap();
+    let flavor = CString::new("systemd").unwrap();
+    let mut client: *mut SysaControlClient = ptr::null_mut();
+    assert_eq!(
+        sysa_control_client_new(
+            path_text.as_ptr(),
+            flavor.as_ptr(),
+            ptr::null(),
+            &mut client
+        ),
+        SysaStatus::Ok
+    );
+
+    let name = CString::new("sshd.service").unwrap();
+    let names = [name.as_ptr()];
+    let run = |call: extern "C" fn(
+        *const SysaControlClient,
+        *const *const std::ffi::c_char,
+        usize,
+        *mut *mut u8,
+        *mut usize,
+    ) -> SysaStatus| {
+        let mut out = ptr::null_mut();
+        let mut len = 0usize;
+        assert_eq!(
+            call(client, names.as_ptr(), names.len(), &mut out, &mut len),
+            SysaStatus::Ok
+        );
+        let reply = EnqueueJobResult::decode(take_bytes(out, len).as_slice()).unwrap();
+        assert!(reply.success);
+    };
+
+    run(sysa_control_client_start);
+    run(sysa_control_client_stop);
+    run(sysa_control_client_restart);
+    run(sysa_control_client_reload);
+    run(sysa_control_client_try_restart);
+    run(sysa_control_client_reload_or_restart);
+
+    sysa_control_client_free(client);
+    server.join().unwrap();
+
+    let jobs = recorded.lock().unwrap();
+    let observed: Vec<(&str, bool)> = jobs
+        .iter()
+        .map(|job| (job.job_type.as_str(), job.reload_if_possible))
+        .collect();
+    assert_eq!(
+        observed,
+        vec![
+            ("start", false),
+            ("stop", false),
+            ("restart", false),
+            ("reload", false),
+            ("try-restart", false),
+            ("reload-or-restart", true),
+        ]
+    );
+    assert!(jobs.iter().all(|job| job.mode == "replace"));
+    assert!(jobs.iter().all(|job| job.names == ["sshd.service"]));
 }

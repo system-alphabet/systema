@@ -29,6 +29,13 @@ pub type ControlEventStream = mpsc::UnboundedReceiver<ControlEvent>;
 | `connect_on(stream: UnixStream, flavor: &str, worker_id: Option<&str>) -> Result<ControlClient>` | 在已建立的流上完成 hello 握手并启动读写任务；用于嵌入方自备 socket 或 socketpair 测试。 |
 | `call<Q, R>(&self, method: &str, request: &Q) -> Result<R>` | 发送一个 `manager.*` 请求并等待应答。`Q` 为请求消息，`R` 为应答消息；服务端回 `manager.error` 时转为 `anyhow::Error`。 |
 | `call_raw(&self, method: &str, request: &[u8]) -> Result<Vec<u8>>` | 以已编码的 protobuf 载荷发送请求并返回原始应答载荷；供 protobuf 类型在本 crate 之外的嵌入方（如 C API）使用。 |
+| `enqueue<S: AsRef<str>>(&self, names: &[S], job_type: &str, mode: &str, reload_if_possible: bool) -> Result<EnqueueJobResult>` | 通用 job 入队：对 `names` 中每个单元下发 `job_type`，作业模式为 `mode`。是下列固定动作方法的共同实现。 |
+| `start<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult>` | 入队 `start` job（模式 `replace`）。 |
+| `stop<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult>` | 入队 `stop` job（模式 `replace`）。 |
+| `restart<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult>` | 入队 `restart` job（模式 `replace`）。 |
+| `reload<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult>` | 入队 `reload` job（模式 `replace`）。 |
+| `try_restart<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult>` | 入队 `try-restart` job（模式 `replace`）；未运行的单元坍缩为 no-op。 |
+| `reload_or_restart<S: AsRef<str>>(&self, names: &[S]) -> Result<EnqueueJobResult>` | 入队 `reload-or-restart` job（模式 `replace`，`reload_if_possible = true`）；优先 reload，失败再 restart。 |
 | `events(&self) -> Arc<Mutex<ControlEventStream>>` | 取事件流。会话断开时接收端关闭（`recv()` 返回 `None`）。 |
 | `flavor(&self) -> &str` | 握手时声明的桥身份。 |
 
@@ -43,30 +50,27 @@ let socket_path = sysa::paths::instance().control_socket_path;
 let client = ControlClient::connect(socket_path, "systemd", Some("system-w-1")).await?;
 ```
 
-下发 start / stop / restart / reload：控制面统一走 `manager.enqueue`，由
-`job_type` 区分动作。返回的 `job_id` 可通过 `job.*` 事件跟踪到终态。
+下发 start / stop / restart / reload：固定动作方法直接封装了 `manager.enqueue`，
+无需再手工构造 `EnqueueJobRequest`。返回的 `job_id` 可通过 `job.*` 事件跟踪到终态。
 
 ```rust
 use sysa::manager::ControlClient;
-use sysa::proto::{EnqueueJobRequest, EnqueueJobResult};
 
-async fn enqueue(
-    client: &ControlClient,
-    name: &str,
-    job_type: &str,
-) -> anyhow::Result<EnqueueJobResult> {
-    let request = EnqueueJobRequest {
-        name: name.to_string(),
-        job_type: job_type.to_string(),
-        mode: "replace".to_string(),
-        reload_if_possible: false,
-    };
-    let reply: EnqueueJobResult = client.call("manager.enqueue", &request).await?;
+async fn start_units(client: &ControlClient) -> anyhow::Result<()> {
+    let reply = client.start(&["nginx.service", "sshd.service"]).await?;
     if !reply.success {
-        anyhow::bail!("{}: {}", name, reply.message);
+        anyhow::bail!("start failed: {}", reply.message);
     }
-    Ok(reply)
+    Ok(())
 }
+```
+
+需要自定义作业模式或 `reload_if_possible` 时仍可用通用入口：
+
+```rust
+let reply = client
+    .enqueue(&["nginx.service"], "stop", "fail", false)
+    .await?;
 ```
 
 消费事件：
