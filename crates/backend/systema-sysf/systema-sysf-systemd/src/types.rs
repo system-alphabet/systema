@@ -1029,6 +1029,15 @@ pub struct SocketSection {
     pub pass_security: bool,
     /// Time to wait for socket activation in seconds (`TimeoutSec=`).
     pub timeout_sec: u32,
+    /// Compatibility symlinks to create for the socket (`Symlinks=`), e.g.
+    /// `/dev/log` for `systemd-journald-dev-log.socket`.
+    pub symlinks: Vec<String>,
+    /// Extended attributes set on the filesystem socket inode
+    /// (`XAttrEntryPoint=`), in `NAME=VALUE` form.
+    pub xattr_entrypoint: Vec<String>,
+    /// Extended attributes set on the listening socket itself
+    /// (`XAttrListen=`), in `NAME=VALUE` form.
+    pub xattr_listen: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

@@ -1673,6 +1673,9 @@ fn apply_socket_list_values(content: &str, sock: &mut SocketSection, name: &str)
         ("listenfifo", &mut sock.listen_fifo),
         ("listennetlink", &mut sock.listen_netlink),
         ("listenspecial", &mut sock.listen_special),
+        ("symlinks", &mut sock.symlinks),
+        ("xattrentrypoint", &mut sock.xattr_entrypoint),
+        ("xattrlisten", &mut sock.xattr_listen),
     ] {
         apply_list_values(content, "socket", key, dest, name);
     }
@@ -2387,6 +2390,26 @@ WantedBy=sockets.target
         assert_eq!(socket.listen_sequential_packet, ["@/new"]);
         assert_eq!(socket.socket_mode, "0600");
         assert_eq!(socket.listen_netlink, ["kobject-uevent 1", "route 2"]);
+
+        let mut socket = parse_unit(
+            "journal.socket",
+            "[Socket]\nListenDatagram=/run/systemd/journal/dev-log\nSymlinks=/dev/log\nXAttrEntryPoint=user.varlink.entrypoint=/run/varlink\nXAttrListen=user.varlink.listen=yes\n",
+        )
+        .unwrap();
+        assert_eq!(socket.socket.as_ref().unwrap().symlinks, ["/dev/log"]);
+        assert_eq!(
+            socket.socket.as_ref().unwrap().xattr_entrypoint,
+            ["user.varlink.entrypoint=/run/varlink"]
+        );
+        apply_dropin_content(
+            &mut socket,
+            "[Socket]\nSymlinks=\nXAttrEntryPoint=\nXAttrListen=\n",
+        )
+        .unwrap();
+        let socket = socket.socket.unwrap();
+        assert!(socket.symlinks.is_empty());
+        assert!(socket.xattr_entrypoint.is_empty());
+        assert!(socket.xattr_listen.is_empty());
 
         let mut path = parse_unit(
             "acpid.path",

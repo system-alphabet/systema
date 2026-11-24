@@ -42,6 +42,10 @@ pub struct ManagedSocket {
     listeners: Vec<BoundSocket>,
     accept_tasks: Vec<tokio::task::JoinHandle<()>>,
     pub config: SocketConfig,
+    /// `(symlink, socket path)` pairs created for `Symlinks=`.  Keeping the
+    /// target lets `stop_socket` remove only links that still point at this
+    /// unit's socket.
+    symlinks: Vec<(PathBuf, PathBuf)>,
 }
 
 /// Global manager for all socket units this worker owns.
@@ -121,6 +125,9 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
     }
 
     let mut listeners: Vec<BoundSocket> = Vec::new();
+    // Filesystem socket paths actually bound by this unit.  They are the
+    // targets for `Symlinks=`, and the inodes `XAttrEntryPoint=` applies to.
+    let mut bound_paths: Vec<PathBuf> = Vec::new();
 
     // Parse socket_mode and directory_mode from config, falling back to
     // systemd defaults (0666 for socket files, 0755 for directories).
@@ -138,6 +145,9 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
                         )
                     })?
             {
+                if addr.stream.starts_with('/') {
+                    bound_paths.push(PathBuf::from(&addr.stream));
+                }
                 listeners.push(listener);
             }
         }
@@ -149,6 +159,9 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
                         &[("addr_datagram", &addr.datagram.to_string())],
                     )
                 })?;
+            if addr.datagram.starts_with('/') {
+                bound_paths.push(PathBuf::from(&addr.datagram));
+            }
             listeners.push(BoundSocket::Udp(fd));
         }
         if !addr.sequential_packet.is_empty() {
@@ -169,6 +182,9 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
                     )],
                 )
             })? {
+                if addr.sequential_packet.starts_with('/') {
+                    bound_paths.push(PathBuf::from(&addr.sequential_packet));
+                }
                 listeners.push(listener);
             }
         }
@@ -197,6 +213,7 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
     for listener in &listeners {
         apply_pass_options(listener_raw_fd(listener), config, unit_name);
     }
+    apply_socket_xattrs(&listeners, &bound_paths, config, unit_name);
 
     let any_address = config.listen.iter().any(|addr| {
         !addr.stream.is_empty()
@@ -212,11 +229,13 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
         ));
     }
 
+    let symlinks = create_symlinks(config, &bound_paths, directory_mode, unit_name);
     let n = listeners.len();
     let managed = ManagedSocket {
         listeners,
         accept_tasks: Vec::new(),
         config: config.clone(),
+        symlinks,
     };
     guard.insert(unit_name.to_string(), managed);
     if n == 0 {
@@ -280,11 +299,238 @@ pub fn stop_socket(manager: &SocketManager, unit_name: &str) -> Result<()> {
     for handle in &managed.accept_tasks {
         handle.abort();
     }
+    // Remove only the compatibility links that still point at our socket;
+    // a link the administrator replaced in the meantime is left alone.
+    for (link, target) in &managed.symlinks {
+        if std::fs::read_link(link).ok().as_deref() == Some(target.as_path()) {
+            if let Err(e) = std::fs::remove_file(link) {
+                warn!("Cannot remove socket symlink {}: {}", link.display(), e);
+            }
+        }
+    }
     // Drop listeners (closes sockets).
     // managed is dropped when it falls out of scope from guard.remove().
 
     info!("Socket '{}' stopped", unit_name);
     Ok(())
+}
+
+/// Create `Symlinks=` compatibility links to the first filesystem socket.
+///
+/// Failures are warnings, not start failures: systemd treats a compatibility
+/// link as ancillary, and a read-only `/dev` or an administrator-owned path
+/// must not take the socket unit down.
+fn create_symlinks(
+    config: &SocketConfig,
+    socket_paths: &[PathBuf],
+    directory_mode: u32,
+    unit_name: &str,
+) -> Vec<(PathBuf, PathBuf)> {
+    if config.symlinks.is_empty() {
+        return Vec::new();
+    }
+    let Some(target) = socket_paths.first() else {
+        warn!(
+            "{}: Symlinks= requested but no filesystem socket address was bound",
+            unit_name
+        );
+        return Vec::new();
+    };
+
+    let mut created = Vec::new();
+    for raw in &config.symlinks {
+        let link = PathBuf::from(raw);
+        if !link.is_absolute() {
+            warn!(
+                "{}: Symlinks= path '{}' is not absolute; ignoring it",
+                unit_name, raw
+            );
+            continue;
+        }
+        if let Some(parent) = link.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!(
+                        "{}: cannot create directory '{}' for Symlinks=: {}",
+                        unit_name,
+                        parent.display(),
+                        e
+                    );
+                    continue;
+                }
+                let _ = std::fs::set_permissions(parent, PermissionsExt::from_mode(directory_mode));
+            }
+        }
+
+        match std::fs::symlink_metadata(&link) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                warn!(
+                    "{}: Symlinks= target '{}' exists and is not a symlink; not replacing it",
+                    unit_name,
+                    link.display()
+                );
+                continue;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                warn!(
+                    "{}: cannot inspect Symlinks= target '{}': {}",
+                    unit_name,
+                    link.display(),
+                    e
+                );
+                continue;
+            }
+        }
+
+        // Create the link beside the target and rename it into place, so an
+        // existing symlink is replaced atomically.
+        let mut tmp_name = std::ffi::OsString::from(".");
+        if let Some(name) = link.file_name() {
+            tmp_name.push(name);
+        }
+        tmp_name.push(format!(".tmp.{}", std::process::id()));
+        let tmp = link.with_file_name(tmp_name);
+        let _ = std::fs::remove_file(&tmp);
+        if let Err(e) = std::os::unix::fs::symlink(target, &tmp) {
+            warn!(
+                "{}: cannot create Symlinks= link '{}': {}",
+                unit_name,
+                link.display(),
+                e
+            );
+            continue;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &link) {
+            let _ = std::fs::remove_file(&tmp);
+            warn!(
+                "{}: cannot install Symlinks= link '{}': {}",
+                unit_name,
+                link.display(),
+                e
+            );
+            continue;
+        }
+        created.push((link, target.clone()));
+    }
+    created
+}
+
+/// Apply `XAttrEntryPoint=` / `XAttrListen=` attributes after binding.
+///
+/// Extended attributes are a compatibility aid (varlink discovery); a
+/// filesystem that rejects them must not prevent the unit from listening.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn apply_socket_xattrs(
+    listeners: &[BoundSocket],
+    paths: &[PathBuf],
+    config: &SocketConfig,
+    unit_name: &str,
+) {
+    if config.xattr_entrypoint.is_empty() && config.xattr_listen.is_empty() {
+        return;
+    }
+    let listen_attrs = parse_xattrs(&config.xattr_listen, unit_name);
+    let entry_attrs = parse_xattrs(&config.xattr_entrypoint, unit_name);
+
+    for listener in listeners {
+        let fd = listener_raw_fd(listener);
+        for (name, value) in &listen_attrs {
+            let rc = unsafe {
+                libc::fsetxattr(
+                    fd,
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.as_bytes().len(),
+                    0,
+                )
+            };
+            if rc < 0 {
+                warn!(
+                    "{}: cannot set XAttrListen= '{}': {}",
+                    unit_name,
+                    name.to_string_lossy(),
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+    }
+
+    for path in paths {
+        let Ok(cpath) = CString::new(std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()))
+        else {
+            warn!(
+                "{}: invalid XAttrEntryPoint= path {}",
+                unit_name,
+                path.display()
+            );
+            continue;
+        };
+        for (name, value) in &entry_attrs {
+            let rc = unsafe {
+                libc::lsetxattr(
+                    cpath.as_ptr(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.as_bytes().len(),
+                    0,
+                )
+            };
+            if rc < 0 {
+                warn!(
+                    "{}: cannot set XAttrEntryPoint= '{}': {}",
+                    unit_name,
+                    name.to_string_lossy(),
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn apply_socket_xattrs(
+    _listeners: &[BoundSocket],
+    _paths: &[PathBuf],
+    config: &SocketConfig,
+    unit_name: &str,
+) {
+    if !config.xattr_entrypoint.is_empty() || !config.xattr_listen.is_empty() {
+        debug!(
+            "{}: XAttrEntryPoint=/XAttrListen= are not supported on this platform; ignoring them",
+            unit_name
+        );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn parse_xattrs(entries: &[String], unit_name: &str) -> Vec<(CString, CString)> {
+    let mut attrs = Vec::new();
+    for entry in entries {
+        let Some((name, value)) = entry.split_once('=') else {
+            warn!(
+                "{}: xattr '{}' is not in NAME=VALUE form; ignoring it",
+                unit_name, entry
+            );
+            continue;
+        };
+        if !name.starts_with("user.") {
+            warn!(
+                "{}: xattr name '{}' is not in the user. namespace; ignoring it",
+                unit_name, name
+            );
+            continue;
+        }
+        match (CString::new(name), CString::new(value)) {
+            (Ok(name), Ok(value)) => attrs.push((name, value)),
+            _ => warn!(
+                "{}: xattr '{}' contains a NUL byte; ignoring it",
+                unit_name, entry
+            ),
+        }
+    }
+    attrs
 }
 
 /// Return the raw fd of the first listening socket for a unit.
@@ -1240,5 +1486,29 @@ mod tests {
     #[test]
     fn bind_netlink_empty_fails() {
         assert!(bind_netlink("").is_err());
+    }
+
+    #[test]
+    fn symlinks_are_created_and_removed_on_stop() {
+        let dir = std::env::temp_dir().join(format!("sysk-symlink-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket_path = dir.join("dev-log");
+        let link = dir.join("log");
+        let config = SocketConfig {
+            listen: vec![crate::config::SocketAddress {
+                datagram: socket_path.to_string_lossy().into_owned(),
+                ..Default::default()
+            }],
+            symlinks: vec![link.to_string_lossy().into_owned()],
+            ..Default::default()
+        };
+
+        let manager = new_manager();
+        start_socket(&manager, "dev-log.socket", &config).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), socket_path);
+        stop_socket(&manager, "dev-log.socket").unwrap();
+        assert!(!link.exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -170,6 +170,9 @@ fn put_socket(map: &mut ConfigMap, section: &SocketSection) {
     put_bool(map, "PassCredentials", section.pass_credentials);
     put_bool(map, "PassSecurity", section.pass_security);
     put_u32(map, "TimeoutSec", section.timeout_sec);
+    put_strings(map, "Symlinks", &section.symlinks);
+    put_strings(map, "XAttrEntryPoint", &section.xattr_entrypoint);
+    put_strings(map, "XAttrListen", &section.xattr_listen);
 }
 
 fn put_mount(map: &mut ConfigMap, section: &MountSection) {
@@ -455,6 +458,9 @@ fn apply_socket(section: &mut SocketSection, map: &ConfigMap) {
     apply_bool(map, "PassCredentials", &mut section.pass_credentials);
     apply_bool(map, "PassSecurity", &mut section.pass_security);
     apply_u32(map, "TimeoutSec", &mut section.timeout_sec);
+    apply_strings(map, "Symlinks", &mut section.symlinks);
+    apply_strings(map, "XAttrEntryPoint", &mut section.xattr_entrypoint);
+    apply_strings(map, "XAttrListen", &mut section.xattr_listen);
 }
 
 fn apply_mount(section: &mut MountSection, map: &ConfigMap) {
@@ -647,5 +653,35 @@ mod tests {
         );
         assert_eq!(back.capability_bounding_set, Some(Vec::new()));
         assert!(back.no_new_privileges);
+    }
+
+    #[test]
+    fn socket_symlinks_and_xattrs_round_trip() {
+        let mut unit = UnitFile::new("journal.socket");
+        let sock = unit.socket.get_or_insert_with(Default::default);
+        sock.symlinks = vec!["/dev/log".to_string()];
+        sock.xattr_entrypoint = vec!["user.varlink.entrypoint=/run/varlink".to_string()];
+        sock.xattr_listen = vec!["user.varlink.listen=yes".to_string()];
+
+        let map = to_config_map(&unit);
+        assert_eq!(map.get("Symlinks"), Some(&json!(["/dev/log"])));
+        assert_eq!(
+            map.get("XAttrEntryPoint"),
+            Some(&json!(["user.varlink.entrypoint=/run/varlink"]))
+        );
+        assert_eq!(
+            map.get("XAttrListen"),
+            Some(&json!(["user.varlink.listen=yes"]))
+        );
+
+        let mut back = UnitFile::new("journal.socket");
+        apply_config_map(&mut back, &map);
+        let back = back.socket.unwrap();
+        assert_eq!(back.symlinks, ["/dev/log"]);
+        assert_eq!(
+            back.xattr_entrypoint,
+            ["user.varlink.entrypoint=/run/varlink"]
+        );
+        assert_eq!(back.xattr_listen, ["user.varlink.listen=yes"]);
     }
 }

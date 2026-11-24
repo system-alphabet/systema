@@ -26,6 +26,13 @@ pub struct SocketConfig {
     pub pass_credentials: bool,
     /// `PassSecurity=`: enable `SO_PASSSEC` on every listener.
     pub pass_security: bool,
+    /// `Symlinks=`: compatibility symlinks to create for the socket.
+    pub symlinks: Vec<String>,
+    /// `XAttrEntryPoint=`: `NAME=VALUE` attributes set on the filesystem
+    /// socket inode.
+    pub xattr_entrypoint: Vec<String>,
+    /// `XAttrListen=`: `NAME=VALUE` attributes set on the listening socket.
+    pub xattr_listen: Vec<String>,
 }
 
 impl SocketConfig {
@@ -81,6 +88,9 @@ impl SocketConfig {
             directory_mode: get_string(map, "DirectoryMode").unwrap_or_default(),
             pass_credentials: get_bool(map, "PassCredentials"),
             pass_security: get_bool(map, "PassSecurity"),
+            symlinks: get_strings(map, "Symlinks"),
+            xattr_entrypoint: get_strings(map, "XAttrEntryPoint"),
+            xattr_listen: get_strings(map, "XAttrListen"),
         }
     }
 }
