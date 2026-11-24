@@ -225,7 +225,13 @@ mod tests {
                             success: true,
                             message: String::new(),
                             job_id: 7,
-                            unit_name: req.name.clone(),
+                            unit_name: req.names[0].clone(),
+                            results: vec![sysa::proto::EnqueueJobUnitResult {
+                                success: true,
+                                message: String::new(),
+                                job_id: 7,
+                                unit_name: req.names[0].clone(),
+                            }],
                         },
                     )?;
                     send_envelope(&mut framed, &reply).await?;
@@ -343,7 +349,7 @@ mod tests {
         assert!(queued.is_ok());
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].name, "upower.service");
+        assert_eq!(seen[0].names, ["upower.service"]);
         assert_eq!(seen[0].job_type, "start");
         assert_eq!(seen[0].mode, "replace");
         assert!(!seen[0].reload_if_possible);
@@ -366,7 +372,7 @@ mod tests {
         handle(&ctx, &msg).await;
 
         assert_eq!(seen.lock().unwrap().len(), 1);
-        assert_eq!(seen.lock().unwrap()[0].name, "upower.service");
+        assert_eq!(seen.lock().unwrap()[0].names, ["upower.service"]);
     }
 
     /// A body we cannot read must be dropped, not turned into a start job.

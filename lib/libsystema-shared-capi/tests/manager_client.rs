@@ -12,8 +12,8 @@ use systema_shared::ipc::{
     METHOD_VERSION, METHOD_VERSION_RESULT,
 };
 use systema_shared::proto::{
-    EnqueueJobRequest, EnqueueJobResult, IpcVersionRequest, IpcVersionResult, JobEvent,
-    ListJobsResult, ListSnapshotsResult, ManagerHelloRequest, ManagerHelloResult,
+    EnqueueJobRequest, EnqueueJobResult, EnqueueJobUnitResult, IpcVersionRequest, IpcVersionResult,
+    JobEvent, ListJobsResult, ListSnapshotsResult, ManagerHelloRequest, ManagerHelloResult,
     SimpleManagerResult, UnitSnapshot,
 };
 use systema_shared_capi::manager::{
@@ -107,9 +107,20 @@ async fn serve_manager(listener: tokio::net::UnixListener) {
             }
             "manager.enqueue" => {
                 let request = EnqueueJobRequest::decode(env.payload.as_slice()).unwrap();
-                assert_eq!(request.name, "sshd.service");
+                assert_eq!(request.names, ["sshd.service", "nginx.service"]);
                 assert_eq!(request.job_type, "start");
                 assert_eq!(request.mode, "replace");
+                let results: Vec<_> = request
+                    .names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| EnqueueJobUnitResult {
+                        success: true,
+                        message: String::new(),
+                        job_id: 7 + index as u64,
+                        unit_name: name.clone(),
+                    })
+                    .collect();
                 reply(
                     &mut framed,
                     env.request_id,
@@ -118,7 +129,8 @@ async fn serve_manager(listener: tokio::net::UnixListener) {
                         success: true,
                         message: String::new(),
                         job_id: 7,
-                        unit_name: request.name.clone(),
+                        unit_name: request.names[0].clone(),
+                        results,
                     },
                 )
                 .await;
@@ -129,7 +141,7 @@ async fn serve_manager(listener: tokio::net::UnixListener) {
                         method,
                         JobEvent {
                             job_id: 7,
-                            unit_name: request.name.clone(),
+                            unit_name: request.names[0].clone(),
                             result: result.to_string(),
                         },
                     )
@@ -211,6 +223,8 @@ fn control_client_round_trips_and_streams_events() {
     assert_eq!(reported.to_str().unwrap(), "systemd");
 
     let name = CString::new("sshd.service").unwrap();
+    let second_name = CString::new("nginx.service").unwrap();
+    let names = [name.as_ptr(), second_name.as_ptr()];
     let job_type = CString::new("start").unwrap();
     let mode = CString::new("replace").unwrap();
     let mut out = ptr::null_mut();
@@ -218,7 +232,8 @@ fn control_client_round_trips_and_streams_events() {
     assert_eq!(
         sysa_control_client_enqueue(
             client,
-            name.as_ptr(),
+            names.as_ptr(),
+            names.len(),
             job_type.as_ptr(),
             mode.as_ptr(),
             0,
@@ -231,6 +246,8 @@ fn control_client_round_trips_and_streams_events() {
     assert!(result.success);
     assert_eq!(result.job_id, 7);
     assert_eq!(result.unit_name, "sshd.service");
+    assert_eq!(result.results.len(), 2);
+    assert_eq!(result.results[1].unit_name, "nginx.service");
 
     let mut kind = SysaControlEventKind::UnitChanged;
     let mut out = ptr::null_mut();

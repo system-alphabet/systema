@@ -494,7 +494,7 @@ impl ManagerInterface {
         reload_if_possible: bool,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
         let req = EnqueueJobRequest {
-            name: name.to_string(),
+            names: vec![name.to_string()],
             job_type: job_type.to_string(),
             mode: mode.to_string(),
             reload_if_possible,
@@ -790,7 +790,7 @@ impl ManagerInterface {
         let (kind, reload_if_possible) = parse_job_type(job_type)?;
         parse_job_mode(job_mode)?;
         let req = EnqueueJobRequest {
-            name: name.to_string(),
+            names: vec![name.to_string()],
             job_type: kind.to_string(),
             mode: job_mode.to_string(),
             reload_if_possible,
@@ -840,29 +840,32 @@ impl ManagerInterface {
         }
         let (kind, reload_if_possible) = parse_job_type(job_type)?;
         parse_job_mode(job_mode)?;
-        let mut jobs = Vec::with_capacity(units.len());
-        for name in units {
-            let req = EnqueueJobRequest {
-                name: name.clone(),
-                job_type: kind.to_string(),
-                mode: job_mode.to_string(),
-                reload_if_possible,
-            };
-            let reply: EnqueueJobResult = self
-                .ctx
-                .client
-                .call("manager.enqueue", &req)
-                .await
-                .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
-            if !reply.success {
-                return Err(zbus::fdo::Error::Failed(reply.message));
+        let req = EnqueueJobRequest {
+            names: units,
+            job_type: kind.to_string(),
+            mode: job_mode.to_string(),
+            reload_if_possible,
+        };
+        let reply: EnqueueJobResult = self
+            .ctx
+            .client
+            .call("manager.enqueue", &req)
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        if !reply.success {
+            return Err(zbus::fdo::Error::Failed(reply.message));
+        }
+        let mut jobs = Vec::with_capacity(reply.results.len());
+        for result in reply.results {
+            if !result.success {
+                return Err(zbus::fdo::Error::Failed(result.message));
             }
-            super::ensure_unit_object(&self.ctx, &reply.unit_name).await;
+            super::ensure_unit_object(&self.ctx, &result.unit_name).await;
             jobs.push((
-                reply.job_id as u32,
-                job_object_path(reply.job_id),
-                reply.unit_name.clone(),
-                unit_object_path(&reply.unit_name),
+                result.job_id as u32,
+                job_object_path(result.job_id),
+                result.unit_name.clone(),
+                unit_object_path(&result.unit_name),
                 kind.to_string(),
             ));
         }

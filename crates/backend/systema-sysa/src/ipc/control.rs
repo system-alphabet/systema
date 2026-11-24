@@ -625,8 +625,9 @@ async fn dispatch(allocator: &AllocatorHandle, env: Envelope) -> Result<Option<E
 // manager.* handlers
 // ---------------------------------------------------------------------------
 
-/// `manager.enqueue` — enqueue a job by job-type string (systemd
-/// `EnqueueUnitJob` semantics, including the "reload-or-*" collapse).
+/// `manager.enqueue` — enqueue one multi-root transaction by job-type string
+/// (systemd `EnqueueUnitJobMany` semantics, including the "reload-or-*"
+/// collapse).
 async fn manager_enqueue(allocator: &AllocatorHandle, env: Envelope) -> Result<Envelope> {
     let req = EnqueueJobRequest::decode(env.payload.as_slice())
         .context(sysa::l10n::t_("bad manager.enqueue"))?;
@@ -644,23 +645,45 @@ async fn manager_enqueue(allocator: &AllocatorHandle, env: Envelope) -> Result<E
     })?;
     let reload_if_possible = ty_reload || req.reload_if_possible;
 
-    let canonical = crate::unit::template::ensure_defined(allocator, &req.name)?;
+    if req.names.is_empty() {
+        anyhow::bail!(sysa::l10n::t_("At least one unit name is required."));
+    }
 
-    let (job_id, collapsed) = crate::scheduler::enqueue_job_type(
+    let outcomes = crate::scheduler::enqueue_job_type_batch(
         allocator.clone(),
-        &canonical,
+        &req.names,
         kind,
         reload_if_possible,
         mode,
     )
-    .await
-    .map_err(|e| {
-        anyhow::anyhow!(sysa::l10n::fmt(
-            sysa::l10n::t_("enqueue failed: {e}"),
-            &[("e", &e.to_string())]
-        ))
-    })?;
-    set_desired_state(allocator, &canonical, collapsed);
+    .await;
+
+    let results: Vec<sysa::proto::EnqueueJobUnitResult> = outcomes
+        .iter()
+        .map(|(requested, outcome)| {
+            let canonical = crate::unit::template::ensure_defined(allocator, requested)
+                .unwrap_or_else(|_| allocator.read().resolve_unit_name(requested));
+            match outcome {
+                Ok((job_id, collapsed)) => {
+                    set_desired_state(allocator, &canonical, *collapsed);
+                    sysa::proto::EnqueueJobUnitResult {
+                        success: true,
+                        message: String::new(),
+                        job_id: *job_id,
+                        unit_name: canonical,
+                    }
+                }
+                Err(error) => sysa::proto::EnqueueJobUnitResult {
+                    success: false,
+                    message: error.to_string(),
+                    job_id: 0,
+                    unit_name: canonical,
+                },
+            }
+        })
+        .collect();
+    let first = results.first();
+    let success = !results.is_empty() && results.iter().all(|result| result.success);
 
     make_envelope(
         next_request_id(),
@@ -668,10 +691,21 @@ async fn manager_enqueue(allocator: &AllocatorHandle, env: Envelope) -> Result<E
         "",
         "manager.enqueue.result",
         EnqueueJobResult {
-            success: true,
-            message: String::new(),
-            job_id,
-            unit_name: canonical,
+            success,
+            message: if success {
+                String::new()
+            } else {
+                results
+                    .iter()
+                    .find(|result| !result.success)
+                    .map(|result| result.message.clone())
+                    .unwrap_or_default()
+            },
+            job_id: first.map(|result| result.job_id).unwrap_or_default(),
+            unit_name: first
+                .map(|result| result.unit_name.clone())
+                .unwrap_or_default(),
+            results,
         },
     )
 }
@@ -820,7 +854,13 @@ async fn manager_start_transient(allocator: &AllocatorHandle, env: Envelope) -> 
             success: true,
             message: String::new(),
             job_id,
-            unit_name: canonical,
+            unit_name: canonical.clone(),
+            results: vec![sysa::proto::EnqueueJobUnitResult {
+                success: true,
+                message: String::new(),
+                job_id,
+                unit_name: canonical,
+            }],
         },
     )
 }
@@ -985,9 +1025,7 @@ async fn manager_abandon_scope(allocator: &AllocatorHandle, env: Envelope) -> Re
             .get(&name)
             .map(|s| s.active_state.clone())
             .unwrap_or_else(|| "inactive".to_string());
-        let worker_tx = state
-            .worker_for_unit(&name)
-            .map(|w| w.envelope_tx.clone());
+        let worker_tx = state.worker_for_unit(&name).map(|w| w.envelope_tx.clone());
         (worker_tx, active_state)
     };
     if !matches!(active_state.as_str(), "active" | "activating") {

@@ -17,6 +17,28 @@ use systema_shared::proto::{
 };
 use tokio::sync::Mutex;
 
+fn read_string_array(
+    items: *const *const c_char,
+    count: usize,
+    what: &str,
+) -> Result<Vec<String>, SysaStatus> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if items.is_null() {
+        return Err(crate::error::fail(
+            SysaStatus::InvalidArgument,
+            format!("{what} is null"),
+        ));
+    }
+    let mut values = Vec::with_capacity(count);
+    for index in 0..count {
+        let entry = unsafe { *items.add(index) };
+        values.push(unsafe { crate::ffi::require_str(entry, what) }?.to_string());
+    }
+    Ok(values)
+}
+
 use crate::status::SysaStatus;
 
 /// A zero timeout waits for an event indefinitely, bounded only by this
@@ -191,14 +213,15 @@ pub extern "C" fn sysa_control_client_call(
     })
 }
 
-/// Enqueue a start / stop / restart / reload job (protobuf
+/// Enqueue one transaction with all `names` as roots (protobuf
 /// `EnqueueJobResult`).
 ///
 /// `reload_if_possible` is a C boolean: zero is false, any other value true.
 #[no_mangle]
 pub extern "C" fn sysa_control_client_enqueue(
     client: *const SysaControlClient,
-    name: *const c_char,
+    names: *const *const c_char,
+    name_count: usize,
     job_type: *const c_char,
     mode: *const c_char,
     reload_if_possible: u8,
@@ -209,8 +232,8 @@ pub extern "C" fn sysa_control_client_enqueue(
         if client.is_null() {
             return crate::error::fail(SysaStatus::InvalidArgument, "client is null");
         }
-        let name = match unsafe { crate::ffi::require_str(name, "name") } {
-            Ok(value) => value.to_string(),
+        let names = match read_string_array(names, name_count, "names") {
+            Ok(values) => values,
             Err(status) => return status,
         };
         let job_type = match unsafe { crate::ffi::require_str(job_type, "job_type") } {
@@ -222,7 +245,7 @@ pub extern "C" fn sysa_control_client_enqueue(
             Err(status) => return status,
         };
         let request = EnqueueJobRequest {
-            name,
+            names,
             job_type,
             mode,
             reload_if_possible: reload_if_possible != 0,

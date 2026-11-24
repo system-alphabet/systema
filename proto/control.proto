@@ -209,13 +209,14 @@ message PropertyBag {
     repeated TransientProperty properties = 1;
 }
 
-// `manager.enqueue` — enqueue a job for one unit by job-type string
+// `manager.enqueue` — enqueue one transaction for all requested units by
+// job-type string
 // ("start", "stop", "restart", "reload", "try-restart", "try-reload",
 // "reload-or-start", "reload-or-restart", "reload-or-try-restart",
 // "verify-active", "nop") and job-mode string ("replace", "fail", etc.),
-// mirroring `systemctl` / the systemd1 `EnqueueUnitJob` bus method.
+// mirroring `systemctl` / the systemd1 `EnqueueUnitJobMany` bus method.
 message EnqueueJobRequest {
-    string name = 1;
+    repeated string names = 1;
     string job_type = 2;
     string mode = 3;
     // When true, prefer a Reload job and fall back to Restart
@@ -223,12 +224,22 @@ message EnqueueJobRequest {
     bool reload_if_possible = 4;
 }
 
-// Reply to EnqueueJobRequest.
+// Outcome for one unit in an EnqueueJobRequest.
+message EnqueueJobUnitResult {
+    bool success = 1;
+    string message = 2;
+    uint64 job_id = 3;
+    string unit_name = 4;
+}
+
+// Reply to EnqueueJobRequest. The top-level job fields describe the first
+// result for compatibility with callers of the former single-unit API.
 message EnqueueJobResult {
     bool success = 1;
     string message = 2;
     uint64 job_id = 3;
     string unit_name = 4;
+    repeated EnqueueJobUnitResult results = 5;
 }
 
 // `manager.start_transient` — create and activate a transient unit (no

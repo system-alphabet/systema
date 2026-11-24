@@ -256,7 +256,13 @@ mod tests {
                             success: true,
                             message: String::new(),
                             job_id: 7,
-                            unit_name: req.name,
+                            unit_name: req.names[0].clone(),
+                            results: vec![sysa::proto::EnqueueJobUnitResult {
+                                success: true,
+                                message: String::new(),
+                                job_id: 7,
+                                unit_name: req.names[0].clone(),
+                            }],
                         },
                     )?;
                     send_envelope(&mut framed, &reply).await?;
@@ -370,7 +376,7 @@ mod tests {
             .call(
                 "manager.enqueue",
                 &EnqueueJobRequest {
-                    name: "demo.service".to_string(),
+                    names: vec!["demo.service".to_string()],
                     job_type: "start".to_string(),
                     mode: "replace".to_string(),
                     reload_if_possible: false,

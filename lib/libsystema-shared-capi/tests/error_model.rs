@@ -91,7 +91,7 @@ fn exported_strings_and_buffers_can_be_freed() {
 
 #[test]
 fn version_and_abi_are_exposed() {
-    assert_eq!(systema_shared_capi::sysa_abi_version(), 1);
+    assert_eq!(systema_shared_capi::sysa_abi_version(), 2);
     let pointer = systema_shared_capi::sysa_version();
     assert!(!pointer.is_null());
     assert!(!unsafe { CStr::from_ptr(pointer) }.to_bytes().is_empty());

@@ -520,7 +520,13 @@ mod tests {
                             success: true,
                             message: String::new(),
                             job_id: 42,
-                            unit_name: req.name.clone(),
+                            unit_name: req.names[0].clone(),
+                            results: vec![crate::proto::EnqueueJobUnitResult {
+                                success: true,
+                                message: String::new(),
+                                job_id: 42,
+                                unit_name: req.names[0].clone(),
+                            }],
                         };
                         let reply = make_envelope(
                             env.request_id,
@@ -673,7 +679,7 @@ mod tests {
             .call(
                 "manager.enqueue",
                 &EnqueueJobRequest {
-                    name: "sshd.service".to_string(),
+                    names: vec!["sshd.service".to_string()],
                     job_type: "stop".to_string(),
                     mode: "replace".to_string(),
                     reload_if_possible: false,
@@ -685,7 +691,7 @@ mod tests {
             .call(
                 "manager.enqueue",
                 &EnqueueJobRequest {
-                    name: "sshd.service".to_string(),
+                    names: vec!["sshd.service".to_string()],
                     job_type: "start".to_string(),
                     mode: "replace".to_string(),
                     reload_if_possible: false,

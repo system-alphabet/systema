@@ -274,6 +274,11 @@ void check_clients()
 
     auto manager = sysa::ControlClient::create("/nonexistent/sysa-smoke.sock", "systemd");
     require(!manager && manager.error().status() == sysa::Status::io, "control client reports a connect failure");
+    if (manager)
+    {
+        std::array names{"a.service", "b.target"};
+        static_cast<void>(manager->enqueue(names, "start", "replace"));
+    }
 }
 
 void check_worker()

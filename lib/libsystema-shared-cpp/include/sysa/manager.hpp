@@ -5,6 +5,7 @@
 #include "sysa/detail.hpp"
 #include "sysa/error.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -102,13 +103,32 @@ public:
                                           bool reload_if_possible = false) const
     {
         detail::CString name_text{name};
+        std::array names{name_text.get()};
+        return enqueue_names(names, job_type, mode, reload_if_possible);
+    }
+
+    /// Enqueue all `names` as anchors of one transaction.
+    template <StringSequence Names, StringLike JobType, StringLike Mode>
+    [[nodiscard]] Expected<Bytes> enqueue(Names const& names, JobType const& job_type, Mode const& mode,
+                                          bool reload_if_possible = false) const
+    {
+        return enqueue_names(names, job_type, mode, reload_if_possible);
+    }
+
+private:
+    template <StringSequence Names, StringLike JobType, StringLike Mode>
+    [[nodiscard]] Expected<Bytes> enqueue_names(Names const& names, JobType const& job_type, Mode const& mode,
+                                                bool reload_if_possible) const
+    {
+        detail::CStringArray names_text{names};
         detail::CString type_text{job_type};
         detail::CString mode_text{mode};
         detail::clear_last_error();
         std::uint8_t* data = nullptr;
         std::size_t size = 0;
-        const auto raw_status = sysa_control_client_enqueue(handle_, name_text.get(), type_text.get(), mode_text.get(),
-                                                            reload_if_possible ? 1 : 0, &data, &size);
+        const auto raw_status =
+            sysa_control_client_enqueue(handle_, names_text.data(), names_text.size(), type_text.get(), mode_text.get(),
+                                        reload_if_possible ? 1 : 0, &data, &size);
         if (raw_status != SYSA_STATUS_OK)
         {
             return std::unexpected(detail::take_error(detail::to_status(raw_status)));
@@ -116,6 +136,7 @@ public:
         return Bytes{data, size};
     }
 
+public:
     /// Fetch the full current unit set (protobuf `ListSnapshotsResult`).
     [[nodiscard]] Expected<Bytes> list_snapshots() const { return take_reply(sysa_control_client_list_snapshots); }
 

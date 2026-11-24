@@ -1806,7 +1806,7 @@ async fn build_plan_for_roots(
 }
 
 /// The pre-plan outcome for one requested batch root.
-enum BatchStart {
+enum BatchRoot {
     /// A job was created and completed immediately (active unit or unmet
     /// asserts); its id is reported to the caller.
     Completed(u64),
@@ -1819,26 +1819,27 @@ enum BatchStart {
 /// Per-name result of [`enqueue_start_batch`], in request order.
 #[derive(Clone)]
 enum BatchOutcome {
-    Job(u64),
+    Job(u64, JobKind),
     Failed(String),
 }
 
 impl BatchOutcome {
-    fn into_result(self) -> Result<u64> {
+    fn into_result(self) -> Result<(u64, JobKind)> {
         match self {
-            BatchOutcome::Job(id) => Ok(id),
+            BatchOutcome::Job(id, kind) => Ok((id, kind)),
             BatchOutcome::Failed(message) => Err(anyhow::anyhow!(message)),
         }
     }
 }
 
-/// Root checks for [`enqueue_start_batch`], mirroring the per-unit checks
+/// Root checks for a batch enqueue, mirroring the per-unit checks
 /// [`enqueue_job_tracked`] performs before planning a single root.
-async fn prepare_batch_start(
+async fn prepare_batch_root(
     allocator: &AllocatorHandle,
     unit_name: &str,
+    kind: JobKind,
     mode: JobMode,
-) -> Result<BatchStart> {
+) -> Result<BatchRoot> {
     // A name without a definition (and without a registered template) cannot
     // be an anchor: report it alone instead of failing the whole batch.
     // `ensure_defined` also canonicalizes alias instances
@@ -1855,30 +1856,37 @@ async fn prepare_batch_start(
             .get(unit_name)
             .map(|u| u.unit.allow_isolate)
             .unwrap_or(false);
-        check_mode_constraints(mode, JobKind::Start, unit_name, allow_isolate)?;
+        check_mode_constraints(mode, kind, unit_name, allow_isolate)?;
     }
 
     // --- Already-active short-circuit (systemd unit_start -> -EALREADY) ---
     {
         let state = allocator.read();
-        if state
-            .unit_states
-            .get(unit_name)
-            .map(|c| c.active_state == "active")
-            .unwrap_or(false)
+        if kind == JobKind::Start
+            && state
+                .unit_states
+                .get(unit_name)
+                .map(|c| c.active_state == "active")
+                .unwrap_or(false)
         {
             let job_id = next_job_id();
             let mut state = allocator.write();
-            emit_job_new(&mut state, job_id, unit_name, JobKind::Start);
+            emit_job_new(&mut state, job_id, unit_name, kind);
             emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Done);
-            return Ok(BatchStart::Completed(job_id));
+            return Ok(BatchRoot::Completed(job_id));
         }
     }
 
-    sysa::notify::broadcast(&[("UNIT_STARTING", unit_name)]);
+    match kind {
+        JobKind::Start | JobKind::Restart => {
+            sysa::notify::broadcast(&[("UNIT_STARTING", unit_name)]);
+        }
+        JobKind::Stop => sysa::notify::broadcast(&[("UNIT_STOPPING", unit_name)]),
+        JobKind::Reload | JobKind::Nop => {}
+    }
 
     // --- Non-transient scopes are refused (systemd scope_start) ---
-    {
+    if kind == JobKind::Start {
         let state = allocator.read();
         if let Some(unit) = state.units.get(unit_name) {
             if unit.kind == UnitKind::Scope && !unit.transient {
@@ -1900,12 +1908,7 @@ async fn prepare_batch_start(
         if state.worker_for_unit(unit_name).is_none() {
             bail!(
                 "{}",
-                missing_worker_error(
-                    &state,
-                    unit_name,
-                    &unit_type,
-                    &format!("{:?}", JobKind::Start)
-                )
+                missing_worker_error(&state, unit_name, &unit_type, &format!("{kind:?}"))
             );
         }
     }
@@ -1915,8 +1918,8 @@ async fn prepare_batch_start(
         JobMode::IgnoreDependencies | JobMode::IgnoreRequirements
     );
 
-    // --- Assert checks: fail start if asserts not met ---
-    if !ignore_deps {
+    // --- Assert checks: fail start/restart if asserts not met ---
+    if matches!(kind, JobKind::Start | JobKind::Restart) && !ignore_deps {
         let asserts_met = {
             let state = allocator.read();
             state
@@ -1932,14 +1935,14 @@ async fn prepare_batch_start(
             );
             let job_id = next_job_id();
             let mut state = allocator.write();
-            emit_job_new(&mut state, job_id, unit_name, JobKind::Start);
+            emit_job_new(&mut state, job_id, unit_name, kind);
             emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Dependency);
-            return Ok(BatchStart::Completed(job_id));
+            return Ok(BatchRoot::Completed(job_id));
         }
     }
 
     // --- Start rate limiting (systemd unit_start -> unit_test_start_limit) ---
-    {
+    if matches!(kind, JobKind::Start | JobKind::Restart) {
         let (interval_sec, burst, action) = {
             let state = allocator.read();
             state
@@ -1983,9 +1986,7 @@ async fn prepare_batch_start(
             .jobs
             .values()
             .find(|j| {
-                j.unit_name == unit_name
-                    && j.kind == JobKind::Start
-                    && matches!(j.status, JobStatus::Running)
+                j.unit_name == unit_name && j.kind == kind && matches!(j.status, JobStatus::Running)
             })
             .map(|j| j.id);
         drop(state);
@@ -1993,15 +1994,15 @@ async fn prepare_batch_start(
             if mode == JobMode::Fail {
                 bail!("{}", l10n::fmt(l10n::t_("Job already exists for unit {unit_name} (kind={kind}, id={existing_id})."), &[
                     ("unit_name", unit_name),
-                    ("kind", &format!("{:?}", JobKind::Start)),
+                    ("kind", &format!("{kind:?}")),
                     ("existing_id", &existing_id.to_string()),
                 ]));
             }
-            return Ok(BatchStart::Merged(existing_id));
+            return Ok(BatchRoot::Merged(existing_id));
         }
     }
 
-    Ok(BatchStart::Anchor)
+    Ok(BatchRoot::Anchor)
 }
 
 /// Enqueue one Start transaction whose anchors are every name in `names`
@@ -2022,28 +2023,129 @@ async fn prepare_batch_start(
 /// phase must not stay blocked until the whole boot graph has been handed
 /// out.  Jobs already covered by an in-flight job are merged, active units
 /// complete immediately (`-EALREADY`).
-pub async fn enqueue_start_batch(
+async fn enqueue_job_type_batch_inner(
     allocator: AllocatorHandle,
     names: &[String],
+    job_type: JobType,
+    reload_if_possible: bool,
     mode: JobMode,
-) -> Vec<(String, Result<u64>)> {
+    fallback_to_independent_starts: bool,
+) -> Vec<(String, Result<(u64, JobKind)>)> {
     let mut outcomes: HashMap<String, BatchOutcome> = HashMap::new();
-    let mut anchors: Vec<String> = Vec::new();
+    let mut anchors: Vec<(String, JobKind)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut requested_to_canonical: HashMap<String, String> = HashMap::new();
+
+    if mode == JobMode::Flush {
+        let to_cancel: Vec<u64> = allocator
+            .read()
+            .jobs
+            .values()
+            .filter(|job| matches!(job.status, JobStatus::Running))
+            .map(|job| job.id)
+            .collect();
+        for job_id in to_cancel {
+            let mut state = allocator.write();
+            let name = state
+                .jobs
+                .get(&job_id)
+                .map(|job| job.unit_name.clone())
+                .unwrap_or_default();
+            if free_job(&mut state, job_id).is_some() {
+                emit_job_completed(&mut state, job_id, &name, JobResultKind::Cancelled);
+            }
+        }
+    }
 
     for requested in names {
         let resolved = allocator.read().resolve_unit_name(requested);
-        if !seen.insert(resolved.clone()) {
+        let canonical = match crate::unit::template::ensure_defined(&allocator, &resolved) {
+            Ok(canonical) => canonical,
+            Err(e) => {
+                requested_to_canonical.insert(requested.clone(), resolved.clone());
+                outcomes.insert(resolved, BatchOutcome::Failed(e.to_string()));
+                continue;
+            }
+        };
+        requested_to_canonical.insert(requested.clone(), canonical.clone());
+        if !seen.insert(canonical.clone()) {
             // Alias or duplicate of an earlier name: same unit, same outcome.
             continue;
         }
-        match prepare_batch_start(&allocator, &resolved, mode).await {
-            Ok(BatchStart::Completed(id)) | Ok(BatchStart::Merged(id)) => {
-                outcomes.insert(resolved, BatchOutcome::Job(id));
+
+        let (mangled, collapsed, state_now, allow_isolate) = {
+            let state = allocator.read();
+            let unit = state.units.get(&canonical);
+            let can_reload = unit
+                .and_then(|unit| unit.service.as_ref())
+                .map(|service| !service.exec_reload.is_empty())
+                .unwrap_or(false);
+            let mangled = if reload_if_possible && can_reload {
+                match job_type {
+                    JobType::Restart => JobType::ReloadOrStart,
+                    JobType::TryRestart => JobType::TryReload,
+                    other => other,
+                }
+            } else {
+                job_type
+            };
+            let state_now = state
+                .unit_states
+                .get(&canonical)
+                .map(|cached| UnitActiveState::from_active_state_str(&cached.active_state))
+                .unwrap_or(UnitActiveState::Unknown);
+            (
+                mangled,
+                job_type_collapse(mangled, state_now),
+                state_now,
+                unit.map(|unit| unit.unit.allow_isolate).unwrap_or(false),
+            )
+        };
+
+        if let Err(e) = check_mode_constraints(
+            mode,
+            job_kind_from_type(mangled).unwrap_or(JobKind::Nop),
+            &canonical,
+            allow_isolate,
+        ) {
+            outcomes.insert(canonical, BatchOutcome::Failed(e.to_string()));
+            continue;
+        }
+
+        match collapsed {
+            JobType::Nop => {
+                let job_id = next_job_id();
+                let mut state = allocator.write();
+                emit_job_new(&mut state, job_id, &canonical, JobKind::Nop);
+                emit_job_completed(&mut state, job_id, &canonical, JobResultKind::Done);
+                outcomes.insert(canonical, BatchOutcome::Job(job_id, JobKind::Nop));
+                continue;
             }
-            Ok(BatchStart::Anchor) => anchors.push(resolved),
-            Err(e) => {
-                outcomes.insert(resolved, BatchOutcome::Failed(e.to_string()));
+            JobType::VerifyActive => {
+                let result = if state_now.is_active_or_reloading() {
+                    JobResultKind::Done
+                } else {
+                    JobResultKind::Skipped
+                };
+                let job_id = next_job_id();
+                let mut state = allocator.write();
+                emit_job_new(&mut state, job_id, &canonical, JobKind::Nop);
+                emit_job_completed(&mut state, job_id, &canonical, result);
+                outcomes.insert(canonical, BatchOutcome::Job(job_id, JobKind::Nop));
+                continue;
+            }
+            other => {
+                let kind =
+                    job_kind_from_type(other).expect("collapsed job type dispatches to a worker");
+                match prepare_batch_root(&allocator, &canonical, kind, mode).await {
+                    Ok(BatchRoot::Completed(id)) | Ok(BatchRoot::Merged(id)) => {
+                        outcomes.insert(canonical, BatchOutcome::Job(id, kind));
+                    }
+                    Ok(BatchRoot::Anchor) => anchors.push((canonical, kind)),
+                    Err(e) => {
+                        outcomes.insert(canonical, BatchOutcome::Failed(e.to_string()));
+                    }
+                }
             }
         }
     }
@@ -2051,21 +2153,24 @@ pub async fn enqueue_start_batch(
     if !anchors.is_empty() {
         let roots: Vec<(&str, JobType)> = anchors
             .iter()
-            .map(|name| (name.as_str(), JobType::Start))
+            .map(|(name, kind)| (name.as_str(), JobType::from_job_kind(*kind)))
             .collect();
-        match build_plan_for_roots(&allocator, &roots, mode, "manager.start_units").await {
+        match build_plan_for_roots(&allocator, &roots, mode, "manager.enqueue").await {
             Ok(plan) => {
                 let mut root_job_ids = HashMap::with_capacity(anchors.len());
-                for name in &anchors {
+                for (name, kind) in &anchors {
                     let job_id = next_job_id();
                     root_job_ids.insert(name.clone(), job_id);
-                    outcomes.insert(name.clone(), BatchOutcome::Job(job_id));
+                    outcomes.insert(name.clone(), BatchOutcome::Job(job_id, *kind));
                 }
                 let ignore_deps = matches!(
                     mode,
                     JobMode::IgnoreDependencies | JobMode::IgnoreRequirements
                 );
-                let error_owner = anchors.first().map(String::as_str).unwrap_or_default();
+                let error_owner = anchors
+                    .first()
+                    .map(|(name, _)| name.as_str())
+                    .unwrap_or_default();
                 let mut dispatches = Vec::new();
                 if let Err(e) = dispatch_plan(
                     allocator.clone(),
@@ -2078,33 +2183,35 @@ pub async fn enqueue_start_batch(
                 )
                 .await
                 {
-                    for name in &anchors {
+                    for (name, _) in &anchors {
                         outcomes.insert(name.clone(), BatchOutcome::Failed(e.to_string()));
                     }
                 }
-                // Dropping the handles detaches the dispatch tasks; they keep
-                // running on the same runtime after this function returns.
                 drop(dispatches);
             }
             Err(e) => {
-                // One broken anchor must not keep the whole boot set down:
-                // fall back to per-root transactions, which isolate the
-                // planning failure to the unit that cannot be planned.
-                warn!(
-                    "manager.start_units: batch transaction failed ({e}); retrying each unit separately"
-                );
-                for name in &anchors {
-                    let result = tokio::time::timeout(
-                        Duration::from_secs(15),
-                        enqueue_start_after_dispatch(allocator.clone(), name, mode),
-                    )
-                    .await;
-                    let outcome = match result {
-                        Ok(Ok(job_id)) => BatchOutcome::Job(job_id),
-                        Ok(Err(e)) => BatchOutcome::Failed(e.to_string()),
-                        Err(_) => BatchOutcome::Failed(l10n::t_("start timed out").to_string()),
-                    };
-                    outcomes.insert(name.clone(), outcome);
+                if fallback_to_independent_starts && job_type == JobType::Start {
+                    warn!(
+                        "manager.start_units: batch transaction failed ({e}); retrying each unit separately"
+                    );
+                    for (name, kind) in &anchors {
+                        debug_assert_eq!(*kind, JobKind::Start);
+                        let result = tokio::time::timeout(
+                            Duration::from_secs(15),
+                            enqueue_start_after_dispatch(allocator.clone(), name, mode),
+                        )
+                        .await;
+                        let outcome = match result {
+                            Ok(Ok(job_id)) => BatchOutcome::Job(job_id, JobKind::Start),
+                            Ok(Err(e)) => BatchOutcome::Failed(e.to_string()),
+                            Err(_) => BatchOutcome::Failed(l10n::t_("start timed out").to_string()),
+                        };
+                        outcomes.insert(name.clone(), outcome);
+                    }
+                } else {
+                    for (name, _) in &anchors {
+                        outcomes.insert(name.clone(), BatchOutcome::Failed(e.to_string()));
+                    }
                 }
             }
         }
@@ -2113,15 +2220,46 @@ pub async fn enqueue_start_batch(
     names
         .iter()
         .map(|requested| {
-            let resolved = allocator.read().resolve_unit_name(requested);
+            let canonical = requested_to_canonical
+                .get(requested)
+                .cloned()
+                .unwrap_or_else(|| allocator.read().resolve_unit_name(requested));
             // Every requested name was either an anchor or got an outcome in
             // the pre-check loop; a duplicate shares the first outcome.
             let outcome = outcomes
-                .get(&resolved)
+                .get(&canonical)
                 .cloned()
                 .unwrap_or_else(|| BatchOutcome::Failed(String::new()));
             (requested.clone(), outcome.into_result())
         })
+        .collect()
+}
+
+/// Enqueue all requested roots into one transaction.
+///
+/// Unlike the boot-time `manager.start_units` fallback, a batch requested
+/// through `manager.enqueue` is never silently split into independent
+/// transactions.
+pub async fn enqueue_job_type_batch(
+    allocator: AllocatorHandle,
+    names: &[String],
+    job_type: JobType,
+    reload_if_possible: bool,
+    mode: JobMode,
+) -> Vec<(String, Result<(u64, JobKind)>)> {
+    enqueue_job_type_batch_inner(allocator, names, job_type, reload_if_possible, mode, false).await
+}
+
+/// Enqueue one Start transaction whose anchors are every name in `names`.
+pub async fn enqueue_start_batch(
+    allocator: AllocatorHandle,
+    names: &[String],
+    mode: JobMode,
+) -> Vec<(String, Result<u64>)> {
+    enqueue_job_type_batch_inner(allocator, names, JobType::Start, false, mode, true)
+        .await
+        .into_iter()
+        .map(|(name, result)| (name, result.map(|(job_id, _)| job_id)))
         .collect()
 }
 
@@ -4185,6 +4323,46 @@ mod tests {
         let second = Envelope::decode(second.as_ref()).unwrap();
         let call = sysa::proto::MethodCall::decode(second.payload.as_slice()).unwrap();
         assert_eq!(call.unit_name, "b.service");
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_job_type_batch_returns_one_result_per_root() {
+        let alloc = Arc::new(parking_lot::RwLock::new(AllocatorState::new()));
+        let (tx, _rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(16);
+        {
+            let mut state = alloc.write();
+            state
+                .units
+                .insert("a.service".to_string(), make_unit("a.service"));
+            state
+                .units
+                .insert("b.service".to_string(), make_unit("b.service"));
+            state.workers.insert(
+                "test-worker".to_string(),
+                WorkerEntry {
+                    worker_id: "test-worker".to_string(),
+                    unit_types: vec!["service".to_string()],
+                    supports_unit_define: false,
+                    supports_resource_prepare: false,
+                    ready: false,
+                    envelope_tx: tx,
+                },
+            );
+        }
+
+        let results = enqueue_job_type_batch(
+            alloc,
+            &["a.service".to_string(), "b.service".to_string()],
+            JobType::Stop,
+            false,
+            JobMode::Replace,
+        )
+        .await;
+
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .all(|(_, result)| { matches!(result, Ok((job_id, JobKind::Stop)) if *job_id != 0) }));
     }
 
     #[tokio::test]
