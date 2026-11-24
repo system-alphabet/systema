@@ -8,7 +8,7 @@ use sysa::worker_ipc::{EventPublisher, WorkerIpc};
 
 use crate::cgroup::Querier;
 use crate::controller::ServiceController;
-use crate::process::{run_exec_stop, run_exec_stop_post};
+use crate::process::{run_exec_stop, run_exec_stop_post, ManagerScope};
 use crate::state::{new_registry, ServiceRegistry, ServiceState};
 
 const WORKER_ID: &str = "system-s-1";
@@ -22,7 +22,11 @@ pub fn shared_registry() -> SharedRegistry {
     Arc::new(Mutex::new(None))
 }
 
-pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) -> Result<()> {
+pub async fn run(
+    shared: &SharedRegistry,
+    bus_address: Option<zbus::Address>,
+    manager_scope: ManagerScope,
+) -> Result<()> {
     let registry = new_registry();
     *shared.lock().await = Some(registry.clone());
     let fdpass: Arc<Mutex<Option<tokio::net::UnixStream>>> = Arc::new(Mutex::new(None));
@@ -101,6 +105,7 @@ pub async fn run(shared: &SharedRegistry, bus_address: Option<zbus::Address>) ->
                     fd_request_lock.clone(),
                     notify.clone(),
                     dbus.clone(),
+                    manager_scope,
                 )
             }
         },

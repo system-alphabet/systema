@@ -58,14 +58,38 @@ use crate::state::{ServiceRegistry, ServiceState};
 const FORCED_SERVICE_ENV: &[(&str, &str)] =
     &[("SYSTEMCTL_FORCE_BUS", "1"), ("SYSTEMD_OFFLINE", "0")];
 
-/// Whether [`FORCED_SERVICE_ENV`] applies to a service running as `user`
-/// (empty `User=`, `root` or uid `0` all mean the system domain's root).
-///
-/// User-land services must not get the forced system-bus environment —
-/// their `systemctl` talks to a user manager, not the system bus (see the
-/// call site in the spawn path for the user@.service failure mode).
-fn forced_bus_env_applies(user: &str) -> bool {
+/// Manager domain owned by this System S worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum ManagerScope {
+    System,
+    User,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecManagerMode {
+    Ordinary,
+    UserManager,
+}
+
+fn classify_exec_manager_mode(program: &str, args: &[String]) -> ExecManagerMode {
+    let executable = std::path::Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str());
+    if executable == Some("systemd") && args.iter().any(|arg| arg == "--user") {
+        ExecManagerMode::UserManager
+    } else {
+        ExecManagerMode::Ordinary
+    }
+}
+
+fn is_root_identity(user: &str) -> bool {
     user.is_empty() || user == "root" || user == "0"
+}
+
+fn force_system_bus_env(scope: ManagerScope, user: &str, program: &str, args: &[String]) -> bool {
+    scope == ManagerScope::System
+        && is_root_identity(user)
+        && classify_exec_manager_mode(program, args) == ExecManagerMode::Ordinary
 }
 
 /// Directory where per-service stdout/stderr logs are captured.
@@ -168,6 +192,7 @@ pub async fn start_service(
     invocation_id: Option<String>,
     listen_fds: Vec<RawFd>,
     listen_fd_names: Vec<String>,
+    manager_scope: ManagerScope,
 ) -> Result<(u32, Child)> {
     let unit_name = config.unit_name.clone();
     let svc = ServiceConfig::from_unit_config(config).ok_or_else(|| {
@@ -297,7 +322,15 @@ pub async fn start_service(
     // unit Environment= + PAM env + forced env).
     let identity_env = identity_env(creds.as_ref());
     let directory_env = prepare_service_directories(&svc, creds.as_ref())?;
-    let env_table = build_env_table(&svc.environment, &pam_env, &identity_env, &directory_env);
+    let force_system_bus =
+        force_system_bus_env(manager_scope, &svc.user, &parsed.program, &parsed.args);
+    let env_table = build_env_table(
+        &svc.environment,
+        &pam_env,
+        &identity_env,
+        &directory_env,
+        force_system_bus,
+    );
 
     // Expand $VAR / ${VAR} in every argument, handling standalone splitting.
     let final_args = if parsed.flags.no_env_expand {
@@ -318,12 +351,14 @@ pub async fn start_service(
         inst.state = ServiceState::Starting;
         inst.invocation_id = invocation_id.clone();
         inst.ignore_failure = parsed.flags.ignore_failure;
+        inst.force_system_bus = force_system_bus;
     }
 
     // ExecStartPre= commands run in order before ExecStart; a non-zero exit
     // (without the `-` prefix) aborts the start, like systemd's
     // service_enter_start_pre(), and leaves the unit failed(dead).
-    if let Err(e) = run_exec_start_pre(registry.clone(), &unit_name, config).await {
+    if let Err(e) = run_exec_start_pre(registry.clone(), &unit_name, config, force_system_bus).await
+    {
         {
             let mut reg = registry.lock();
             if let Some(inst) = reg.get_mut(&unit_name) {
@@ -421,7 +456,7 @@ pub async fn start_service(
     // Debian's dbus.socket/ssh-agent.socket, whose stuck start jobs then
     // block basic.target and keep `systemd --user` from ever reporting
     // READY=1 (every start job times out).
-    if forced_bus_env_applies(&svc.user) {
+    if force_system_bus {
         for (key, val) in FORCED_SERVICE_ENV {
             if let (Ok(k), Ok(v)) = (CString::new(*key), CString::new(*val)) {
                 child_envs.push((k, v));
@@ -604,6 +639,7 @@ pub async fn start_service(
     _invocation_id: Option<String>,
     _listen_fds: Vec<i32>,
     _listen_fd_names: Vec<String>,
+    _manager_scope: ManagerScope,
 ) -> Result<(u32, Child)> {
     bail!(sysa::l10n::t_(
         "Starting services is not supported on this platform."
@@ -667,6 +703,7 @@ async fn run_exec_commands(
     phase: &str,
     timeout_secs: u64,
     main_pid: Option<u32>,
+    force_system_bus: bool,
 ) -> Result<()> {
     for raw in commands {
         let parsed = parse_exec_start(raw, unit_name)?;
@@ -686,7 +723,13 @@ async fn run_exec_commands(
 
         let identity_env = identity_env(creds.as_ref());
         let directory_env = prepare_service_directories(&svc, creds.as_ref())?;
-        let mut env_table = build_env_table(&svc.environment, &[], &identity_env, &directory_env);
+        let mut env_table = build_env_table(
+            &svc.environment,
+            &[],
+            &identity_env,
+            &directory_env,
+            force_system_bus,
+        );
         if let Some(pid) = main_pid {
             // `$MAINPID` must expand here too, not only be present in the
             // child environment: ExecStop=/ExecReload= commonly interpolate it
@@ -737,7 +780,7 @@ async fn run_exec_commands(
                 child_envs.push((k, v));
             }
         }
-        if forced_bus_env_applies(&svc.user) {
+        if force_system_bus {
             for (key, val) in FORCED_SERVICE_ENV {
                 if let (Ok(k), Ok(v)) = (CString::new(*key), CString::new(*val)) {
                     child_envs.push((k, v));
@@ -854,6 +897,7 @@ pub async fn run_exec_start_pre(
     registry: ServiceRegistry,
     unit_name: &str,
     config: &UnitConfig,
+    force_system_bus: bool,
 ) -> Result<()> {
     let Some(svc) = ServiceConfig::from_unit_config(config) else {
         return Ok(());
@@ -871,6 +915,7 @@ pub async fn run_exec_start_pre(
         "ExecStartPre",
         timeout,
         None,
+        force_system_bus,
     )
     .await
 }
@@ -889,10 +934,11 @@ pub async fn run_exec_start_post(
     if svc.exec_start_post.is_empty() {
         return Ok(());
     }
-    let main_pid = registry
+    let (main_pid, force_system_bus) = registry
         .lock()
         .get(unit_name)
-        .and_then(|inst| inst.main_pid);
+        .map(|inst| (inst.main_pid, inst.force_system_bus))
+        .unwrap_or((None, false));
     let timeout = start_timeout_secs(config);
     run_exec_commands(
         registry,
@@ -903,6 +949,7 @@ pub async fn run_exec_start_post(
         "ExecStartPost",
         timeout,
         main_pid,
+        force_system_bus,
     )
     .await
 }
@@ -919,13 +966,14 @@ pub async fn run_exec_stop(
     unit_name: &str,
     timeout_secs: u32,
 ) -> Result<()> {
-    let (svc, main_pid, cgroup) = {
+    let (svc, main_pid, cgroup, force_system_bus) = {
         let reg = registry.lock();
         match reg.get(unit_name) {
             Some(inst) => (
                 inst.service_config.clone(),
                 inst.main_pid,
                 inst.cgroup_path.clone().unwrap_or_default(),
+                inst.force_system_bus,
             ),
             None => return Ok(()),
         }
@@ -945,6 +993,7 @@ pub async fn run_exec_stop(
         "ExecStop",
         timeout_secs as u64,
         main_pid,
+        force_system_bus,
     )
     .await
 }
@@ -958,13 +1007,14 @@ pub async fn run_exec_stop_post(
     unit_name: &str,
     timeout_secs: u32,
 ) -> Result<()> {
-    let (svc, main_pid, cgroup) = {
+    let (svc, main_pid, cgroup, force_system_bus) = {
         let reg = registry.lock();
         match reg.get(unit_name) {
             Some(inst) => (
                 inst.service_config.clone(),
                 inst.main_pid,
                 inst.cgroup_path.clone().unwrap_or_default(),
+                inst.force_system_bus,
             ),
             None => return Ok(()),
         }
@@ -984,6 +1034,7 @@ pub async fn run_exec_stop_post(
         "ExecStopPost",
         timeout_secs as u64,
         main_pid,
+        force_system_bus,
     )
     .await
 }
@@ -1004,6 +1055,10 @@ pub async fn run_exec_reload(
         return Ok(());
     }
     let timeout = start_timeout_secs(config);
+    let force_system_bus = registry
+        .lock()
+        .get(unit_name)
+        .is_some_and(|instance| instance.force_system_bus);
     run_exec_commands(
         registry,
         unit_name,
@@ -1013,6 +1068,7 @@ pub async fn run_exec_reload(
         "ExecReload",
         timeout,
         main_pid,
+        force_system_bus,
     )
     .await
 }
@@ -1024,6 +1080,7 @@ pub async fn run_exec_start_pre(
     _registry: ServiceRegistry,
     _unit_name: &str,
     _config: &UnitConfig,
+    _force_system_bus: bool,
 ) -> Result<()> {
     Ok(())
 }
@@ -2232,6 +2289,7 @@ fn build_env_table(
     pam_env: &[(String, String)],
     identity_env: &[(String, String)],
     directory_env: &[(String, String)],
+    force_system_bus: bool,
 ) -> HashMap<String, String> {
     let mut table: HashMap<String, String> = HashMap::new();
 
@@ -2257,8 +2315,10 @@ fn build_env_table(
         table.insert(key.clone(), val.clone());
     }
 
-    for (key, val) in FORCED_SERVICE_ENV {
-        table.insert(key.to_string(), val.to_string());
+    if force_system_bus {
+        for (key, val) in FORCED_SERVICE_ENV {
+            table.insert(key.to_string(), val.to_string());
+        }
     }
 
     table
@@ -3065,11 +3125,44 @@ mod tests {
 
     #[test]
     fn forced_env_applies_only_to_root_services() {
-        assert!(forced_bus_env_applies(""));
-        assert!(forced_bus_env_applies("root"));
-        assert!(forced_bus_env_applies("0"));
-        assert!(!forced_bus_env_applies("user"));
-        assert!(!forced_bus_env_applies("1000"));
+        assert!(force_system_bus_env(
+            ManagerScope::System,
+            "root",
+            "/usr/bin/daemon",
+            &[]
+        ));
+        assert!(!force_system_bus_env(
+            ManagerScope::User,
+            "root",
+            "/usr/bin/daemon",
+            &[]
+        ));
+        assert!(!force_system_bus_env(
+            ManagerScope::System,
+            "1000",
+            "/usr/bin/daemon",
+            &[]
+        ));
+    }
+
+    #[test]
+    fn user_manager_exec_does_not_force_system_bus() {
+        assert_eq!(
+            classify_exec_manager_mode("/usr/lib/systemd/systemd", &["--user".to_string()]),
+            ExecManagerMode::UserManager
+        );
+        assert!(!force_system_bus_env(
+            ManagerScope::System,
+            "0",
+            "/usr/lib/systemd/systemd",
+            &["--user".to_string()]
+        ));
+        assert!(force_system_bus_env(
+            ManagerScope::System,
+            "0",
+            "/usr/lib/systemd/systemd",
+            &["--system".to_string()]
+        ));
     }
 
     #[test]
@@ -3101,7 +3194,7 @@ mod tests {
             "SYSTEMCTL_FORCE_BUS=0".to_string(),
             "SYSTEMD_OFFLINE=1".to_string(),
         ];
-        let table = build_env_table(&unit_env, &[], &[], &[]);
+        let table = build_env_table(&unit_env, &[], &[], &[], true);
         assert_eq!(
             table.get("SYSTEMCTL_FORCE_BUS").map(String::as_str),
             Some("1")
@@ -3110,10 +3203,24 @@ mod tests {
     }
 
     #[test]
+    fn user_manager_does_not_force_system_bus_environment() {
+        let unit_env = vec![
+            "SYSTEMCTL_FORCE_BUS=0".to_string(),
+            "SYSTEMD_OFFLINE=1".to_string(),
+        ];
+        let table = build_env_table(&unit_env, &[], &[], &[], false);
+        assert_eq!(
+            table.get("SYSTEMCTL_FORCE_BUS").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(table.get("SYSTEMD_OFFLINE").map(String::as_str), Some("1"));
+    }
+
+    #[test]
     fn pam_env_override_unit_environment_in_table() {
         let unit_env = vec!["XDG_RUNTIME_DIR=/tmp/unit".to_string()];
         let pam_env = vec![("XDG_RUNTIME_DIR".to_string(), "/run/user/1000".to_string())];
-        let table = build_env_table(&unit_env, &pam_env, &[], &[]);
+        let table = build_env_table(&unit_env, &pam_env, &[], &[], true);
         assert_eq!(
             table.get("XDG_RUNTIME_DIR").map(String::as_str),
             Some("/run/user/1000")
@@ -3127,7 +3234,7 @@ mod tests {
         // STATE_DIRECTORY= must not mask the real one.
         let directory_env = [("STATE_DIRECTORY".to_string(), "/var/lib/foo".to_string())];
         let unit_env = vec!["STATE_DIRECTORY=/opt/lie".to_string()];
-        let table = build_env_table(&unit_env, &[], &[], &directory_env);
+        let table = build_env_table(&unit_env, &[], &[], &directory_env, true);
         assert_eq!(
             table.get("STATE_DIRECTORY").map(String::as_str),
             Some("/var/lib/foo")
@@ -3140,7 +3247,7 @@ mod tests {
             ("SYSTEMCTL_FORCE_BUS".to_string(), "0".to_string()),
             ("SYSTEMD_OFFLINE".to_string(), "1".to_string()),
         ];
-        let table = build_env_table(&[], &pam_env, &[], &[]);
+        let table = build_env_table(&[], &pam_env, &[], &[], true);
         assert_eq!(
             table.get("SYSTEMCTL_FORCE_BUS").map(String::as_str),
             Some("1")
@@ -3154,7 +3261,7 @@ mod tests {
         // still exist, sourced from root's passwd record.  An empty $HOME is
         // what made dde-dconfig-daemon resolve its cache file as
         // //.cache/deepin/dde-dconfig-daemon/dde-dconfig-daemon.log.
-        let table = build_env_table(&[], &[], &identity_env(None), &[]);
+        let table = build_env_table(&[], &[], &identity_env(None), &[], true);
         assert_eq!(table.get("USER").map(String::as_str), Some("root"));
         assert_eq!(table.get("LOGNAME").map(String::as_str), Some("root"));
         assert_eq!(table.get("HOME").map(String::as_str), Some("/root"));
@@ -3171,7 +3278,7 @@ mod tests {
             shell: Some("/usr/bin/zsh".to_string()),
         };
         let identity = identity_env(Some(&creds));
-        let table = build_env_table(&[], &[], &identity, &[]);
+        let table = build_env_table(&[], &[], &identity, &[], true);
         assert_eq!(table.get("USER").map(String::as_str), Some("chenpi11"));
         assert_eq!(table.get("LOGNAME").map(String::as_str), Some("chenpi11"));
         assert_eq!(
@@ -3192,7 +3299,7 @@ mod tests {
         };
         let identity = identity_env(Some(&creds));
         let unit_env = vec!["HOME=/opt/unit-home".to_string()];
-        let table = build_env_table(&unit_env, &[], &identity, &[]);
+        let table = build_env_table(&unit_env, &[], &identity, &[], true);
         assert_eq!(
             table.get("HOME").map(String::as_str),
             Some("/opt/unit-home")
@@ -3350,9 +3457,14 @@ mod tests {
             ..Default::default()
         };
 
-        run_exec_start_pre(crate::state::new_registry(), "pre-test.service", &cfg)
-            .await
-            .expect("both pre commands must run");
+        run_exec_start_pre(
+            crate::state::new_registry(),
+            "pre-test.service",
+            &cfg,
+            false,
+        )
+        .await
+        .expect("both pre commands must run");
 
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "one\n");
         assert_eq!(std::fs::read_to_string(&second).unwrap(), "two\n");
@@ -3371,9 +3483,14 @@ mod tests {
             config_json: pre.to_config_json(),
             ..Default::default()
         };
-        let err = run_exec_start_pre(crate::state::new_registry(), "pre-fail.service", &cfg)
-            .await
-            .expect_err("a failing ExecStartPre must abort the start");
+        let err = run_exec_start_pre(
+            crate::state::new_registry(),
+            "pre-fail.service",
+            &cfg,
+            false,
+        )
+        .await
+        .expect_err("a failing ExecStartPre must abort the start");
         assert!(
             err.to_string()
                 .contains("ExecStartPre command for pre-fail.service exited with code Some(1)"),
@@ -3386,9 +3503,14 @@ mod tests {
             config_json: pre.to_config_json(),
             ..Default::default()
         };
-        run_exec_start_pre(crate::state::new_registry(), "pre-fail.service", &cfg)
-            .await
-            .expect("the '-' prefix must ignore the failure");
+        run_exec_start_pre(
+            crate::state::new_registry(),
+            "pre-fail.service",
+            &cfg,
+            false,
+        )
+        .await
+        .expect("the '-' prefix must ignore the failure");
     }
 
     #[test]

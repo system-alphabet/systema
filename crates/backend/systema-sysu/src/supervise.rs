@@ -381,6 +381,9 @@ fn spawn_process(
         cmd.arg("--bus-address")
             .arg(crate::envs::session_bus_address());
     }
+    if rp.spec.name == "syss" {
+        cmd.arg("--manager-scope").arg("user");
+    }
 
     // Workers log like the launcher does — stderr plus their own file,
     // which they open themselves.  Point it at the same directory as ours

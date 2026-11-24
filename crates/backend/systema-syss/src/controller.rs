@@ -1,7 +1,9 @@
 use crate::config::ServiceConfig;
 use crate::dbus::DbusWaiter;
 use crate::notify::NotifyManager;
-use crate::process::{run_exec_reload, start_service, start_timeout_secs, stop_service};
+use crate::process::{
+    run_exec_reload, start_service, start_timeout_secs, stop_service, ManagerScope,
+};
 use crate::state::{ServiceRegistry, ServiceState};
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
@@ -32,6 +34,7 @@ pub struct ServiceController {
     fd_request_lock: Arc<Mutex<()>>,
     notify: Option<NotifyManager>,
     dbus: DbusWaiter,
+    manager_scope: ManagerScope,
 }
 
 impl ServiceController {
@@ -43,6 +46,7 @@ impl ServiceController {
         fd_request_lock: Arc<Mutex<()>>,
         notify: Option<NotifyManager>,
         dbus: DbusWaiter,
+        manager_scope: ManagerScope,
     ) -> Self {
         ServiceController {
             registry,
@@ -52,6 +56,7 @@ impl ServiceController {
             fd_request_lock,
             notify,
             dbus,
+            manager_scope,
         }
     }
 
@@ -780,6 +785,7 @@ impl UnitController for ServiceController {
             inv_id,
             listen_fds,
             listen_fd_names,
+            self.manager_scope,
         )
         .await?;
         {
@@ -899,6 +905,7 @@ impl UnitController for ServiceController {
             inv_id,
             listen_fds,
             listen_fd_names,
+            self.manager_scope,
         )
         .await?;
         {
@@ -1034,6 +1041,7 @@ mod tests {
             Arc::new(Mutex::new(())),
             None,
             DbusWaiter::default(),
+            ManagerScope::System,
         )
     }
 

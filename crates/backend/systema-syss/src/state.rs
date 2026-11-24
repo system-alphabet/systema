@@ -55,6 +55,9 @@ pub struct ServiceInstance {
     /// the parsed `-` prefix on every activation, so a restart cannot
     /// inherit a stale verdict.
     pub ignore_failure: bool,
+    /// Whether this activation's control processes receive the system-manager
+    /// compatibility variables (`SYSTEMCTL_FORCE_BUS`, `SYSTEMD_OFFLINE`).
+    pub force_system_bus: bool,
     /// PIDs of `ExecStartPre=`/`ExecStartPost=` helper processes the worker
     /// is currently waiting for.  They are not the unit's main process, but
     /// the orphan reaper must leave their exit status to the waiter (it
@@ -81,6 +84,7 @@ impl ServiceInstance {
             service_config: None,
             remain_after_exit: false,
             ignore_failure: false,
+            force_system_bus: false,
             transient_pids: HashSet::new(),
             invocation_id: None,
             cgroup_path: None,

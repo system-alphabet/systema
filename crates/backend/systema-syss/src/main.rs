@@ -48,6 +48,9 @@ struct Args {
     #[arg(long, help = "D-Bus address to use (default: the system bus)")]
     bus_address: Option<String>,
 
+    #[arg(long, value_enum, default_value = "system")]
+    manager_scope: crate::process::ManagerScope,
+
     #[arg(long, short = 'v', help = "Print version information and exit")]
     version: bool,
 
@@ -87,6 +90,11 @@ async fn main() -> Result<()> {
             .mut_arg("bus_address", |a| {
                 a.help(sysa::l10n::t_(
                     "D-Bus address to use (default: the system bus).",
+                ))
+            })
+            .mut_arg("manager_scope", |a| {
+                a.help(sysa::l10n::t_(
+                    "Manager domain owned by this service worker.",
                 ))
             })
             .mut_arg("version", |a| {
@@ -141,7 +149,7 @@ async fn main() -> Result<()> {
         // then sends `worker.exit`, waits for System A to close the
         // connection, and only then returns — racing a signal branch here
         // would drop the socket before the goodbye is exchanged.
-        result = ipc::run(&shared, bus_address) => result?,
+        result = ipc::run(&shared, bus_address, args.manager_scope) => result?,
         // Orphan reaper: while the worker runs, collect every child no unit
         // is waiting for (adopted orphans under subreaper mode, plus direct
         // children nobody reaps anymore).  It overlaps the shutdown hook —
