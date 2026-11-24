@@ -1015,6 +1015,8 @@ pub struct SocketSection {
     pub max_connections: u32,
     /// Listen backlog (`Backlog=`).
     pub backlog: u32,
+    /// Receive buffer size for listening sockets (`ReceiveBuffer=`).
+    pub receive_buffer: String,
     /// IPv6-only binding: `default`, `both`, or `ipv6-only` (`BindIPv6Only=`).
     pub bind_ipv6_only: String,
     /// Bind to a non-local address (`FreeBind=`).

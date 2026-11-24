@@ -114,6 +114,91 @@ fn apply_pass_options(fd: RawFd, config: &SocketConfig, unit_name: &str) {
     }
 }
 
+fn apply_receive_buffer(fd: RawFd, config: &SocketConfig, unit_name: &str) -> Result<()> {
+    if config.receive_buffer.is_empty() {
+        return Ok(());
+    }
+    let value = parse_socket_buffer_size(&config.receive_buffer).with_context(|| {
+        sysa::l10n::fmt(
+            sysa::l10n::t_("Invalid ReceiveBuffer= value '{value}' for {unit_name}."),
+            &[("value", &config.receive_buffer), ("unit_name", unit_name)],
+        )
+    })?;
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let forced = unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUFFORCE,
+                (&value as *const libc::c_int).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        if forced == 0 {
+            return Ok(());
+        }
+        let force_error = std::io::Error::last_os_error();
+        if set_receive_buffer_unprivileged(fd, value) == 0 {
+            warn!(
+                "{}: cannot force ReceiveBuffer={} ({}); used SO_RCVBUF",
+                unit_name, config.receive_buffer, force_error
+            );
+            return Ok(());
+        }
+        return Err(std::io::Error::last_os_error().into());
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        if set_receive_buffer_unprivileged(fd, value) < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(())
+    }
+}
+
+fn set_receive_buffer_unprivileged(fd: RawFd, value: libc::c_int) -> libc::c_int {
+    unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            (&value as *const libc::c_int).cast(),
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    }
+}
+
+fn parse_socket_buffer_size(value: &str) -> Option<libc::c_int> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let (number, multiplier) = match value
+        .as_bytes()
+        .last()
+        .copied()
+        .map(|suffix| suffix.to_ascii_uppercase() as char)
+    {
+        Some('K') => (&value[..value.len() - 1], 1024u64),
+        Some('M') => (&value[..value.len() - 1], 1024u64.pow(2)),
+        Some('G') => (&value[..value.len() - 1], 1024u64.pow(3)),
+        Some('T') => (&value[..value.len() - 1], 1024u64.pow(4)),
+        _ => (value, 1u64),
+    };
+    let amount = number.trim().parse::<f64>().ok()?;
+    if !amount.is_finite() || amount < 0.0 {
+        return None;
+    }
+    let bytes = (amount * multiplier as f64).round();
+    if bytes > libc::c_int::MAX as f64 {
+        return None;
+    }
+    Some(bytes as libc::c_int)
+}
+
 /// Start a socket unit: create, bind, and listen on all configured addresses.
 pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketConfig) -> Result<()> {
     let mut guard = manager.lock();
@@ -211,6 +296,9 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
     // Enable the ancillary-data options before any listener can be handed to
     // a service (systemd's `socket_apply()` runs at the same point).
     for listener in &listeners {
+        if !matches!(listener, BoundSocket::Fifo(_)) {
+            apply_receive_buffer(listener_raw_fd(listener), config, unit_name)?;
+        }
         apply_pass_options(listener_raw_fd(listener), config, unit_name);
     }
     apply_socket_xattrs(&listeners, &bound_paths, config, unit_name);
@@ -1391,6 +1479,19 @@ mod tests {
         assert!(bind_netlink("unknown 1").is_err());
         assert!(bind_netlink("kobject-uevent invalid").is_err());
         assert!(bind_netlink("kobject-uevent 1 extra").is_err());
+    }
+
+    #[test]
+    fn receive_buffer_sizes_are_parsed() {
+        assert_eq!(
+            parse_socket_buffer_size("128M"),
+            Some((128 * 1024 * 1024) as libc::c_int)
+        );
+        assert_eq!(
+            parse_socket_buffer_size("1.5G"),
+            Some((3 * 512 * 1024 * 1024) as libc::c_int)
+        );
+        assert_eq!(parse_socket_buffer_size("invalid"), None);
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]

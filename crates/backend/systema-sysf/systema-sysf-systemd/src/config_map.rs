@@ -163,6 +163,7 @@ fn put_socket(map: &mut ConfigMap, section: &SocketSection) {
     put_str(map, "DirectoryMode", &section.directory_mode);
     put_u32(map, "MaxConnections", section.max_connections);
     put_u32(map, "Backlog", section.backlog);
+    put_str(map, "ReceiveBuffer", &section.receive_buffer);
     put_str(map, "BindIPv6Only", &section.bind_ipv6_only);
     put_bool(map, "FreeBind", section.free_bind);
     put_bool(map, "Transparent", section.transparent);
@@ -451,6 +452,7 @@ fn apply_socket(section: &mut SocketSection, map: &ConfigMap) {
     apply_str(map, "DirectoryMode", &mut section.directory_mode);
     apply_u32(map, "MaxConnections", &mut section.max_connections);
     apply_u32(map, "Backlog", &mut section.backlog);
+    apply_str(map, "ReceiveBuffer", &mut section.receive_buffer);
     apply_str(map, "BindIPv6Only", &mut section.bind_ipv6_only);
     apply_bool(map, "FreeBind", &mut section.free_bind);
     apply_bool(map, "Transparent", &mut section.transparent);

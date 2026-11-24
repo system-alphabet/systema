@@ -18,6 +18,7 @@ pub struct SocketConfig {
     pub listen: Vec<SocketAddress>,
     pub accept: bool,
     pub backlog: u32,
+    pub receive_buffer: String,
     pub socket_mode: String,
     pub service: String,
     pub directory_mode: String,
@@ -83,6 +84,7 @@ impl SocketConfig {
             listen,
             accept: get_bool(map, "Accept"),
             backlog: get_u32_or(map, "Backlog", 0),
+            receive_buffer: get_string(map, "ReceiveBuffer").unwrap_or_default(),
             socket_mode: get_string(map, "SocketMode").unwrap_or_default(),
             service: get_string(map, "Service").unwrap_or_default(),
             directory_mode: get_string(map, "DirectoryMode").unwrap_or_default(),
@@ -111,5 +113,17 @@ mod tests {
         assert!(config.pass_credentials);
         assert!(config.pass_security);
         assert_eq!(config.listen[0].netlink, "kobject-uevent 1");
+    }
+
+    #[test]
+    fn parses_receive_buffer() {
+        let cfg = UnitConfig {
+            unit_name: "systemd-udevd-kernel.socket".to_string(),
+            config_json: br#"{"ListenNetlink":["kobject-uevent 1"],"ReceiveBuffer":"128M"}"#
+                .to_vec(),
+            ..Default::default()
+        };
+        let config = SocketConfig::from_unit_config(&cfg).unwrap();
+        assert_eq!(config.receive_buffer, "128M");
     }
 }

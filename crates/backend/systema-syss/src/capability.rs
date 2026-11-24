@@ -91,28 +91,20 @@ impl CapabilityPlan {
         };
 
         if let Some(bounds) = &svc.capability_bounding_set {
-            let mut mask = 0u64;
-            for raw in bounds {
-                match parse_capability(raw) {
-                    Some(cap) => mask |= 1u64 << cap,
-                    None => warn!(
-                        "{}: unknown capability '{}' in CapabilityBoundingSet=; ignoring it",
-                        unit_name, raw
-                    ),
-                }
-            }
-            plan.bounding = Some(mask);
+            plan.bounding = Some(parse_capability_set(
+                bounds,
+                plan.last_cap,
+                unit_name,
+                "CapabilityBoundingSet",
+            ));
         }
 
-        for raw in &svc.ambient_capabilities {
-            match parse_capability(raw) {
-                Some(cap) => plan.ambient |= 1u64 << cap,
-                None => warn!(
-                    "{}: unknown capability '{}' in AmbientCapabilities=; ignoring it",
-                    unit_name, raw
-                ),
-            }
-        }
+        plan.ambient = parse_capability_set(
+            &svc.ambient_capabilities,
+            plan.last_cap,
+            unit_name,
+            "AmbientCapabilities",
+        );
 
         // Ambient capabilities are implicitly added to the bounding set
         // (systemd.exec(5)): an explicit CapabilityBoundingSet= must not
@@ -301,6 +293,42 @@ fn parse_capability(raw: &str) -> Option<u32> {
         .map(|index| index as u32)
 }
 
+fn parse_capability_set(values: &[String], last_cap: u32, unit_name: &str, directive: &str) -> u64 {
+    let inverted = values
+        .first()
+        .is_some_and(|value| value == "~" || value.starts_with('~'));
+    let mut mask = if inverted {
+        known_capability_mask(last_cap)
+    } else {
+        0
+    };
+
+    for raw in values {
+        let raw = raw.strip_prefix('~').unwrap_or(raw);
+        if raw.is_empty() {
+            continue;
+        }
+        match parse_capability(raw) {
+            Some(cap) if inverted => mask &= !(1u64 << cap),
+            Some(cap) => mask |= 1u64 << cap,
+            None => warn!(
+                "{}: unknown capability '{}' in {}=; ignoring it",
+                unit_name, raw, directive
+            ),
+        }
+    }
+    mask
+}
+
+fn known_capability_mask(last_cap: u32) -> u64 {
+    let last = last_cap.min(CAP_NAMES.len().saturating_sub(1) as u32);
+    if last >= 63 {
+        u64::MAX
+    } else {
+        (1u64 << (last + 1)) - 1
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn cap_last_cap() -> u32 {
     std::fs::read_to_string("/proc/sys/kernel/cap_last_cap")
@@ -357,6 +385,29 @@ mod tests {
     fn explicit_empty_bounding_set_is_some_zero() {
         let plan = CapabilityPlan::from_service(&service(&[], Some(&[]), false), "test.service");
         assert_eq!(plan.bounding, Some(0));
+    }
+
+    #[test]
+    fn inverted_bounding_set_keeps_all_but_listed_capabilities() {
+        let plan = CapabilityPlan::from_service(
+            &service(&[], Some(&["~CAP_SYS_TIME", "CAP_WAKE_ALARM"]), false),
+            "udevd.service",
+        );
+        let bounding = plan.bounding.unwrap();
+        assert_eq!(bounding & (1u64 << 25), 0);
+        assert_eq!(bounding & (1u64 << 35), 0);
+        assert_ne!(bounding & (1u64 << 0), 0);
+        assert_ne!(bounding & (1u64 << 12), 0);
+    }
+
+    #[test]
+    fn normalized_inverted_ambient_set_is_supported() {
+        let plan = CapabilityPlan::from_service(
+            &service(&["~", "CAP_SYS_TIME"], None, false),
+            "test.service",
+        );
+        assert_eq!(plan.ambient & (1u64 << 25), 0);
+        assert_ne!(plan.ambient & (1u64 << 10), 0);
     }
 
     #[test]

@@ -360,30 +360,22 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
                     svc.standard_error = v;
                 }
 
-                // Capability lists use systemd's list semantics: repeated
-                // assignments add to the accumulated set, and an empty value
-                // resets it.  `CapabilityBoundingSet=` must distinguish
-                // "absent" (keep the inherited bounding set) from an explicit
-                // empty value (drop every capability).
-                for val in collect_key_lines(&processed, "service", "ambientcapabilities") {
-                    if val.is_empty() {
-                        svc.ambient_capabilities.clear();
-                    } else {
-                        svc.ambient_capabilities
-                            .extend(split_vec(&expand_specifiers(&val, &unit.name)));
-                    }
+                let ambient = collect_key_lines(&preprocessed, "service", "ambientcapabilities");
+                if !ambient.is_empty() {
+                    svc.ambient_capabilities = fold_capability_assignments(
+                        Some(&svc.ambient_capabilities),
+                        &ambient,
+                        &unit.name,
+                    )
+                    .unwrap_or_default();
                 }
-                let bounds = collect_key_lines(&processed, "service", "capabilityboundingset");
+                let bounds = collect_key_lines(&preprocessed, "service", "capabilityboundingset");
                 if !bounds.is_empty() {
-                    let mut set = svc.capability_bounding_set.clone().unwrap_or_default();
-                    for val in bounds {
-                        if val.is_empty() {
-                            set.clear();
-                        } else {
-                            set.extend(split_vec(&expand_specifiers(&val, &unit.name)));
-                        }
-                    }
-                    svc.capability_bounding_set = Some(set);
+                    svc.capability_bounding_set = fold_capability_assignments(
+                        svc.capability_bounding_set.as_deref(),
+                        &bounds,
+                        &unit.name,
+                    );
                 }
                 if config.get("service", "nonewprivileges").is_some() {
                     svc.no_new_privileges = get_bool(&config, "service", "nonewprivileges", false);
@@ -445,6 +437,7 @@ fn apply_dropin_content(unit: &mut UnitFile, content: &str) -> Result<()> {
                 copy_socket!("directorymode", directory_mode);
                 copy_socket!("maxconnections", max_connections);
                 copy_socket!("backlog", backlog);
+                copy_socket!("receivebuffer", receive_buffer);
                 copy_socket!("bindipv6only", bind_ipv6_only);
                 copy_socket!("freebind", free_bind);
                 copy_socket!("transparent", transparent);
@@ -543,6 +536,139 @@ fn collect_key_lines(content: &str, section: &str, key: &str) -> Vec<String> {
         }
     }
     results
+}
+
+#[derive(Debug, Clone, Default)]
+enum CapabilitySet {
+    #[default]
+    Unset,
+    Included(Vec<String>),
+    Excluded(Vec<String>),
+}
+
+impl CapabilitySet {
+    fn from_normalized(values: &[String]) -> Self {
+        let Some(first) = values.first() else {
+            return Self::Included(Vec::new());
+        };
+        if first == "~" || first.starts_with('~') {
+            Self::Excluded(
+                values
+                    .iter()
+                    .map(|value| value.strip_prefix('~').unwrap_or(value).to_string())
+                    .filter(|value| !value.is_empty())
+                    .collect(),
+            )
+        } else {
+            Self::Included(values.to_vec())
+        }
+    }
+
+    fn apply(&mut self, assignment: &str, unit_name: &str) {
+        let expanded = expand_specifiers(assignment, unit_name);
+        if expanded.is_empty() {
+            *self = Self::Included(Vec::new());
+            return;
+        }
+
+        let mut values = split_vec(&expanded);
+        let inverted = values
+            .first()
+            .is_some_and(|value| value == "~" || value.starts_with('~'));
+        if inverted {
+            if let Some(first) = values.first_mut() {
+                let stripped = first
+                    .strip_prefix('~')
+                    .unwrap_or(first.as_str())
+                    .to_string();
+                *first = stripped;
+            }
+            values.retain(|value| !value.is_empty());
+        }
+
+        if values.is_empty() && inverted {
+            *self = Self::Excluded(Vec::new());
+            return;
+        }
+
+        match (std::mem::take(self), inverted) {
+            (Self::Unset, false) => *self = Self::Included(values),
+            (Self::Unset, true) => *self = Self::Excluded(values),
+            (Self::Included(mut current), false) => {
+                extend_unique_capabilities(&mut current, values);
+                *self = Self::Included(current);
+            }
+            (Self::Excluded(mut current), false) => {
+                remove_capabilities(&mut current, &values);
+                *self = Self::Excluded(current);
+            }
+            (Self::Included(mut current), true) => {
+                remove_capabilities(&mut current, &values);
+                *self = Self::Included(current);
+            }
+            (Self::Excluded(mut current), true) => {
+                extend_unique_capabilities(&mut current, values);
+                *self = Self::Excluded(current);
+            }
+        }
+    }
+
+    fn into_normalized(self) -> Option<Vec<String>> {
+        match self {
+            Self::Unset => None,
+            Self::Included(values) => Some(values),
+            Self::Excluded(mut values) => {
+                values.insert(0, "~".to_string());
+                Some(values)
+            }
+        }
+    }
+}
+
+fn capability_key(value: &str) -> String {
+    value
+        .trim()
+        .strip_prefix("CAP_")
+        .or_else(|| value.trim().strip_prefix("cap_"))
+        .unwrap_or(value.trim())
+        .to_ascii_uppercase()
+}
+
+fn extend_unique_capabilities(destination: &mut Vec<String>, additions: Vec<String>) {
+    for addition in additions {
+        let key = capability_key(&addition);
+        if !destination
+            .iter()
+            .any(|current| capability_key(current) == key)
+        {
+            destination.push(addition);
+        }
+    }
+}
+
+fn remove_capabilities(destination: &mut Vec<String>, removed: &[String]) {
+    destination.retain(|current| {
+        let key = capability_key(current);
+        !removed
+            .iter()
+            .any(|candidate| capability_key(candidate) == key)
+    });
+}
+
+fn fold_capability_assignments(
+    current: Option<&[String]>,
+    assignments: &[String],
+    unit_name: &str,
+) -> Option<Vec<String>> {
+    if assignments.is_empty() {
+        return current.map(ToOwned::to_owned);
+    }
+
+    let mut set = current.map_or_else(CapabilitySet::default, CapabilitySet::from_normalized);
+    for assignment in assignments {
+        set.apply(assignment, unit_name);
+    }
+    set.into_normalized()
 }
 
 /// Merge repeated list-valued keys (e.g. `Wants=`) into a single assignment.
@@ -667,6 +793,15 @@ fn parse_unit_content(name: &str, content: &str) -> Result<UnitFile> {
                     &[("name", name)],
                 )
             })?;
+            let ambient = collect_key_lines(&preprocessed, "service", "ambientcapabilities");
+            if !ambient.is_empty() {
+                svc.ambient_capabilities =
+                    fold_capability_assignments(None, &ambient, name).unwrap_or_default();
+            }
+            let bounds = collect_key_lines(&preprocessed, "service", "capabilityboundingset");
+            if !bounds.is_empty() {
+                svc.capability_bounding_set = fold_capability_assignments(None, &bounds, name);
+            }
             // systemd service_verify(): a Type=dbus service without BusName=
             // is refused at load time, before anything is spawned.
             if svc.service_type == ServiceType::Dbus && svc.bus_name.is_empty() {
@@ -1623,6 +1758,7 @@ fn parse_socket_section(config: &Ini, sock: &mut SocketSection, name: &str) -> R
     sock.directory_mode = get_str(config, "socket", "directorymode");
     sock.max_connections = get_u32(config, "socket", "maxconnections", 64);
     sock.backlog = get_u32(config, "socket", "backlog", 128);
+    sock.receive_buffer = get_str(config, "socket", "receivebuffer");
     sock.bind_ipv6_only = get_str(config, "socket", "bindipv6only");
     sock.free_bind = get_bool(config, "socket", "freebind", false);
     sock.transparent = get_bool(config, "socket", "transparent", false);
@@ -2353,12 +2489,13 @@ WantedBy=sockets.target
 
     #[test]
     fn test_parse_socket_service_directive() {
-        let content = "[Socket]\nListenNetlink=kobject-uevent\nService=my-udevd.service\nFileDescriptorName=varlink\n";
+        let content = "[Socket]\nListenNetlink=kobject-uevent\nService=my-udevd.service\nFileDescriptorName=varlink\nReceiveBuffer=128M\n";
         let unit = parse_unit("udev.socket", content).unwrap();
         let sock = unit.socket.unwrap();
         assert_eq!(sock.listen_netlink, vec!["kobject-uevent"]);
         assert_eq!(sock.service, "my-udevd.service");
         assert_eq!(sock.file_descriptor_name, "varlink");
+        assert_eq!(sock.receive_buffer, "128M");
 
         // Absent directive → empty string (caller derives from unit name).
         let plain = parse_unit("plain.socket", "[Socket]\nListenStream=99\n").unwrap();
@@ -3349,6 +3486,50 @@ AllowedCPUs=0-3
         assert_eq!(
             unit.service.unwrap().capability_bounding_set,
             Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn inverted_capability_sets_are_preserved() {
+        let unit = parse_unit(
+            "caps.service",
+            "[Service]\nExecStart=/bin/true\nAmbientCapabilities=~CAP_SYS_TIME CAP_WAKE_ALARM\nCapabilityBoundingSet=~CAP_SYS_TIME CAP_WAKE_ALARM\n",
+        )
+        .unwrap();
+        let svc = unit.service.unwrap();
+        let expected = vec![
+            "~".to_string(),
+            "CAP_SYS_TIME".to_string(),
+            "CAP_WAKE_ALARM".to_string(),
+        ];
+        assert_eq!(svc.ambient_capabilities, expected.clone());
+        assert_eq!(svc.capability_bounding_set, Some(expected));
+    }
+
+    #[test]
+    fn repeated_capability_bounding_sets_use_systemd_set_algebra() {
+        let unit = parse_unit(
+            "caps.service",
+            "[Service]\nExecStart=/bin/true\nCapabilityBoundingSet=CAP_A CAP_B\nCapabilityBoundingSet=~CAP_B CAP_C\n",
+        )
+        .unwrap();
+        assert_eq!(
+            unit.service.unwrap().capability_bounding_set,
+            Some(vec!["CAP_A".to_string()])
+        );
+    }
+
+    #[test]
+    fn capability_bounding_set_dropin_extends_exclusion_set() {
+        let mut unit = parse_unit(
+            "caps.service",
+            "[Service]\nExecStart=/bin/true\nCapabilityBoundingSet=~CAP_SYS_TIME CAP_WAKE_ALARM\n",
+        )
+        .unwrap();
+        apply_dropin_content(&mut unit, "[Service]\nCapabilityBoundingSet=CAP_SYS_TIME\n").unwrap();
+        assert_eq!(
+            unit.service.unwrap().capability_bounding_set,
+            Some(vec!["~".to_string(), "CAP_WAKE_ALARM".to_string()])
         );
     }
 }
