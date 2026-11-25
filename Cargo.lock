@@ -1458,6 +1458,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "prost",
+ "serde_json",
  "sysa",
  "systema-sysw-common",
  "tokio",

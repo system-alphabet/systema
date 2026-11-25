@@ -10,6 +10,8 @@ mod bridge;
 mod dbus;
 mod file_state;
 mod install;
+#[cfg(unix)]
+mod managed_oom;
 mod mirror;
 mod service_install;
 
@@ -127,6 +129,16 @@ async fn main() -> Result<()> {
     let systemd_system_dir = format!("{runstatedir}/systemd/system");
     if let Err(e) = std::fs::create_dir_all(&systemd_system_dir) {
         tracing::warn!("Failed to create {systemd_system_dir}: {e}");
+    }
+
+    #[cfg(unix)]
+    if bus_address.is_none() {
+        let runstatedir = runstatedir.to_string();
+        tokio::spawn(async move {
+            if let Err(error) = managed_oom::serve(&runstatedir).await {
+                tracing::warn!("ManagedOOM compatibility endpoint failed: {error:#}");
+            }
+        });
     }
 
     // Provision the systemd first-boot marker the way real systemd's pid1
