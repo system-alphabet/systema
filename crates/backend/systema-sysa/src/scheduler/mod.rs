@@ -1860,21 +1860,22 @@ async fn prepare_batch_root(
     }
 
     // --- Already-active short-circuit (systemd unit_start -> -EALREADY) ---
-    {
+    let already_active = if kind == JobKind::Start {
         let state = allocator.read();
-        if kind == JobKind::Start
-            && state
-                .unit_states
-                .get(unit_name)
-                .map(|c| c.active_state == "active")
-                .unwrap_or(false)
-        {
-            let job_id = next_job_id();
-            let mut state = allocator.write();
-            emit_job_new(&mut state, job_id, unit_name, kind);
-            emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Done);
-            return Ok(BatchRoot::Completed(job_id));
-        }
+        state
+            .unit_states
+            .get(unit_name)
+            .map(|c| c.active_state == "active")
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    if already_active {
+        let job_id = next_job_id();
+        let mut state = allocator.write();
+        emit_job_new(&mut state, job_id, unit_name, kind);
+        emit_job_completed(&mut state, job_id, unit_name, JobResultKind::Done);
+        return Ok(BatchRoot::Completed(job_id));
     }
 
     match kind {
@@ -5953,6 +5954,37 @@ mod tests {
     // =========================================================================
     // Already-active Start short-circuit (systemd unit_start → -EALREADY)
     // =========================================================================
+
+    #[tokio::test]
+    async fn test_enqueue_job_type_batch_start_of_active_unit_completes() {
+        let alloc = alloc_with_state("active");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        alloc.write().job_event_tx = Some(tx);
+
+        let results = enqueue_job_type_batch(
+            alloc.clone(),
+            &["demo.service".to_string()],
+            JobType::Start,
+            false,
+            JobMode::Replace,
+        )
+        .await;
+
+        let [(_, Ok((job_id, JobKind::Start)))] = results.as_slice() else {
+            panic!("expected a successful start job: {results:?}");
+        };
+        assert!(matches!(
+            rx.try_recv().expect("job.new emitted"),
+            JobLifecycle::New(info) if info.job_id == *job_id && info.unit_name == "demo.service"
+        ));
+        assert!(matches!(
+            rx.try_recv().expect("job.completed emitted"),
+            JobLifecycle::Completed(done) if done.job_id == *job_id && done.result == JobResultKind::Done
+        ));
+        let state = alloc.read();
+        assert!(state.jobs.is_empty());
+        assert!(state.task_kinds.is_empty());
+    }
 
     #[tokio::test]
     async fn test_enqueue_job_start_of_active_unit_is_ealready_noop() {
