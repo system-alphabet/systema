@@ -10,7 +10,10 @@ use clap::Parser;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "systema-sysr", about = "System R — System Resource Worker")]
+#[command(
+    name = "systema-sysr.linux",
+    about = "System R — System Resource Worker"
+)]
 struct Args {
     #[arg(long, short = 'D', help = "Enable debug-level logging")]
     debug: bool,
@@ -82,14 +85,14 @@ async fn main() -> anyhow::Result<()> {
     let log_level = if args.debug { "debug" } else { &args.log_level };
     // Self-managed logging: stderr always, plus the file resolved from
     // --log-file / SYSTEMA_LOG_FILE / the built-in default.
-    sysa::logging::init_daemon("systema-sysr", args.log_file.clone(), log_level);
+    sysa::logging::init_daemon("systema-sysr.linux", args.log_file.clone(), log_level);
 
     info!("System R (System Resource Worker) starting up");
 
     // SIGTERM/SIGINT are handled inside the IPC loop: it sends
     // `worker.exit`, waits for System A to close the connection, and only
     // then returns here.
-    systema_sysr::ipc::run().await?;
+    systema_sysr_linux::ipc::run().await?;
 
     Ok(())
 }

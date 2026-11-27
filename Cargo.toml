@@ -21,7 +21,6 @@ members = [
     "crates/backend/systema-sysm/systema-sysm.linux",
     "crates/backend/systema-sysr/systema-sysr-common",
     "crates/backend/systema-sysr/systema-sysr.linux",
-    "crates/backend/systema-sysr/systema-sysr",
     "crates/backend/systema-sysw/systema-sysw-common",
     "crates/backend/systema-sysw/systema-sysw.systemd",
     "crates/splash/systema-sysh-console",

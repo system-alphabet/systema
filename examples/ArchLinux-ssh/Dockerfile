@@ -81,6 +81,6 @@ RUN set -eux; \
       '/opt/systema/systema-sysi &' \
       '/opt/systema/systema-sysh.console &' \
       'exec /usr/bin/bash' > /init; \
-    chmod +x /init
+    chmod +x /init && echo 'echo "export SYSTEMCTL_FORCE_BUS=1" > /s'
 
 ENTRYPOINT ["/init"]

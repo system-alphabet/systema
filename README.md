@@ -65,7 +65,7 @@ Two independent planes, deliberately separated:
 | `systema-sysn` | **System N** (Notify) | owns every `.path`: filesystem condition watches (`PathExists=`, `PathChanged=`, …) |
 | `systema-sysd` | **System D** (Device) | owns every `.device`: discovers real devices in `/dev`, injects them through the staging area |
 | `systema-syse` | **System E** (External) | owns every `.scope`: transient wrappers around externally created processes (`PIDs=`) |
-| `systema-sysr` | **System R** (Resource) | cgroup v2 hierarchy and CPU/memory/I-O/pid quotas for slices and services; registers `user.slice` dynamically |
+| `systema-sysr.linux` | **System R** (Resource) | cgroup v2 hierarchy and CPU/memory/I-O/pid quotas for slices and services; registers `user.slice` dynamically |
 | `systema-sysm.linux` | **System M** (Mount, Linux) | owns `.mount` / `.automount` on Linux (inert stub on other platforms) |
 | `systema-sysm.unix` | **System M** (Mount, Unix) | same, reading the mount table via `getmntinfo(3)` / `/etc/mnttab` / `mount -p` |
 | `systema-sysf` | **System F** (Finder) | generic finder runner: scans the finder paths, runs all finders concurrently, commits the staging area |

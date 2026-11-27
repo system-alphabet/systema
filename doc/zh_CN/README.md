@@ -113,7 +113,7 @@ System A 是核心；新增或替换一种单元类型不需要改调度器。
 | D | **System D**（**D**evice） | `systema-sysd` | 设备单元：扫描 `/dev` 与 sysfs，注入设备单元 |
 | E | **System E**（**E**xternal） | `systema-syse` | 作用域：包装外部创建的进程（`PIDs=`） |
 | M | **System M**（**M**ount） | `systema-sysm.*` | 挂载与自动挂载 |
-| R | **System R**（**R**esource） | `systema-sysr` | cgroup v2 层级与资源限额，动态注册 slice |
+| R | **System R**（**R**esource） | `systema-sysr.linux` | cgroup v2 层级与资源限额，动态注册 slice |
 | T | **System T**（**T**arget） | `systema-syst` | 目标单元：只做激活与状态跟踪 |
 | F | **System F**（**F**inder） | `systema-sysf` + finder 插件 | 解析单元文件并提交统一 IR |
 | W | **System W** (**W**arper) | `systema-sysw.*` | 一套 |

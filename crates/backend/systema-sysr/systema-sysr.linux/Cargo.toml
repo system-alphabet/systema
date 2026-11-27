@@ -1,3 +1,5 @@
+cargo-features = ["different-binary-name"]
+
 [package]
 name = "systema-sysr-linux"
 version.workspace = true
@@ -5,11 +7,28 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "systema-sysr-linux"
+filename = "systema-sysr.linux"
+path = "src/main.rs"
+
 [dependencies]
 sysa = { path = "../../../libsysa" }
 systema-sysr-common = { path = "../systema-sysr-common" }
+systema-sysf = { path = "../../systema-sysf" }
+
+tokio.workspace = true
+anyhow.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+async-trait.workspace = true
+prost.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 libc = "0.2"
 nix = { version = "0.29", features = ["user"] }
+
+[dev-dependencies]
+bytes.workspace = true

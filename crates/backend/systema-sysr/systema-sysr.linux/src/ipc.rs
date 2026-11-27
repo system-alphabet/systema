@@ -60,7 +60,7 @@ pub async fn run() -> Result<()> {
     // gets the chance to `ensure` anything: this is the baseline that
     // `restore` puts back on the way out.  `None` means there is no cgroup
     // filesystem here to begin with, so there is nothing to restore either.
-    let controller = systema_sysr_linux::linux_controller();
+    let controller = crate::linux_controller();
     let baseline = controller.snapshot();
 
     let ipc = WorkerIpc::new(WORKER_ID, WORKER_UNIT_TYPES)

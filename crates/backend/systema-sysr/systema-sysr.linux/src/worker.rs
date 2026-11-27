@@ -108,7 +108,7 @@ impl ResourceWorker {
         sessions: UserSessionMap,
         event_pub: EventPublisher,
     ) -> Self {
-        let controller = systema_sysr_linux::linux_controller();
+        let controller = crate::linux_controller();
         Self::new(controller, registry, sessions, event_pub)
     }
 

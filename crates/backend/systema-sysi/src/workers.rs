@@ -156,8 +156,8 @@ const MODULES: &[ModuleDef] = &[
     ModuleDef {
         name: "sysr",
         key: sysa::init_config::KEY_RESOURCE,
-        linux_binary: "systema-sysr",
-        unix_binary: "systema-sysr",
+        linux_binary: "systema-sysr.linux",
+        unix_binary: "",
         worker_id: Some("system-r-1"),
         kind: ProcessKind::LongRunning,
     },
@@ -462,26 +462,21 @@ mod tests {
         fn binary_of<'a>(set: &'a [WorkerSpec], name: &'a str) -> &'a str {
             resolve_binary_call(set.iter().find(|s| s.name == name).unwrap())
         }
-        // System M / System W exist only on Linux.
+        // System R / System W exist only on Linux.
         assert_eq!(binary_of(&linux, "sysm"), "systema-sysm.linux");
         assert_eq!(binary_of(&linux, "sysw"), "systema-sysw.systemd");
-        // System R carries the plain name on every platform — unlike M and W
-        // it has no per-platform suffix, so this is the name that must exist
-        // as a build artifact.
-        assert_eq!(binary_of(&linux, "sysr"), "systema-sysr");
+        // System R currently has only a Linux flavor.
+        assert_eq!(binary_of(&linux, "sysr"), "systema-sysr.linux");
 
         let other = build_worker_set_for(Platform::Other, &[], &default).unwrap();
         assert_eq!(
             names(&other),
-            vec![
-                "sysa", "sysh", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysr",
-                "sysm"
-            ]
+            vec!["sysa", "sysh", "syss", "syse", "syst", "sysc", "sysk", "sysn", "sysd", "sysm"]
         );
-        // System M falls back to its Unix flavor; System W has no default
-        // off Linux.
+        // System M falls back to its Unix flavor; System R and System W have
+        // no default off Linux.
         assert_eq!(binary_of(&other, "sysm"), "systema-sysm.unix");
-        assert_eq!(binary_of(&other, "sysr"), "systema-sysr");
+        assert!(!names(&other).contains(&"sysr"));
     }
 
     #[test]
@@ -893,12 +888,12 @@ mod tests {
     /// `members` is never built: no artifact, and nothing anywhere complains.
     ///
     /// This happened to System R.  `56c2bc3` ("Delete System P, use System
-    /// Init to manage power") dropped `crates/backend/systema-sysr/systema-sysr`
+    /// Init to manage power") dropped `crates/backend/systema-sysr/systema-sysr.linux`
     /// from `members` on the line adjacent to the System P entry it meant to
     /// delete, while leaving the crate's five source files in the tree.  Every
     /// test stayed green — `platform_selects_binaries` only inspects the spec
     /// table, and the integration tests synthesise their own shims from it —
-    /// so nothing noticed that `target/debug/systema-sysr` had stopped
+    /// so nothing noticed that `target/debug/systema-sysr.linux` had stopped
     /// existing, which a strict boot reports as a missing executable and
     /// aborts on.
     #[test]

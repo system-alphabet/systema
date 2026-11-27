@@ -1346,25 +1346,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "systema-sysr"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "clap",
- "prost",
- "serde_json",
- "sysa",
- "systema-sysf",
- "systema-sysr-common",
- "systema-sysr-linux",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "systema-sysr-common"
 version = "0.1.0"
 dependencies = [
@@ -1376,11 +1357,20 @@ dependencies = [
 name = "systema-sysr-linux"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "clap",
  "libc",
  "nix",
+ "prost",
+ "serde_json",
  "sysa",
+ "systema-sysf",
  "systema-sysr-common",
+ "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

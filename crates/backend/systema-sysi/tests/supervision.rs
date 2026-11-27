@@ -58,7 +58,7 @@ const DEFAULT_WORKERS: &[&str] = &[
     "systema-sysk",
     "systema-sysn",
     "systema-sysd",
-    "systema-sysr",
+    "systema-sysr.linux",
     "systema-sysm.linux",
     "systema-sysw.systemd",
 ];

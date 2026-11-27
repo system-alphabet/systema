@@ -96,7 +96,7 @@
 #Device=systema-sysd
 
 # System R — cgroup v2 resource control.
-#Resource=systema-sysr
+#Resource=systema-sysr.linux
 
 # System M — .mount / .automount units.
 # The built-in default is platform-specific: systema-sysm.linux on Linux,
