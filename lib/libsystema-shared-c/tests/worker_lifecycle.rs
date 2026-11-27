@@ -19,12 +19,12 @@ use systema_shared::proto::{
     IpcVersionRequest, IpcVersionResult, MethodCall, MethodResult, RegisterAck, UnitStateUpdate,
     UnitStateUpdateAck,
 };
-use systema_shared_capi::controller::SysaController;
-use systema_shared_capi::status::SysaStatus;
-use systema_shared_capi::unit_status::{
+use systema_shared_c::controller::SysaController;
+use systema_shared_c::status::SysaStatus;
+use systema_shared_c::unit_status::{
     sysa_unit_status_array_alloc, sysa_unit_status_free, sysa_unit_status_new, SysaUnitStatus,
 };
-use systema_shared_capi::worker::{
+use systema_shared_c::worker::{
     sysa_worker_free, sysa_worker_new, sysa_worker_publish_unit_states, sysa_worker_set_controller,
     sysa_worker_set_on_method_result, sysa_worker_set_socket_path, sysa_worker_start,
     sysa_worker_stop, sysa_worker_wait, SysaWorker,
@@ -163,7 +163,7 @@ fn controller() -> SysaController {
 }
 
 fn socket_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("systema-capi-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("systema-c-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -290,7 +290,7 @@ fn start_requires_a_socket_and_a_controller() {
 
     assert_eq!(sysa_worker_start(worker), SysaStatus::InvalidArgument);
 
-    let path = CString::new("/tmp/systema-capi-missing.sock").unwrap();
+    let path = CString::new("/tmp/systema-c-missing.sock").unwrap();
     assert_eq!(
         sysa_worker_set_socket_path(worker, path.as_ptr()),
         SysaStatus::Ok

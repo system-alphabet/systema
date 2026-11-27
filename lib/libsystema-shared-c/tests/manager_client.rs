@@ -17,7 +17,7 @@ use systema_shared::proto::{
     JobEvent, ListJobsResult, ListSnapshotsResult, ManagerHelloRequest, ManagerHelloResult,
     SimpleManagerResult, UnitSnapshot,
 };
-use systema_shared_capi::manager::{
+use systema_shared_c::manager::{
     sysa_control_client_call, sysa_control_client_enqueue, sysa_control_client_flavor,
     sysa_control_client_free, sysa_control_client_list_snapshots, sysa_control_client_new,
     sysa_control_client_next_event, sysa_control_client_reload,
@@ -25,11 +25,11 @@ use systema_shared_capi::manager::{
     sysa_control_client_stop, sysa_control_client_try_restart, SysaControlClient,
     SysaControlEventKind,
 };
-use systema_shared_capi::status::SysaStatus;
-use systema_shared_capi::sysa_bytes_free;
+use systema_shared_c::status::SysaStatus;
+use systema_shared_c::sysa_bytes_free;
 
 fn socket_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("systema-capi-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("systema-c-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

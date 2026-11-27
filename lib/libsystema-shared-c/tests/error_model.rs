@@ -3,10 +3,10 @@
 use std::ffi::{c_char, CString};
 use std::ptr;
 
-use systema_shared_capi::config_map::sysa_config_map_parse_json;
-use systema_shared_capi::finder::{sysa_finder_free, sysa_finder_new, sysa_finder_register_units};
-use systema_shared_capi::status::{SysaErrorCode, SysaStatus};
-use systema_shared_capi::{
+use systema_shared_c::config_map::sysa_config_map_parse_json;
+use systema_shared_c::finder::{sysa_finder_free, sysa_finder_new, sysa_finder_register_units};
+use systema_shared_c::status::{SysaErrorCode, SysaStatus};
+use systema_shared_c::{
     sysa_bytes_free, sysa_last_error_code, sysa_last_error_status, sysa_string_free,
 };
 
@@ -27,7 +27,7 @@ fn invalid_utf8_is_rejected() {
 
 #[test]
 fn connect_failures_carry_the_ipc_error_code() {
-    let path = CString::new("/nonexistent/systema-capi-test/allocator.sock").unwrap();
+    let path = CString::new("/nonexistent/systema-c-test/allocator.sock").unwrap();
     let finder = sysa_finder_new(path.as_ptr());
     assert!(!finder.is_null());
     let name = CString::new("area").unwrap();

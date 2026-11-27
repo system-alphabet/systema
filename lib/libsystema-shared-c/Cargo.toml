@@ -1,16 +1,16 @@
 [package]
-name = "libsystema-shared-capi"
+name = "libsystema-shared-c"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-# `systema_shared_capi` avoids colliding with the `systema_shared` lib target
+# `systema_shared_c` avoids colliding with the `systema_shared` lib target
 # of `libsystema-shared-rs`, while keeping the Unix artifact names readable:
-# `libsystema_shared_capi.rlib`, `libsystema_shared_capi.so` and
-# `libsystema_shared_capi.a`.
+# `libsystema_shared_c.rlib`, `libsystema_shared_c.so` and
+# `libsystema_shared_c.a`.
 [lib]
-name = "systema_shared_capi"
+name = "systema_shared_c"
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]

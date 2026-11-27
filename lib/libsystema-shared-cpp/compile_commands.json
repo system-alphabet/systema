@@ -1,6 +1,0 @@
-[
-{
-  "directory": "/home/chenpi11/Projects/systema/systema/lib/libsystema-shared-cpp",
-  "arguments": ["/usr/bin/g++", "-c", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-Wall", "-Wextra", "-O3", "-std=c++26", "-Iinclude", "-I/home/chenpi11/Projects/systema/systema/lib/libsystema-shared-cpp/../../lib/libsystema-shared-capi/include", "-Wpedantic", "-Werror", "-DNDEBUG", "-o", "build/.objs/sysa-smoke/linux/x86_64/release/tests/smoke.cpp.o", "tests/smoke.cpp"],
-  "file": "tests/smoke.cpp"
-}]

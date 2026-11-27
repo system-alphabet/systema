@@ -71,7 +71,7 @@ fn client() -> Result<&'static ClientRuntime, String> {
 fn spawn_client() -> Result<ClientRuntime, String> {
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     std::thread::Builder::new()
-        .name("systema-shared-capi".to_string())
+        .name("systema-shared-c".to_string())
         .spawn(move || {
             let runtime = match Builder::new_current_thread().enable_all().build() {
                 Ok(runtime) => runtime,

@@ -5,14 +5,14 @@ use std::ptr;
 
 use systema_shared::controller::UnitStatus as RustUnitStatus;
 use systema_shared::ir::{TemplateInfo, UnitIR, UnitType};
-use systema_shared_capi::config_map::{
+use systema_shared_c::config_map::{
     sysa_config_map_free, sysa_config_map_get_bool, sysa_config_map_get_i32,
     sysa_config_map_get_json, sysa_config_map_get_mode, sysa_config_map_get_string,
     sysa_config_map_get_strings, sysa_config_map_get_u32, sysa_config_map_parse_json,
     sysa_config_map_to_json, SysaConfigMap,
 };
-use systema_shared_capi::status::SysaStatus;
-use systema_shared_capi::unit_ir::{
+use systema_shared_c::status::SysaStatus;
+use systema_shared_c::unit_ir::{
     sysa_unit_ir_aliases, sysa_unit_ir_config, sysa_unit_ir_description, sysa_unit_ir_free,
     sysa_unit_ir_from_json, sysa_unit_ir_id, sysa_unit_ir_is_template,
     sysa_unit_ir_is_template_instance, sysa_unit_ir_owner, sysa_unit_ir_set_owner,
@@ -20,14 +20,14 @@ use systema_shared_capi::unit_ir::{
     sysa_unit_ir_template_of, sysa_unit_ir_template_parameters, sysa_unit_ir_to_json,
     sysa_unit_ir_unit_type, SysaUnitIR,
 };
-use systema_shared_capi::unit_status::{
+use systema_shared_c::unit_status::{
     sysa_unit_status_active_state, sysa_unit_status_decode, sysa_unit_status_encode,
     sysa_unit_status_extension_count, sysa_unit_status_extension_key,
     sysa_unit_status_extension_value, sysa_unit_status_free, sysa_unit_status_invocation_id,
     sysa_unit_status_main_pid, sysa_unit_status_new, sysa_unit_status_set_extension,
     sysa_unit_status_sub_state, sysa_unit_status_unit_name, SysaUnitStatus,
 };
-use systema_shared_capi::{sysa_bytes_free, sysa_string_free, SysaStringList};
+use systema_shared_c::{sysa_bytes_free, sysa_string_free, SysaStringList};
 
 fn take_string(pointer: *mut c_char) -> Option<String> {
     if pointer.is_null() {
@@ -107,10 +107,10 @@ fn config_map_reads_typed_directives() {
         sysa_config_map_get_strings(map, wants.as_ptr(), &mut list),
         SysaStatus::Ok
     );
-    assert_eq!(systema_shared_capi::sysa_string_list_len(list), 2);
-    let first = systema_shared_capi::sysa_string_list_get(list, 0);
+    assert_eq!(systema_shared_c::sysa_string_list_len(list), 2);
+    let first = systema_shared_c::sysa_string_list_get(list, 0);
     assert_eq!(borrow(first), "a");
-    systema_shared_capi::sysa_string_list_free(list);
+    systema_shared_c::sysa_string_list_free(list);
 
     let mut out = ptr::null_mut();
     let mut out_len = 0usize;
@@ -233,8 +233,8 @@ fn unit_ir_round_trips_and_reports_its_fields() {
 
     let mut aliases: *mut SysaStringList = ptr::null_mut();
     assert_eq!(sysa_unit_ir_aliases(handle, &mut aliases), SysaStatus::Ok);
-    assert_eq!(systema_shared_capi::sysa_string_list_len(aliases), 1);
-    systema_shared_capi::sysa_string_list_free(aliases);
+    assert_eq!(systema_shared_c::sysa_string_list_len(aliases), 1);
+    systema_shared_c::sysa_string_list_free(aliases);
 
     assert_eq!(sysa_unit_ir_is_template(handle), 0);
     assert_eq!(sysa_unit_ir_is_template_instance(handle), 0);
@@ -286,8 +286,8 @@ fn unit_ir_reports_template_metadata_and_config() {
         sysa_unit_ir_template_parameters(handle, &mut parameters),
         SysaStatus::Ok
     );
-    assert_eq!(systema_shared_capi::sysa_string_list_len(parameters), 0);
-    systema_shared_capi::sysa_string_list_free(parameters);
+    assert_eq!(systema_shared_c::sysa_string_list_len(parameters), 0);
+    systema_shared_c::sysa_string_list_free(parameters);
 
     let mut map: *mut SysaConfigMap = ptr::null_mut();
     assert_eq!(sysa_unit_ir_config(handle, &mut map), SysaStatus::Ok);
@@ -333,10 +333,10 @@ fn unit_ir_reports_template_instances() {
 
     let mut parameters: *mut SysaStringList = ptr::null_mut();
     sysa_unit_ir_template_parameters(handle, &mut parameters);
-    assert_eq!(systema_shared_capi::sysa_string_list_len(parameters), 1);
-    let first = systema_shared_capi::sysa_string_list_get(parameters, 0);
+    assert_eq!(systema_shared_c::sysa_string_list_len(parameters), 1);
+    let first = systema_shared_c::sysa_string_list_get(parameters, 0);
     assert_eq!(borrow(first), "tty3");
-    systema_shared_capi::sysa_string_list_free(parameters);
+    systema_shared_c::sysa_string_list_free(parameters);
 
     sysa_unit_ir_free(handle);
 }

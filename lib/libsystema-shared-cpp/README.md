@@ -1,6 +1,6 @@
 # libsystema-shared-cpp
 
-Header-only C++26 wrapper around the `libsystema-shared-capi` C ABI.  It covers
+Header-only C++26 wrapper around the `libsystema-shared-c` C ABI.  It covers
 the IPC-facing data model (`ConfigMap`, `UnitIR`, `UnitStatus`), the clients
 (`Finder`, `StagingAdmin`, `UnitStateAdmin`, `ControlClient`) and the worker
 side (`Worker`, `Controller` and its hooks).
@@ -15,8 +15,10 @@ Everything lives in namespace `sysa`; include the umbrella header:
 
 - xmake 3.x and a C++26 compiler (the project is tested with g++ 16).
 - Nightly cargo: the workspace uses `cargo-features = ["different-binary-name"]`.
-- `libsystema-shared-capi` is built by xmake through cargo; no separate step is
-  needed.
+- `libsystema-shared-c` is built by xmake through cargo; no separate step is
+  needed.  The crate is declared as the project-local xmake package
+  `libsystema-shared-c`, so consumers pull it in with `add_packages` like any
+  other dependency.
 
 ## Build and test
 
@@ -26,9 +28,17 @@ xmake build -y sysa-smoke
 xmake run sysa-smoke
 ```
 
-The C API artifacts go to `build/cargo/{debug,release}` so this project never
-uses the repository's top-level `target/` directory.  `xmake` defaults to the
-release profile; the matching cargo profile is selected automatically.
+The C ABI is installed as the xmake package
+`build/.packages/l/libsystema-shared-c/...`, which holds the generated C
+header, the shared library and its rpath; cargo's own target directory is
+`build/cargo/{debug,release}`.  Neither touches the repository's top-level
+`target/`, and `xmake` defaults to the release profile — the matching cargo
+profile is selected automatically.
+
+Packages are only resolved while configuring, so after editing the Rust crates
+run `xmake f --require=y` to rebuild and reinstall the C ABI; a plain
+`xmake build` links the library installed by the last configure.  `rm -rf build`
+drops the cargo target directory and the installed package for a full rebuild.
 
 To use the library from another xmake target in this repository:
 

@@ -1,5 +1,5 @@
 language = "C"
-include_guard = "SYSA_SHARED_CAPI_H"
+include_guard = "SYSA_SHARED_C_H"
 cpp_compat = true
 usize_is_size_t = true
 

@@ -17,26 +17,26 @@ use systema_shared::proto::{
     RegisterUnits, StagingAreaEntry, StagingQuery, StagingQueryResult, UnitRegistrationAck,
     UnitStateEntry, UnitStateEof, UnitStateListRequest,
 };
-use systema_shared_capi::finder::{
+use systema_shared_c::finder::{
     sysa_finder_commit_units, sysa_finder_free, sysa_finder_new, sysa_finder_query_staging,
     sysa_finder_register_units, SysaFinder,
 };
-use systema_shared_capi::staging_admin::{
+use systema_shared_c::staging_admin::{
     sysa_staging_admin_commit, sysa_staging_admin_free, sysa_staging_admin_list,
     sysa_staging_admin_new, sysa_staging_admin_query, sysa_staging_admin_query_all,
     sysa_staging_admin_query_by_name, sysa_staging_admin_query_by_uid, sysa_staging_list_free,
     sysa_staging_list_len, sysa_staging_list_name, sysa_staging_list_uid, SysaStagingAdmin,
     SysaStagingList,
 };
-use systema_shared_capi::status::SysaStatus;
-use systema_shared_capi::sysa_bytes_free;
-use systema_shared_capi::unitstate_admin::{
+use systema_shared_c::status::SysaStatus;
+use systema_shared_c::sysa_bytes_free;
+use systema_shared_c::unitstate_admin::{
     sysa_unitstate_admin_free, sysa_unitstate_admin_list, sysa_unitstate_admin_new,
     SysaUnitStateAdmin,
 };
 
 fn socket_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("systema-capi-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("systema-c-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

@@ -125,7 +125,7 @@ changes do **not** need to be written back into these docs.
   workers stay zbus-free (syss may use D-Bus as a *client* only).
 
 ## C / C++ style
-Applies to the only C/C++ code in the repo: `lib/libsystema-shared-capi` and
+Applies to the only C/C++ code in the repo: `lib/libsystema-shared-c` and
 `lib/libsystema-shared-cpp`.
 
 - **C++ names**: `class`, `enum`, `struct`, `using` aliases, template

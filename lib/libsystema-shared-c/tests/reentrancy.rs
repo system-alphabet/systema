@@ -19,13 +19,13 @@ use systema_shared::proto::{
     IpcVersionRequest, IpcVersionResult, MethodCall, RegisterAck, UnitStateUpdate,
     UnitStateUpdateAck,
 };
-use systema_shared_capi::controller::SysaController;
-use systema_shared_capi::finder::{sysa_finder_free, sysa_finder_new, sysa_finder_register_units};
-use systema_shared_capi::status::SysaStatus;
-use systema_shared_capi::unit_status::{
+use systema_shared_c::controller::SysaController;
+use systema_shared_c::finder::{sysa_finder_free, sysa_finder_new, sysa_finder_register_units};
+use systema_shared_c::status::SysaStatus;
+use systema_shared_c::unit_status::{
     sysa_unit_status_free, sysa_unit_status_new, SysaUnitStatus,
 };
-use systema_shared_capi::worker::{
+use systema_shared_c::worker::{
     sysa_worker_free, sysa_worker_new, sysa_worker_publish_unit_states, sysa_worker_set_controller,
     sysa_worker_set_socket_path, sysa_worker_start, sysa_worker_stop, sysa_worker_wait, SysaWorker,
 };
@@ -60,7 +60,7 @@ unsafe extern "C" fn status_cb(
     sysa_unit_status_free(status);
     PUBLISH_STATUS.store(publish as i32, Ordering::SeqCst);
 
-    let path = CString::new("/tmp/systema-capi-reentrant.sock").unwrap();
+    let path = CString::new("/tmp/systema-c-reentrant.sock").unwrap();
     let finder = sysa_finder_new(path.as_ptr());
     let name = CString::new("area").unwrap();
     let mut bytes = ptr::null_mut();
@@ -112,7 +112,7 @@ fn wait_for_value(slot: &AtomicI32, expected: i32) {
 }
 
 fn socket_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("systema-capi-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("systema-c-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

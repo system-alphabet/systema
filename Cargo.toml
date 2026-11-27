@@ -3,7 +3,7 @@ members = [
     "crates/libsysa",
     "crates/libsystema-sysa",
     "lib/libsystema-shared-rs",
-    "lib/libsystema-shared-capi",
+    "lib/libsystema-shared-c",
     "crates/backend/systema-sysi",
     "crates/backend/systema-sysu",
     "crates/backend/systema-sysf",
