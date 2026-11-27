@@ -1648,6 +1648,27 @@ msgstr  "invalid --bus-address: {err}"
 msgid   "System T — System Target Worker"
 msgstr  "System T — System Target Worker"
 #
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 73
+msgid   "System P — Placeholder Worker"
+msgstr  "System P — Placeholder Worker"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 56
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 124
+msgid   "The --manage value must contain non-empty unit types separated by ':'."
+msgstr  "The --manage value must contain non-empty unit types separated by ':'."
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 75
+msgid   "Required unit types to manage, separated by ':'; leading dots are optional (for example: service:target)."
+msgstr  "Required unit types to manage, separated by ':'; leading dots are optional (for example: service:target)."
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 80
+msgid   "State behavior for start and stop."
+msgstr  "State behavior for start and stop."
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 83
+msgid   "State reported before any start or stop action."
+msgstr  "State reported before any start or stop action."
+#
 # File: ../crates/backend/systema-sysc/src/schedule.rs, line: 184
 # File: ../crates/backend/systema-sysc/src/schedule.rs, line: 190
 #, rust-format

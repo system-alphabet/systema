@@ -1647,6 +1647,27 @@ msgstr  "无效的 --bus-address：{err}"
 msgid   "System T — System Target Worker"
 msgstr  "System T — 系统目标工作进程"
 #
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 73
+msgid   "System P — Placeholder Worker"
+msgstr  "System P — 占位工作进程"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 56
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 124
+msgid   "The --manage value must contain non-empty unit types separated by ':'."
+msgstr  "--manage 必须提供非空的单元类型，并用“:”分隔。"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 75
+msgid   "Required unit types to manage, separated by ':'; leading dots are optional (for example: service:target)."
+msgstr  "要管理的单元类型（必需），以“:”分隔；类型名可带或不带前导点（例如：service:target）。"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 80
+msgid   "State behavior for start and stop."
+msgstr  "start 和 stop 操作的状态策略。"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 83
+msgid   "State reported before any start or stop action."
+msgstr  "尚未执行 start 或 stop 操作时报告的状态。"
+#
 # File: ../crates/backend/systema-sysc/src/schedule.rs, line: 184
 # File: ../crates/backend/systema-sysc/src/schedule.rs, line: 190
 #, rust-format

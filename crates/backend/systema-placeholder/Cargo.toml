@@ -1,0 +1,20 @@
+[package]
+name = "systema-placeholder"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-placeholder"
+path = "src/main.rs"
+
+[dependencies]
+sysa = { path = "../../libsysa" }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+clap.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true

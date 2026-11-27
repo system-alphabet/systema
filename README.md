@@ -51,7 +51,7 @@ Two independent planes, deliberately separated:
 
 ## Components
 
-### Binaries (18)
+### Binaries (19)
 
 | Binary | System | Role |
 |--------|--------|------|
@@ -60,6 +60,7 @@ Two independent planes, deliberately separated:
 | `systema-sysa` | **System A** (Allocator) | global control plane: load/parse units, resolve dependencies, schedule, keep *desired* state |
 | `systema-syss` | **System S** (Service) | `fork/exec` service processes, lifecycle state machine, subreaper for orphans, `Type=notify` / `Type=dbus` readiness |
 | `systema-syst` | **System T** (Target) | target activation — no external processes, state tracking only |
+| `systema-placeholder` | **System P** (Placeholder) | manually launched state-only worker; manages the unit types passed with `--manage` and is not started by SysAInit |
 | `systema-sysc` | **System C** (Cron) | owns every `.timer`: monotonic and calendar schedules, fires `timer.fired` |
 | `systema-sysk` | **System K** (Socket) | owns every `.socket`: accept=no activation watching, accept=yes per-connection spawn |
 | `systema-sysn` | **System N** (Notify) | owns every `.path`: filesystem condition watches (`PathExists=`, `PathChanged=`, …) |
@@ -79,8 +80,9 @@ Two independent planes, deliberately separated:
 `sysa` (`crates/libsysa`) — shared by System A and every worker; `sysa-pager`;
 `systema-sysw-common`; `systema-sysr-common`; `systema-sysr.linux`; `systema-sysm-common`.
 
-Letters without a crate: **B** (unused), **P** — *removed*: System Init manages the
-`power` unit type directly (`power` units trigger `reboot(2)` and friends in-process).
+Letters without a crate: **B** (unused). System P is a placeholder worker, not a power
+worker; System Init still handles the `power` unit type directly (`power` units trigger
+`reboot(2)` and friends in-process).
 
 ## Startup and process model
 
@@ -239,6 +241,9 @@ sudo ./target/debug/systema-sysi
 sudo ./target/debug/systema-sysa
 sudo ./target/debug/systema-syss
 
+# Optional: manually register selected unit types with a placeholder worker
+sudo ./target/debug/systema-placeholder --manage=example:custom --state=follow --default=inactive
+
 # Then drive it with regular systemd tooling
 systemctl --system start sshd.service
 systemctl --system status sshd.service
@@ -247,6 +252,11 @@ systemctl --system status sshd.service
 ./target/debug/systema-stagingctl list
 ./target/debug/systema-unitstatectl list
 ```
+
+`--manage` is required and takes unit types separated by colons. `--state` defaults to
+`follow` (start → active, stop → inactive); `active` and `inactive` force that state for
+both operations. `--default` controls the state before any start/stop action and defaults
+to `inactive`.
 
 ## Message localization
 

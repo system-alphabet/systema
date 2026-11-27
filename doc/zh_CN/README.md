@@ -115,13 +115,18 @@ System A 是核心；新增或替换一种单元类型不需要改调度器。
 | M | **System M**（**M**ount） | `systema-sysm.*` | 挂载与自动挂载 |
 | R | **System R**（**R**esource） | `systema-sysr.linux` | cgroup v2 层级与资源限额，动态注册 slice |
 | T | **System T**（**T**arget） | `systema-syst` | 目标单元：只做激活与状态跟踪 |
+| P | **System P**（**P**laceholder） | `systema-placeholder` | 手动启动的占位 worker：用 `--manage` 指定管理的单元类型；SysAInit 不会启动它 |
 | F | **System F**（**F**inder） | `systema-sysf` + finder 插件 | 解析单元文件并提交统一 IR |
 | W | **System W** (**W**arper) | `systema-sysw.*` | 一套 |
 | U | **System U**（**U**ser） | `systema-sysu` | 用户会话实例的启动与监督 |
 | H | **System H**（**H**ello） | `systema-sysh.console` | 控制台/启动画面辅助 |
 
-字母 **B** 未使用，字母 **P**（Power）已移除：电源动作由 SysAInit 在进程内直接
-处理，不再有独立 worker。
+字母 **B** 未使用。System P 是占位 worker，与电源动作无关；电源动作仍由 SysAInit
+在进程内直接处理。
+手动启动时必须传入 `--manage=XXX:YYY` 指定要接管的单元类型（对应 `.XXX`、`.YYY`；
+类型前的点可省略）。`--state` 默认为 `follow`：start 后 active、stop 后 inactive；
+设为 `active` 或 `inactive` 时，两种操作后都报告该状态。`--default` 控制尚未发生
+start/stop 时报告的状态，默认为 `inactive`。System P 不在 SysAInit 的启动列表中。
 
 库的分层是：`libsystema-shared` 提供 IPC 契约与 worker 运行时，`libsystema-sysa`
 只追加服务端握手逻辑，`libsysa` 再把两者重导出给全部二进制（保留历史路径）。
