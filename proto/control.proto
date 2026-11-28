@@ -408,6 +408,12 @@ message UnitSnapshot {
     string mount_options = 35;
     // [Mount] TimeoutSec=.
     uint64 mount_timeout_sec = 36;
+    // On-disk unit file path (systemd `FragmentPath`); empty for transient
+    // units.
+    string fragment_path = 37;
+    // Drop-in snippets applied on top of the unit file, in application
+    // order (systemd `DropInPaths`).
+    repeated string drop_in_paths = 38;
 }
 
 // `manager.unit_snapshot` — fetch the snapshot of one unit.

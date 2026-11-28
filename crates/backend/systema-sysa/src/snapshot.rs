@@ -161,6 +161,8 @@ pub fn unit_snapshot(state: &AllocatorState, name: &str) -> UnitSnapshot {
         mount_what: String::new(),
         mount_options: String::new(),
         mount_timeout_sec: 0,
+        fragment_path: String::new(),
+        drop_in_paths: Vec::new(),
     };
 
     let Some(unit) = state.units.get(&canonical) else {
@@ -171,6 +173,8 @@ pub fn unit_snapshot(state: &AllocatorState, name: &str) -> UnitSnapshot {
     snap.load_state = "loaded".to_string();
     snap.transient = unit.transient;
     snap.unit_file_state = unit_file_state(unit);
+    snap.fragment_path = unit.source_path.clone().unwrap_or_default();
+    snap.drop_in_paths = unit.drop_in_paths.clone();
     snap.description = unit.unit.description.clone();
     snap.documentation = unit.unit.documentation.clone();
     snap.requires = sorted(&unit.unit.requires);

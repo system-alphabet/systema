@@ -4844,6 +4844,7 @@ mod tests {
             description: None,
             source_format: Some("dynamic".to_string()),
             source_path: None,
+            drop_in_paths: None,
             owner: None,
             aliases: Vec::new(),
             alias_of: None,

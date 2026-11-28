@@ -75,6 +75,10 @@ impl UnitObject {
 
     #[zbus(property)]
     fn fragment_path(&self) -> String {
+        let snapshot = self.snapshot();
+        if !snapshot.fragment_path.is_empty() {
+            return snapshot.fragment_path;
+        }
         for dir in sysa::paths::instance().unit_search_paths.iter() {
             let path = std::path::Path::new(dir).join(&self.unit_name);
             if path.exists() {
@@ -82,6 +86,11 @@ impl UnitObject {
             }
         }
         String::new()
+    }
+
+    #[zbus(property)]
+    fn drop_in_paths(&self) -> Vec<String> {
+        self.snapshot().drop_in_paths
     }
 
     #[zbus(property)]

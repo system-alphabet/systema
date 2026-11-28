@@ -282,6 +282,12 @@ pub struct UnitIR {
     pub source_format: Option<String>,
     /// The file path this unit was loaded from, if applicable.
     pub source_path: Option<String>,
+    /// Drop-in files applied on top of [`Self::source_path`], in the order
+    /// they were applied.  `None` means "not reported": the field is omitted
+    /// from the wire payload, so a partial commit never clears an existing
+    /// list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop_in_paths: Option<Vec<String>>,
 
     /// Prefer a specific owning worker for this unit.
     ///

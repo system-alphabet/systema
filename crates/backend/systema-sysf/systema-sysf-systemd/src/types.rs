@@ -810,6 +810,12 @@ pub struct UnitFile {
     /// The canonical unit name, e.g. "sshd.service".
     pub name: String,
     pub kind: UnitKind,
+    /// File the unit was loaded from, filled when the unit is parsed from a
+    /// path (systemd `FragmentPath`).
+    pub source_path: Option<String>,
+    /// Drop-in files applied on top of the unit file, in application order
+    /// (systemd `DropInPaths`).
+    pub drop_in_paths: Vec<String>,
     /// True for transient units created at runtime (e.g. via
     /// `StartTransientUnit`, like logind's session scopes).  Transient units
     /// have no on-disk unit file; their configuration is supplied inline.
@@ -874,6 +880,8 @@ impl UnitFile {
         UnitFile {
             name,
             kind,
+            source_path: None,
+            drop_in_paths: Vec::new(),
             transient: false,
             unit: UnitSection::default(),
             install: InstallSection::default(),

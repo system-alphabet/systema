@@ -744,6 +744,8 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use nix::sys::signal::Signal;
 

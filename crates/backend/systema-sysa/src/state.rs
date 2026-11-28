@@ -1081,6 +1081,14 @@ fn apply_ir_patch(ir: &UnitIR, uf: &mut UnitFile) {
     if let Some(description) = &ir.description {
         uf.unit.description.clone_from(description);
     }
+    // The Finder reports where the unit file lives and which drop-ins it
+    // applied; the snapshot exposes both as FragmentPath/DropInPaths.
+    if let Some(path) = &ir.source_path {
+        uf.source_path = Some(path.clone());
+    }
+    if let Some(paths) = &ir.drop_in_paths {
+        uf.drop_in_paths.clone_from(paths);
+    }
     if let Some(slice) = &ir.slice {
         uf.unit.slice.clone_from(slice);
     }

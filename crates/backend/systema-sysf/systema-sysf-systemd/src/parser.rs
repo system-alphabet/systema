@@ -78,6 +78,7 @@ pub fn parse_unit_from_path_as_in(dirs: &[String], path: &Path, name: &str) -> R
         )
     })?;
     let mut unit = parse_unit_content(name, &content)?;
+    unit.source_path = Some(path.to_string_lossy().into_owned());
 
     let template = sysa::unit_name::template_of(name);
     for dir in dirs.iter().rev() {
@@ -121,11 +122,10 @@ fn apply_dropin_dir(dir: &Path, unit: &mut UnitFile) -> Result<()> {
     for entry in entries {
         let path = entry.path();
         match std::fs::read_to_string(&path) {
-            Ok(content) => {
-                if let Err(e) = apply_dropin_content(unit, &content) {
-                    warn!("Ignoring drop-in {}: {}", path.display(), e);
-                }
-            }
+            Ok(content) => match apply_dropin_content(unit, &content) {
+                Ok(()) => unit.drop_in_paths.push(path.to_string_lossy().into_owned()),
+                Err(e) => warn!("Ignoring drop-in {}: {}", path.display(), e),
+            },
             Err(e) => {
                 warn!("Cannot read drop-in {}: {}", path.display(), e);
             }
@@ -3344,6 +3344,35 @@ AllowedCPUs=0-3
         assert!(svc.environment.contains(&"BASE=1".to_string()));
         assert!(svc.environment.contains(&"TPL=1".to_string()));
         assert!(svc.environment.contains(&"INST=1".to_string()));
+    }
+
+    #[test]
+    fn test_parse_records_source_and_dropin_paths() {
+        let dir = temp_dir("paths");
+        let unit_path = dir.join("demo.service");
+        std::fs::write(
+            &unit_path,
+            "[Unit]\nDescription=Demo\n[Service]\nExecStart=/bin/true\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("demo.service.d")).unwrap();
+        let first = dir.join("demo.service.d/10-first.conf");
+        let second = dir.join("demo.service.d/20-second.conf");
+        std::fs::write(&first, "[Unit]\nDescription=First\n").unwrap();
+        std::fs::write(&second, "[Unit]\nDescription=Second\n").unwrap();
+
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let unit = parse_unit_from_path_as_in(&dirs, &unit_path, "demo.service").unwrap();
+
+        let expected_source = unit_path.to_string_lossy().into_owned();
+        assert_eq!(unit.source_path.as_deref(), Some(expected_source.as_str()));
+        assert_eq!(
+            unit.drop_in_paths,
+            vec![
+                first.to_string_lossy().into_owned(),
+                second.to_string_lossy().into_owned(),
+            ]
+        );
     }
 
     // -----------------------------------------------------------------------
