@@ -36,4 +36,5 @@ pub mod paths;
 pub mod reaper;
 pub mod signals;
 pub mod unit_name;
+pub mod unit_yaml;
 pub mod version;

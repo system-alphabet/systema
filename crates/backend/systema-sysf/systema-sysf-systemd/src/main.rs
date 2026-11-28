@@ -5,12 +5,20 @@
 //! staging area (`finder.register_units`).  It has no commit command: the
 //! generic `systema-sysf` worker runs every finder executable and commits
 //! the staging area into the active set afterwards.
+//!
+//! The `list` subcommand runs the same discovery without contacting System A
+//! and renders every detected `UnitIR` as YAML on stdout, using the pager and
+//! highlighter shared with `systema-unitstatectl`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::io::IsTerminal;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use colored::Colorize;
 use sysa::finder::UnitFinder;
+use sysa_pager::{pager_eprintln, pager_println, PagerConfig, PagerGuard};
+use systema_sysf::ir::UnitIR;
 use systema_sysf::FinderRegistry;
 use systema_sysf_systemd::finder::SystemdFinder;
 use tracing::{error, info};
@@ -50,6 +58,37 @@ struct Args {
         help = "Print full version: build options and compile-time paths"
     )]
     full_version: bool,
+
+    #[arg(long, global = true, help = "Do not pipe output into a pager")]
+    no_pager: bool,
+
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value_t = ColorChoice::Auto,
+        help = "When to use colors"
+    )]
+    color: ColorChoice,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// List all detected units as YAML
+    List,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum ColorChoice {
+    /// Use colors when output is (or is piped to) a terminal.
+    Auto,
+    /// Never use colors.
+    Never,
+    /// Always use colors.
+    Always,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -59,7 +98,6 @@ async fn main() -> Result<()> {
     sysa::signals::install_signal_guard();
 
     let args = {
-        use clap::{CommandFactory, FromArgMatches};
         let cmd = Args::command()
             .about(sysa::l10n::t_("System F — systemd finder"))
             .mut_arg("debug", |a| {
@@ -85,6 +123,15 @@ async fn main() -> Result<()> {
                 a.help(sysa::l10n::t_(
                     "Print full version: build options and compile-time paths.",
                 ))
+            })
+            .mut_arg("no_pager", |a| {
+                a.help(sysa::l10n::t_("Do not pipe output into a pager."))
+            })
+            .mut_arg("color", |a| {
+                a.help(sysa::l10n::t_("When to use colors (always, auto, never)."))
+            })
+            .mut_subcommand("list", |cmd| {
+                cmd.about(sysa::l10n::t_("List all detected units as YAML."))
             });
         Args::from_arg_matches(&cmd.get_matches()).unwrap_or_else(|e| e.exit())
     };
@@ -97,11 +144,71 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let log_level = if args.debug { "debug" } else { &args.log_level };
-    // Self-managed logging: stderr always, plus the file resolved from
-    // --log-file / SYSTEMA_LOG_FILE / the built-in default.
-    sysa::logging::init_daemon("systema-sysf.systemd", args.log_file.clone(), log_level);
+    match args.command {
+        Some(Command::List) => {
+            // Tool policy: stderr only with --debug, a file only with an
+            // explicit --log-file (same as systema-unitstatectl).
+            sysa::logging::init_tool(
+                "systema-sysf.systemd",
+                args.log_file.clone(),
+                log_level,
+                args.debug,
+            );
+            run_list(args.color, args.no_pager).await
+        }
+        None => {
+            // Self-managed logging: stderr always, plus the file resolved
+            // from --log-file / SYSTEMA_LOG_FILE / the built-in default.
+            sysa::logging::init_daemon("systema-sysf.systemd", args.log_file.clone(), log_level);
+            run_register(&args.name).await
+        }
+    }
+}
 
-    run_register(&args.name).await
+/// Discover the units this finder sees and render each one as YAML.
+///
+/// This is the offline counterpart of [`run_register`]: it never contacts
+/// System A, so it also works when no allocator is running.  The pager and
+/// the highlighter are the ones `systema-unitstatectl list` uses.
+async fn run_list(color: ColorChoice, no_pager: bool) -> Result<()> {
+    let use_pager = !no_pager;
+    let _guard: PagerGuard = sysa_pager::open(PagerConfig {
+        disable: !use_pager,
+    })?;
+
+    // `auto`: color when stdout is a terminal, or when paging (the pager
+    // renders the ANSI escape sequences for the terminal it writes to).
+    let color_enabled = match color {
+        ColorChoice::Always => true,
+        ColorChoice::Never => false,
+        ColorChoice::Auto => use_pager || std::io::stdout().is_terminal(),
+    };
+    // The `--color` decision also drives the process-wide `colored` override,
+    // so the footer message matches the YAML body.
+    colored::control::set_override(color_enabled);
+
+    let mut registry = FinderRegistry::new();
+    registry.register(std::sync::Arc::new(SystemdFinder));
+    let units: BTreeMap<String, UnitIR> = registry.discover_all().await?.into_iter().collect();
+
+    for (name, unit) in &units {
+        let doc = serde_json::to_value(unit)?;
+        let mut buf = String::new();
+        let render_error = sysa::l10n::t_("Failed to render unit as YAML.");
+        sysa::unit_yaml::render_doc(&mut buf, name, &doc, color_enabled)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", render_error))?;
+        pager_println!("{buf}");
+    }
+
+    pager_eprintln!(
+        "{}",
+        sysa::l10n::fmt(
+            sysa::l10n::t_("Total {total} unit(s)."),
+            &[("total", &units.len().to_string())]
+        )
+        .dimmed()
+    );
+    Ok(())
 }
 
 async fn run_register(name: &str) -> Result<()> {

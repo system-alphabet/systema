@@ -1,5 +1,6 @@
 //! Minimal block-style YAML emitter with optional ANSI highlighting, tuned
-//! for the unit-state snapshots produced by the System Allocator.
+//! for unit snapshots: the System Allocator's cached unit state and the
+//! finders' detected [`crate::ir::UnitIR`] values.
 //!
 //! The output is deterministic: object keys are always emitted in sorted
 //! order.  Highlighting is applied only when the caller passes `color: true`

@@ -1,5 +1,3 @@
-mod yaml;
-
 use std::io::IsTerminal;
 
 use anyhow::{Context, Result};
@@ -98,7 +96,7 @@ fn render_unit(name: &str, json: &[u8], color: bool) -> Result<()> {
         serde_json::from_slice(json).context(l10n::t_("Failed to parse unit state JSON."))?;
     let mut buf = String::new();
     let render_error = l10n::t_("Failed to render unit as YAML.");
-    yaml::render_doc(&mut buf, name, &doc, color)
+    sysa::unit_yaml::render_doc(&mut buf, name, &doc, color)
         .map_err(|e| anyhow::anyhow!("{}: {e}", render_error))?;
     pager_println!("{buf}");
     Ok(())
