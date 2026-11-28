@@ -90,7 +90,13 @@ impl UnitObject {
 
     #[zbus(property)]
     fn drop_in_paths(&self) -> Vec<String> {
-        self.snapshot().drop_in_paths
+        let snapshot = self.snapshot();
+        if !snapshot.drop_in_paths.is_empty() {
+            return snapshot.drop_in_paths;
+        }
+        // SysF is replaceable and need not report the drop-ins it applied, so
+        // the bridge falls back to systemd's filesystem rule.
+        drop_in_paths_on_disk(&self.unit_name)
     }
 
     #[zbus(property)]
@@ -568,4 +574,39 @@ fn parse_usec_value(value: &str, default: u64) -> u64 {
         Ok(n) => n.saturating_mul(mult),
         Err(_) => default,
     }
+}
+
+/// Collect the drop-in files that apply to `unit_name` from the unit search
+/// path, in systemd's application order: lowest-priority directory first, and
+/// within one directory the template's drop-ins before an instance's own.
+fn drop_in_paths_on_disk(unit_name: &str) -> Vec<String> {
+    let template = sysa::unit_name::template_of(unit_name);
+    let mut out = Vec::new();
+    for dir in sysa::paths::instance().unit_search_paths.iter().rev() {
+        if let Some(template) = &template {
+            collect_drop_ins(
+                &std::path::Path::new(dir).join(format!("{template}.d")),
+                &mut out,
+            );
+        }
+        collect_drop_ins(
+            &std::path::Path::new(dir).join(format!("{unit_name}.d")),
+            &mut out,
+        );
+    }
+    out
+}
+
+/// Append the `*.conf` files in `dir` to `out`, in lexicographic order.
+fn collect_drop_ins(dir: &std::path::Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("conf"))
+        .collect();
+    paths.sort();
+    out.extend(paths.into_iter().map(|p| p.to_string_lossy().into_owned()));
 }

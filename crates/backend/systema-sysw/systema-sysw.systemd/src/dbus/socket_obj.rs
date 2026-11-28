@@ -32,6 +32,18 @@ impl SocketObject {
     }
 
     #[zbus(property)]
+    fn n_refused(&self) -> u32 {
+        0
+    }
+
+    /// Listening sockets as `(type, address)` pairs.  `systemctl list-sockets`
+    /// reads this with a fatally-checked `Properties.Get`.
+    #[zbus(property)]
+    fn listen(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    #[zbus(property)]
     fn control_pid(&self) -> u32 {
         self.snapshot().main_pid
     }

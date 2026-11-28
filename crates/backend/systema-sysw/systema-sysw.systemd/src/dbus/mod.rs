@@ -8,11 +8,13 @@
 pub mod activator;
 pub mod manager;
 pub mod mount_obj;
+pub mod path_obj;
 pub mod properties;
 pub mod scope_obj;
 pub mod service_obj;
 pub mod slice_obj;
 pub mod socket_obj;
+pub mod timer_obj;
 pub mod unit_obj;
 
 use std::sync::Arc;
@@ -178,6 +180,21 @@ pub async fn register_unit_object(
                     "Failed to register Mount interface for {}: {}",
                     unit_name, e
                 );
+            }
+        }
+        "timer" => {
+            let obj = timer_obj::TimerObject;
+            if let Err(e) = conn.object_server().at(path.clone(), obj).await {
+                warn!(
+                    "Failed to register Timer interface for {}: {}",
+                    unit_name, e
+                );
+            }
+        }
+        "path" => {
+            let obj = path_obj::PathObject;
+            if let Err(e) = conn.object_server().at(path.clone(), obj).await {
+                warn!("Failed to register Path interface for {}: {}", unit_name, e);
             }
         }
         _ => {}

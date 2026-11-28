@@ -20,10 +20,12 @@ use zbus::{fdo, BoxDBusError, Connection, ObjectServer};
 
 use super::manager::ManagerInterface;
 use super::mount_obj::MountObject;
+use super::path_obj::PathObject;
 use super::scope_obj::ScopeObject;
 use super::service_obj::ServiceObject;
 use super::slice_obj::SliceObject;
 use super::socket_obj::SocketObject;
+use super::timer_obj::TimerObject;
 use super::unit_obj::UnitObject;
 use super::BridgeContext;
 
@@ -174,6 +176,12 @@ impl Properties {
                 };
                 Some(Interface::get_all(&obj, server, connection, None, emitter).await)
             }
+            "org.freedesktop.systemd1.Timer" if kind == "timer" => {
+                Some(Interface::get_all(&TimerObject, server, connection, None, emitter).await)
+            }
+            "org.freedesktop.systemd1.Path" if kind == "path" => {
+                Some(Interface::get_all(&PathObject, server, connection, None, emitter).await)
+            }
             "org.freedesktop.DBus.Properties"
             | "org.freedesktop.DBus.Peer"
             | "org.freedesktop.DBus.Introspectable"
@@ -223,6 +231,39 @@ impl Properties {
                     unit_name: self.unit_name.clone(),
                 };
                 if let Ok(props) = Interface::get_all(&obj, server, connection, None, emitter).await
+                {
+                    result.extend(props);
+                }
+            }
+            "slice" => {
+                let obj = SliceObject {
+                    unit_name: self.unit_name.clone(),
+                };
+                if let Ok(props) = Interface::get_all(&obj, server, connection, None, emitter).await
+                {
+                    result.extend(props);
+                }
+            }
+            "scope" => {
+                let obj = ScopeObject {
+                    ctx: self.ctx.clone(),
+                    unit_name: self.unit_name.clone(),
+                };
+                if let Ok(props) = Interface::get_all(&obj, server, connection, None, emitter).await
+                {
+                    result.extend(props);
+                }
+            }
+            "timer" => {
+                if let Ok(props) =
+                    Interface::get_all(&TimerObject, server, connection, None, emitter).await
+                {
+                    result.extend(props);
+                }
+            }
+            "path" => {
+                if let Ok(props) =
+                    Interface::get_all(&PathObject, server, connection, None, emitter).await
                 {
                     result.extend(props);
                 }
@@ -340,6 +381,12 @@ impl Properties {
                     unit_name: self.unit_name.clone(),
                 };
                 Interface::get(&obj, &prop_name, server, connection, None, emitter).await
+            }
+            "org.freedesktop.systemd1.Timer" if kind == "timer" => {
+                Interface::get(&TimerObject, &prop_name, server, connection, None, emitter).await
+            }
+            "org.freedesktop.systemd1.Path" if kind == "path" => {
+                Interface::get(&PathObject, &prop_name, server, connection, None, emitter).await
             }
             "org.freedesktop.DBus.Properties"
             | "org.freedesktop.DBus.Peer"
