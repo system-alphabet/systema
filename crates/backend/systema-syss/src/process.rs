@@ -171,6 +171,20 @@ pub(crate) fn start_timeout_secs(config: &UnitConfig) -> u64 {
         .unwrap_or(DEFAULT_TIMEOUT_START_SECS)
 }
 
+/// The start budget for waiters in the start phase, where `None` means
+/// "unbounded".
+///
+/// systemd disables the implicit start timeout for `Type=oneshot`
+/// (`service_verify()`: "Oneshot services have disabled start timeout by
+/// default"), so a oneshot that leaves `TimeoutStartSec=` unset must run to
+/// completion instead of being killed after the 90 s manager default.
+pub(crate) fn start_timeout_secs_or_infinite(config: &UnitConfig) -> Option<u64> {
+    match ServiceConfig::from_unit_config(config) {
+        Some(svc) if svc.timeout_start_secs == 0 && svc.service_type == "oneshot" => None,
+        _ => Some(start_timeout_secs(config)),
+    }
+}
+
 /// Launch the service described by `config`.
 /// Returns the PID and the Child handle of the spawned main process.
 /// The caller must keep the Child handle to later collect the exit status.
@@ -701,7 +715,7 @@ async fn run_exec_commands(
     cgroup_path: &str,
     commands: &[String],
     phase: &str,
-    timeout_secs: u64,
+    timeout_secs: Option<u64>,
     main_pid: Option<u32>,
     force_system_bus: bool,
 ) -> Result<()> {
@@ -838,33 +852,35 @@ async fn run_exec_commands(
         let _tracked = child
             .id()
             .map(|pid| TransientPid::register(registry.clone(), unit_name, pid));
-        let timeout = timeout_secs;
-        let status =
-            match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await
-            {
-                Ok(Ok(status)) => status,
-                Ok(Err(e)) => bail!(sysa::l10n::fmt(
-                    sysa::l10n::t_("{phase} command for {unit_name} failed: {e}"),
+        let waited = match timeout_secs {
+            Some(secs) => {
+                tokio::time::timeout(std::time::Duration::from_secs(secs), child.wait()).await
+            }
+            None => Ok(child.wait().await),
+        };
+        let status = match waited {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => bail!(sysa::l10n::fmt(
+                sysa::l10n::t_("{phase} command for {unit_name} failed: {e}"),
+                &[
+                    ("phase", phase),
+                    ("unit_name", unit_name),
+                    ("e", &e.to_string()),
+                ],
+            )),
+            Err(_) => {
+                let _ = child.kill().await;
+                let timeout = timeout_secs.unwrap_or_default();
+                bail!(sysa::l10n::fmt(
+                    sysa::l10n::t_("{phase} command for {unit_name} timed out after {timeout}s"),
                     &[
                         ("phase", phase),
                         ("unit_name", unit_name),
-                        ("e", &e.to_string()),
+                        ("timeout", &timeout.to_string()),
                     ],
-                )),
-                Err(_) => {
-                    let _ = child.kill().await;
-                    bail!(sysa::l10n::fmt(
-                        sysa::l10n::t_(
-                            "{phase} command for {unit_name} timed out after {timeout}s"
-                        ),
-                        &[
-                            ("phase", phase),
-                            ("unit_name", unit_name),
-                            ("timeout", &timeout.to_string()),
-                        ],
-                    ))
-                }
-            };
+                ))
+            }
+        };
         if status.success() {
             debug!("{} command for {} completed", phase, unit_name);
             continue;
@@ -905,7 +921,7 @@ pub async fn run_exec_start_pre(
     if svc.exec_start_pre.is_empty() {
         return Ok(());
     }
-    let timeout = start_timeout_secs(config);
+    let timeout = start_timeout_secs_or_infinite(config);
     run_exec_commands(
         registry,
         unit_name,
@@ -939,7 +955,7 @@ pub async fn run_exec_start_post(
         .get(unit_name)
         .map(|inst| (inst.main_pid, inst.force_system_bus))
         .unwrap_or((None, false));
-    let timeout = start_timeout_secs(config);
+    let timeout = start_timeout_secs_or_infinite(config);
     run_exec_commands(
         registry,
         unit_name,
@@ -991,7 +1007,7 @@ pub async fn run_exec_stop(
         &cgroup,
         &svc.exec_stop,
         "ExecStop",
-        timeout_secs as u64,
+        Some(timeout_secs as u64),
         main_pid,
         force_system_bus,
     )
@@ -1032,7 +1048,7 @@ pub async fn run_exec_stop_post(
         &cgroup,
         &svc.exec_stop_post,
         "ExecStopPost",
-        timeout_secs as u64,
+        Some(timeout_secs as u64),
         main_pid,
         force_system_bus,
     )
@@ -1054,7 +1070,7 @@ pub async fn run_exec_reload(
     if svc.exec_reload.is_empty() {
         return Ok(());
     }
-    let timeout = start_timeout_secs(config);
+    let timeout = start_timeout_secs_or_infinite(config);
     let force_system_bus = registry
         .lock()
         .get(unit_name)

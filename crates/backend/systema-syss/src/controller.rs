@@ -2,7 +2,8 @@ use crate::config::ServiceConfig;
 use crate::dbus::DbusWaiter;
 use crate::notify::NotifyManager;
 use crate::process::{
-    run_exec_reload, start_service, start_timeout_secs, stop_service, ManagerScope,
+    run_exec_reload, start_service, start_timeout_secs, start_timeout_secs_or_infinite,
+    stop_service, ManagerScope,
 };
 use crate::state::{ServiceRegistry, ServiceState};
 use anyhow::{anyhow, Context, Result};
@@ -182,8 +183,17 @@ impl ServiceController {
         if !Self::is_oneshot_type(cfg) {
             return Ok(());
         }
-        let timeout = start_timeout_secs(cfg);
-        match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await {
+        // `Type=oneshot` without an explicit `TimeoutStartSec=` has no start
+        // timeout in systemd, so a long-running oneshot must not be killed
+        // after the 90 s manager default.
+        let timeout = start_timeout_secs_or_infinite(cfg);
+        let waited = match timeout {
+            Some(secs) => {
+                tokio::time::timeout(std::time::Duration::from_secs(secs), child.wait()).await
+            }
+            None => Ok(child.wait().await),
+        };
+        match waited {
             Ok(Ok(status)) => {
                 info!(
                     "Service {} (PID {}) exited: code={:?}, success={}",
@@ -276,6 +286,7 @@ impl ServiceController {
                 )))
             }
             Err(_) => {
+                let timeout = timeout.unwrap_or_default();
                 warn!(
                     "Timeout waiting for oneshot {} ({}s), stopping",
                     unit_name, timeout
