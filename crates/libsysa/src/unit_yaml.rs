@@ -11,8 +11,12 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use anyhow::Context as _;
 use colored::Colorize;
 use serde_json::Value;
+
+use crate::ir::UnitIR;
+use crate::l10n;
 
 /// Render one unit as a YAML document:
 ///
@@ -40,6 +44,20 @@ pub fn render_doc(w: &mut String, name: &str, value: &Value, color: bool) -> std
             writeln!(w, "  {line}")
         }
     }
+}
+
+/// Render one finder's detected [`UnitIR`] as a YAML document.
+///
+/// The IR is serialized to its JSON form (the same shape it has on the wire)
+/// and printed with [`render_doc`], so every finder's `list` output shares a
+/// single layout.  `color` selects ANSI highlighting.
+pub fn render_unit_ir(name: &str, unit: &UnitIR, color: bool) -> anyhow::Result<String> {
+    let value = serde_json::to_value(unit).context(l10n::t_("Failed to render unit as YAML."))?;
+    let mut buf = String::new();
+    let render_error = l10n::t_("Failed to render unit as YAML.");
+    render_doc(&mut buf, name, &value, color)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", render_error))?;
+    Ok(buf)
 }
 
 fn emit_map(

@@ -192,12 +192,10 @@ async fn run_list(color: ColorChoice, no_pager: bool) -> Result<()> {
     let units: BTreeMap<String, UnitIR> = registry.discover_all().await?.into_iter().collect();
 
     for (name, unit) in &units {
-        let doc = serde_json::to_value(unit)?;
-        let mut buf = String::new();
-        let render_error = sysa::l10n::t_("Failed to render unit as YAML.");
-        sysa::unit_yaml::render_doc(&mut buf, name, &doc, color_enabled)
-            .map_err(|e| anyhow::anyhow!("{}: {e}", render_error))?;
-        pager_println!("{buf}");
+        pager_println!(
+            "{}",
+            sysa::unit_yaml::render_unit_ir(name, unit, color_enabled)?
+        );
     }
 
     pager_eprintln!(

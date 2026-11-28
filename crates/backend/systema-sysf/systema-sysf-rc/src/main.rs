@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::io::IsTerminal;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use colored::Colorize;
 use sysa::finder::UnitFinder;
@@ -184,19 +184,6 @@ async fn run_register(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Render one detected [`UnitIR`] as a YAML document, in the same shape as
-/// `systema-unitstatectl`.
-fn render_unit(name: &str, unit: &UnitIR, color: bool) -> Result<()> {
-    let value =
-        serde_json::to_value(unit).context(sysa::l10n::t_("Failed to render unit as YAML."))?;
-    let mut buf = String::new();
-    let render_error = sysa::l10n::t_("Failed to render unit as YAML.");
-    sysa::unit_yaml::render_doc(&mut buf, name, &value, color)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", render_error))?;
-    pager_println!("{buf}");
-    Ok(())
-}
-
 /// `list`: discover every unit and print the resulting IR set as YAML.
 async fn run_list(color: ColorChoice, no_pager: bool) -> Result<()> {
     let use_pager = !no_pager;
@@ -220,7 +207,10 @@ async fn run_list(color: ColorChoice, no_pager: bool) -> Result<()> {
     units.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (id, unit) in &units {
-        render_unit(id, unit, color_enabled)?;
+        pager_println!(
+            "{}",
+            sysa::unit_yaml::render_unit_ir(id, unit, color_enabled)?
+        );
     }
 
     let total = units.len().to_string();
