@@ -173,6 +173,11 @@ fn generate_paths() {
             "/lib/systemd/system",
         ],
     );
+    let sysv_initd_paths = get_list(
+        "SYSTEMA_SYSV_INITD_PATH",
+        &["/etc/init.d", "/etc/rc.d/init.d", "/usr/local/etc/rc.d"],
+    );
+    let sysv_rc_paths = get_list("SYSTEMA_SYSV_RC_PATH", &["/etc", "/etc/rc.d"]);
     let generator_search_paths = get_list(
         "SYSTEMA_GENERATOR_PATH",
         &[
@@ -245,6 +250,16 @@ pub const LOG_DIR: &str = {log_dir:?};
 
 pub const UNIT_SEARCH_PATHS: &[&str] = &[
     {unit_search_paths},
+];
+
+// SysV init script directories (the `rc` finder's scripts) and the
+// directories whose rcN.d subdirectories carry the runlevel links.
+pub const SYSV_INITD_SEARCH_PATHS: &[&str] = &[
+    {sysv_initd_paths},
+];
+
+pub const SYSV_RC_SEARCH_PATHS: &[&str] = &[
+    {sysv_rc_paths},
 ];
 
 pub const GENERATOR_SEARCH_PATHS: &[&str] = &[

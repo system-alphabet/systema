@@ -7,7 +7,7 @@
 msgid   ""
 msgstr  "Project-Id-Version: systema 0.0.1\n"
         "Report-Msgid-Bugs-To: https://github.com/system-alphabet/systema/issues\n"
-        "POT-Creation-Date: 2026-11-21 23:56+0800\n"
+        "POT-Creation-Date: 2026-11-28 22:52+0800\n"
         "PO-Revision-Date: 2026-10-03 18:07+0800\n"
         "Last-Translator: ChenPi11 <wushengwuxi-msctinoulk@outlook.com>\n"
         "Language-Team: none\n"
@@ -243,90 +243,6 @@ msgstr  "l10n_debug：bind_textdomain_codeset 失败：{e}"
 msgid   "l10n_debug: Initialized gettext with mo_dir: {mo_dir}"
 msgstr  "l10n_debug：已使用 mo_dir 初始化 gettext：{mo_dir}"
 #
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
-#, rust-format
-msgid   "SO_PEERCRED failed: {e}"
-msgstr  "SO_PEERCRED 失败：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 252
-#, rust-format
-msgid   "getpeereid failed: {e}"
-msgstr  "getpeereid 失败：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 271
-msgid   "failed to get peer credentials"
-msgstr  "无法获取对端凭据"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 275
-msgid   "Client disconnected before registration"
-msgstr  "客户端在注册之前断开连接"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 285
-#, rust-format
-msgid   "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
-msgstr  "期望“worker.register”、“finder.register_units”、“finder.commit_units”或“staging.query”，实际“{method}”"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 556
-#, rust-format
-msgid   "decode failed: {e}"
-msgstr  "解码失败：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1131
-#, rust-format
-msgid   "Failed to deserialize UnitIR JSON: {error}"
-msgstr  "无法反序列化 UnitIR JSON：{error}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1143
-#, rust-format
-msgid   "{count} units staged for UID {uid}."
-msgstr  "已为 UID {uid} 暂存 {count} 个单元。"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1202
-#, rust-format
-msgid   "permission denied (UID {client_uid}): may only commit own staging areas"
-msgstr  "权限不足（UID {client_uid}）：只能提交自己的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1240
-#, rust-format
-msgid   "{count} units committed for UID {uid}."
-msgstr  "已为 UID {uid} 提交 {count} 个单元。"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1297
-#, rust-format
-msgid   "permission denied (UID {client_uid}): may only query own staging areas"
-msgstr  "权限不足（UID {client_uid}）：只能查询自己的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1311
-#, rust-format
-msgid   "Failed to serialize staging units: {e}"
-msgstr  "无法序列化暂存单元：{e}"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1324
-#, rust-format
-msgid   "no staging area for UID {target_uid} with name '{name}'"
-msgstr  "UID {target_uid} 没有名为“{name}”的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1379
-# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 425
-#, rust-format
-msgid   "no staging area for UID {uid}"
-msgstr  "UID {uid} 没有暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1421
-#, rust-format
-msgid   "no staging area for UID {uid} with name '{name}'"
-msgstr  "UID {uid} 没有名为“{name}”的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1436
-#, rust-format
-msgid   "no staging area with name '{name}'"
-msgstr  "没有名为“{name}”的暂存区"
-#
-# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1484
-#, rust-format
-msgid   "unknown admin staging op '{other}'"
-msgstr  "未知的管理暂存操作“{other}”"
-#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 149
 #, rust-format
 msgid   "control frame error: {e}"
@@ -369,6 +285,12 @@ msgstr  "权限不足（UID {uid}）：只有 root 或 UID {sys_uid} 可以检�
 msgid   "unknown admin method '{other}'"
 msgstr  "未知的管理方法“{other}”"
 #
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1379
+# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 425
+#, rust-format
+msgid   "no staging area for UID {uid}"
+msgstr  "UID {uid} 没有暂存区"
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 440
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 471
 #, rust-format
@@ -405,10 +327,9 @@ msgstr  "作业类型“{job_type}”无效"
 msgid   "job mode '{mode}' invalid"
 msgstr  "作业模式“{mode}”无效"
 #
-# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 581
-#, rust-format
-msgid   "enqueue failed: {e}"
-msgstr  "入队失败：{e}"
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 595
+msgid   "At least one unit name is required."
+msgstr  "至少需要一个单元名称。"
 #
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 604
 msgid   "bad manager.load_unit"
@@ -510,6 +431,84 @@ msgstr  "电源单元 JSON 载荷无效"
 #, rust-format
 msgid   "registered {created} new, {updated} updated .power unit(s)"
 msgstr  "已注册 {created} 个新 .power 单元，更新 {updated} 个"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 229
+#, rust-format
+msgid   "SO_PEERCRED failed: {e}"
+msgstr  "SO_PEERCRED 失败：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 252
+#, rust-format
+msgid   "getpeereid failed: {e}"
+msgstr  "getpeereid 失败：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 271
+msgid   "failed to get peer credentials"
+msgstr  "无法获取对端凭据"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 275
+msgid   "Client disconnected before registration"
+msgstr  "客户端在注册之前断开连接"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 285
+#, rust-format
+msgid   "Expected 'worker.register', 'finder.register_units', 'finder.commit_units', or 'staging.query', got '{method}'"
+msgstr  "期望“worker.register”、“finder.register_units”、“finder.commit_units”或“staging.query”，实际“{method}”"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 556
+#, rust-format
+msgid   "decode failed: {e}"
+msgstr  "解码失败：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1131
+#, rust-format
+msgid   "Failed to deserialize UnitIR JSON: {error}"
+msgstr  "无法反序列化 UnitIR JSON：{error}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1143
+#, rust-format
+msgid   "{count} units staged for UID {uid}."
+msgstr  "已为 UID {uid} 暂存 {count} 个单元。"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1202
+#, rust-format
+msgid   "permission denied (UID {client_uid}): may only commit own staging areas"
+msgstr  "权限不足（UID {client_uid}）：只能提交自己的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1240
+#, rust-format
+msgid   "{count} units committed for UID {uid}."
+msgstr  "已为 UID {uid} 提交 {count} 个单元。"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1297
+#, rust-format
+msgid   "permission denied (UID {client_uid}): may only query own staging areas"
+msgstr  "权限不足（UID {client_uid}）：只能查询自己的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1311
+#, rust-format
+msgid   "Failed to serialize staging units: {e}"
+msgstr  "无法序列化暂存单元：{e}"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1324
+#, rust-format
+msgid   "no staging area for UID {target_uid} with name '{name}'"
+msgstr  "UID {target_uid} 没有名为“{name}”的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1421
+#, rust-format
+msgid   "no staging area for UID {uid} with name '{name}'"
+msgstr  "UID {uid} 没有名为“{name}”的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1436
+#, rust-format
+msgid   "no staging area with name '{name}'"
+msgstr  "没有名为“{name}”的暂存区"
+#
+# File: ../crates/backend/systema-sysa/src/ipc/server.rs, line: 1484
+#, rust-format
+msgid   "unknown admin staging op '{other}'"
+msgstr  "未知的管理暂存操作“{other}”"
 #
 # File: ../crates/backend/systema-sysa/src/scheduler/transaction.rs, line: 158
 #, rust-format
@@ -699,20 +698,6 @@ msgstr  "在搜索路径中找不到 systema-sysf 二进制文件：{paths}"
 msgid   "failed: {msg}"
 msgstr  "失败：{msg}"
 #
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
-msgid   "Root Slice"
-msgstr  "根 Slice"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
-#, rust-format
-msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
-msgstr  "无效的暂存区名称“{name}”：长度最多为 64 个字符，且只能包含字母、下划线、斜杠、反斜杠或连字符"
-#
-# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
-#, rust-format
-msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
-msgstr  "无法创建新单元“{id}”：缺少必需字段“unit_type”"
-#
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 49
 msgid   "System A — System Allocator"
 msgstr  "System A — 系统分配器"
@@ -820,6 +805,20 @@ msgstr  "打印版本信息并退出。"
 msgid   "Print full version: build options and compile-time paths."
 msgstr  "打印完整版本：构建选项与编译期路径。"
 #
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 443
+msgid   "Root Slice"
+msgstr  "根 Slice"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 603
+#, rust-format
+msgid   "invalid staging area name '{name}': must be at most 64 characters long and contain only letters, underscores, slashes, backslashes, or hyphens"
+msgstr  "无效的暂存区名称“{name}”：长度最多为 64 个字符，且只能包含字母、下划线、斜杠、反斜杠或连字符"
+#
+# File: ../crates/backend/systema-sysa/src/state.rs, line: 891
+#, rust-format
+msgid   "cannot create new unit \"{id}\": missing required field \"unit_type\""
+msgstr  "无法创建新单元“{id}”：缺少必需字段“unit_type”"
+#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 65
 msgid   "System F — System Finder Worker"
 msgstr  "System F — 系统查找器工作进程"
@@ -879,6 +878,20 @@ msgstr  "无法创建套接字目录 {path}。"
 #, rust-format
 msgid   "Failed to bind reload socket {path}."
 msgstr  "无法绑定重新加载套接字 {path}。"
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/loader.rs, line: 72
+#, rust-format
+msgid   "Scanning {dir} ..."
+msgstr  "正在扫描 {dir} ..."
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
+msgid   "System F — systemd finder"
+msgstr  "System F — systemd 查找器"
+#
+# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
+#, rust-format
+msgid   "Staging failed: {message}."
+msgstr  "暂存失败：{message}。"
 #
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 40
 # File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/parser.rs, line: 55
@@ -977,23 +990,23 @@ msgstr  "正在解析 {name} 的 [Scope] 段 ..."
 msgid   "Parsing [Device] section of {name} ..."
 msgstr  "正在解析 {name} 的 [Device] 段 ..."
 #
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/loader.rs, line: 72
+# File: ../crates/backend/systema-sysf/systema-sysf-rc/src/parser.rs, line: 19
 #, rust-format
-msgid   "Scanning {dir} ..."
-msgstr  "正在扫描 {dir} ..."
+msgid   "Failed to read init script {path}."
+msgstr  ""
 #
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 49
-msgid   "System F — systemd finder"
-msgstr  "System F — systemd 查找器"
-#
-# File: ../crates/backend/systema-sysf/systema-sysf-systemd/src/main.rs, line: 87
-#, rust-format
-msgid   "Staging failed: {message}."
-msgstr  "暂存失败：{message}。"
+# File: ../crates/backend/systema-sysf/systema-sysf-rc/src/main.rs, line: 64
+msgid   "System F — rc finder"
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysk/src/controller.rs, line: 83
 msgid   "no SocketConfig in UnitConfig"
 msgstr  "UnitConfig 中没有 SocketConfig"
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 167
+#, rust-format
+msgid   "Invalid ReceiveBuffer= value '{value}' for {unit_name}."
+msgstr  ""
 #
 # File: ../crates/backend/systema-sysk/src/socket.rs, line: 45
 #, rust-format
@@ -1184,16 +1197,6 @@ msgstr  "mkfifo“{path}”失败：{e}。"
 #, rust-format
 msgid   "open FIFO '{path}' after mkfifo failed: {e}."
 msgstr  ""
-#
-# File: ../crates/backend/systema-sysk/src/socket.rs, line: 831
-#, rust-format
-msgid   "Failed to spawn child for '{unit_name}'."
-msgstr  "无法为“{unit_name}”启动子进程。"
-#
-# File: ../crates/backend/systema-sysk/src/socket.rs, line: 838
-#, rust-format
-msgid   "Failed to wait for child for '{unit_name}'."
-msgstr  "无法等待“{unit_name}”的子进程。"
 #
 # File: ../crates/backend/systema-sysk/src/main.rs, line: 32
 msgid   "System K — System Socket Worker"
@@ -1510,6 +1513,29 @@ msgstr  "重新加载 {unit_name} 失败：服务未运行。"
 msgid   "Failed to send SIGHUP"
 msgstr  "无法发送 SIGHUP"
 #
+# File: ../crates/backend/systema-syss/src/main.rs, line: 48
+msgid   "System S — System Service Worker"
+msgstr  "System S — 系统服务工作进程"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 58
+msgid   "Do not register as a child subreaper."
+msgstr  "不要注册为子 subreaper。"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 74
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 61
+msgid   "D-Bus address to use (default: the system bus)."
+msgstr  "要使用的 D-Bus 地址（默认：系统总线）。"
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 97
+msgid   "Manager domain owned by this service worker."
+msgstr  ""
+#
+# File: ../crates/backend/systema-syss/src/main.rs, line: 101
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 88
+#, rust-format
+msgid   "invalid --bus-address: {err}"
+msgstr  "无效的 --bus-address：{err}"
+#
 # File: ../crates/backend/systema-syss/src/process.rs, line: 120
 #, rust-format
 msgid   "No [Service] config for {unit_name}."
@@ -1624,49 +1650,35 @@ msgstr  "去除前缀后 ExecStart 命令为空。"
 msgid   "@ prefix requires at least two tokens (argv0 program)."
 msgstr  "@ 前缀至少需要两个标记（argv0 和程序）。"
 #
-# File: ../crates/backend/systema-syss/src/main.rs, line: 48
-msgid   "System S — System Service Worker"
-msgstr  "System S — 系统服务工作进程"
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 58
-msgid   "Do not register as a child subreaper."
-msgstr  "不要注册为子 subreaper。"
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 74
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 61
-msgid   "D-Bus address to use (default: the system bus)."
-msgstr  "要使用的 D-Bus 地址（默认：系统总线）。"
-#
-# File: ../crates/backend/systema-syss/src/main.rs, line: 101
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 88
-#, rust-format
-msgid   "invalid --bus-address: {err}"
-msgstr  "无效的 --bus-address：{err}"
-#
 # File: ../crates/backend/systema-syst/src/main.rs, line: 38
 msgid   "System T — System Target Worker"
 msgstr  "System T — 系统目标工作进程"
 #
-# File: ../crates/backend/systema-placeholder/src/main.rs, line: 73
-msgid   "System P — Placeholder Worker"
-msgstr  "System P — 占位工作进程"
+# File: ../crates/backend/systema-sysc/src/main.rs, line: 42
+msgid   "System C — System Cron/Timer Worker"
+msgstr  "System C — 系统 Cron/定时器工作进程"
 #
-# File: ../crates/backend/systema-placeholder/src/main.rs, line: 56
-# File: ../crates/backend/systema-placeholder/src/main.rs, line: 124
-msgid   "The --manage value must contain non-empty unit types separated by ':'."
-msgstr  "--manage 必须提供非空的单元类型，并用“:”分隔。"
+# File: ../crates/backend/systema-sysc/src/controller.rs, line: 29
+# File: ../crates/backend/systema-sysc/src/controller.rs, line: 139
+# File: ../crates/backend/systema-sysc/src/controller.rs, line: 167
+#, rust-format
+msgid   "Unknown timer unit '{unit_name}'"
+msgstr  "未知的定时器单元“{unit_name}”"
 #
-# File: ../crates/backend/systema-placeholder/src/main.rs, line: 75
-msgid   "Required unit types to manage, separated by ':'; leading dots are optional (for example: service:target)."
-msgstr  "要管理的单元类型（必需），以“:”分隔；类型名可带或不带前导点（例如：service:target）。"
+# File: ../crates/backend/systema-sysc/src/controller.rs, line: 39
+#, rust-format
+msgid   "'{unit_name}' is not a .timer unit"
+msgstr  "“{unit_name}”不是 .timer 单元"
 #
-# File: ../crates/backend/systema-placeholder/src/main.rs, line: 80
-msgid   "State behavior for start and stop."
-msgstr  "start 和 stop 操作的状态策略。"
+# File: ../crates/backend/systema-sysc/src/controller.rs, line: 46
+# File: ../crates/backend/systema-sysc/src/controller.rs, line: 159
+#, rust-format
+msgid   "No TimerConfig for '{unit_name}'"
+msgstr  "“{unit_name}”没有 TimerConfig"
 #
-# File: ../crates/backend/systema-placeholder/src/main.rs, line: 83
-msgid   "State reported before any start or stop action."
-msgstr  "尚未执行 start 或 stop 操作时报告的状态。"
+# File: ../crates/backend/systema-sysc/src/controller.rs, line: 87
+msgid   "Timer unit has no OnCalendar=/On*Sec= trigger — nothing to schedule"
+msgstr  "定时器单元没有 OnCalendar=/On*Sec= 触发器 — 无需调度"
 #
 # File: ../crates/backend/systema-sysc/src/schedule.rs, line: 184
 # File: ../crates/backend/systema-sysc/src/schedule.rs, line: 190
@@ -1712,32 +1724,6 @@ msgstr  "无效日期“{tok}”"
 #, rust-format
 msgid   "invalid time '{tok}'"
 msgstr  "无效时间“{tok}”"
-#
-# File: ../crates/backend/systema-sysc/src/controller.rs, line: 29
-# File: ../crates/backend/systema-sysc/src/controller.rs, line: 139
-# File: ../crates/backend/systema-sysc/src/controller.rs, line: 167
-#, rust-format
-msgid   "Unknown timer unit '{unit_name}'"
-msgstr  "未知的定时器单元“{unit_name}”"
-#
-# File: ../crates/backend/systema-sysc/src/controller.rs, line: 39
-#, rust-format
-msgid   "'{unit_name}' is not a .timer unit"
-msgstr  "“{unit_name}”不是 .timer 单元"
-#
-# File: ../crates/backend/systema-sysc/src/controller.rs, line: 46
-# File: ../crates/backend/systema-sysc/src/controller.rs, line: 159
-#, rust-format
-msgid   "No TimerConfig for '{unit_name}'"
-msgstr  "“{unit_name}”没有 TimerConfig"
-#
-# File: ../crates/backend/systema-sysc/src/controller.rs, line: 87
-msgid   "Timer unit has no OnCalendar=/On*Sec= trigger — nothing to schedule"
-msgstr  "定时器单元没有 OnCalendar=/On*Sec= 触发器 — 无需调度"
-#
-# File: ../crates/backend/systema-sysc/src/main.rs, line: 42
-msgid   "System C — System Cron/Timer Worker"
-msgstr  "System C — 系统 Cron/定时器工作进程"
 #
 # File: ../crates/backend/systema-sysd/src/controller.rs, line: 96
 # File: ../crates/backend/systema-sysd/src/controller.rs, line: 149
@@ -1823,14 +1809,19 @@ msgstr  ""
 msgid   "DelegateSubgroup '{subgroup}' must be a single directory name"
 msgstr  ""
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/worker.rs, line: 135
-msgid   "no cgroup backend"
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
+msgid   "resource worker not initialised"
 msgstr  ""
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/worker.rs, line: 169
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
 #, rust-format
-msgid   "unit '{unit_name}' has no cgroup directory"
-msgstr  ""
+msgid   "cannot synthesize definitions for non-slice units: {invalid}"
+msgstr  "无法为非 slice 单元合成定义：{invalid}"
+#
+# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
+#, rust-format
+msgid   "cannot serialise synthesized definitions: {e}"
+msgstr  "无法序列化合成定义：{e}"
 #
 # File: ../crates/backend/systema-sysr/systema-sysr/src/main.rs, line: 37
 msgid   "System R — System Resource Worker"
@@ -1869,19 +1860,14 @@ msgstr  "无法向 System A 提交 slice 单元"
 msgid   "System A refused the commit: {message}"
 msgstr  "System A 拒绝了提交：{message}"
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 250
-msgid   "resource worker not initialised"
+# File: ../crates/backend/systema-sysr/systema-sysr/src/worker.rs, line: 135
+msgid   "no cgroup backend"
 msgstr  ""
 #
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 232
+# File: ../crates/backend/systema-sysr/systema-sysr/src/worker.rs, line: 169
 #, rust-format
-msgid   "cannot synthesize definitions for non-slice units: {invalid}"
-msgstr  "无法为非 slice 单元合成定义：{invalid}"
-#
-# File: ../crates/backend/systema-sysr/systema-sysr/src/ipc.rs, line: 251
-#, rust-format
-msgid   "cannot serialise synthesized definitions: {e}"
-msgstr  "无法序列化合成定义：{e}"
+msgid   "unit '{unit_name}' has no cgroup directory"
+msgstr  ""
 #
 # File: ../crates/backend/systema-syse/src/cgroup.rs, line: 32
 #, rust-format
@@ -2181,50 +2167,6 @@ msgstr  "无法武装 path 单元“{unit_name}”：{err}"
 msgid   "System N — System Notify Worker"
 msgstr  "System N — 系统通知工作进程"
 #
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 72
-#, rust-format
-msgid   "connecting to control socket {path}"
-msgstr  "正在连接到控制套接字 {path}"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 85
-msgid   "IPC version exchange with System A failed"
-msgstr  ""
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 180
-msgid   "manager.hello handshake"
-msgstr  "manager.hello 握手"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 183
-#, rust-format
-msgid   "control bus rejected us: {message}"
-msgstr  "控制总线拒绝了我们：{message}"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 208
-#, rust-format
-msgid   "encoding {method} request"
-msgstr  "正在编码 {method} 请求"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 214
-msgid   "control session closed (writer task gone)"
-msgstr  "控制会话已关闭（写入任务已消失）"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 219
-msgid   "control session closed"
-msgstr  "控制会话已关闭"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 220
-msgid   "control session closed (disconnected)"
-msgstr  "控制会话已关闭（已断开连接）"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 226
-msgid   "decoding manager.error payload"
-msgstr  "正在解码 manager.error 载荷"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 238
-#, rust-format
-msgid   "decoding {method} reply"
-msgstr  "正在解码 {method} 回复"
-#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 406
 #, rust-format
 msgid   "Unit {name} is not loaded."
@@ -2299,10 +2241,6 @@ msgstr  "fd {raw} 不是 pidfd（fdinfo 中没有 Pid: 条目）"
 msgid   "cannot read fdinfo for fd {raw}: {e}"
 msgstr  "无法读取 fd {raw} 的 fdinfo：{e}"
 #
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 595
-msgid   "At least one unit name is required."
-msgstr  "至少需要一个单元名称。"
-#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/manager.rs, line: 600
 msgid   "Flags are not supported yet and must be 0."
 msgstr  "尚不支持 flags，必须为 0。"
@@ -2321,14 +2259,6 @@ msgstr  "未找到单元文件 {base}。"
 #, rust-format
 msgid   "No unit with invocation ID {invocation_id}."
 msgstr  "没有调用 ID 为 {invocation_id} 的单元。"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/bridge.rs, line: 201
-msgid   "control session ended — reconnect required"
-msgstr  "控制会话已结束 — 需要重新连接"
-#
-# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 39
-msgid   "System Wrapper — systemd D-Bus bridge"
-msgstr  "System Wrapper — systemd D-Bus 桥接"
 #
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/install/mod.rs, line: 222
 #, rust-format
@@ -2428,6 +2358,37 @@ msgstr  ""
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/service_install.rs, line: 366
 #, rust-format
 msgid   "The install fallback task failed: {e}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/bridge.rs, line: 201
+msgid   "control session ended — reconnect required"
+msgstr  "控制会话已结束 — 需要重新连接"
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/main.rs, line: 39
+msgid   "System Wrapper — systemd D-Bus bridge"
+msgstr  "System Wrapper — systemd D-Bus 桥接"
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/managed_oom.rs, line: 36
+#, rust-format
+msgid   "Binding ManagedOOM varlink socket '{path}' failed: {error}."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/managed_oom.rs, line: 64
+msgid   "ManagedOOM socket has no parent directory."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/managed_oom.rs, line: 74
+#, rust-format
+msgid   "ManagedOOM socket '{path}' is already in use."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/managed_oom.rs, line: 87
+#, rust-format
+msgid   "ManagedOOM socket path '{path}' exists and is not a Unix socket."
+msgstr  ""
+#
+# File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/managed_oom.rs, line: 111
+msgid   "ManagedOOM varlink message is too large."
 msgstr  ""
 #
 # File: ../crates/backend/systema-sysu/src/main.rs, line: 113
@@ -2530,6 +2491,27 @@ msgstr  "systema-sysu reaper 错误：{e}"
 #, rust-format
 msgid   "manager.list_units failed: {message}"
 msgstr  "manager.list_units 失败：{message}"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 56
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 124
+msgid   "The --manage value must contain non-empty unit types separated by ':'."
+msgstr  "--manage 必须提供非空的单元类型，并用“:”分隔。"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 73
+msgid   "System P — Placeholder Worker"
+msgstr  "System P — 占位工作进程"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 75
+msgid   "Required unit types to manage, separated by ':'; leading dots are optional (for example: service:target)."
+msgstr  "要管理的单元类型（必需），以“:”分隔；类型名可带或不带前导点（例如：service:target）。"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 80
+msgid   "State behavior for start and stop."
+msgstr  "start 和 stop 操作的状态策略。"
+#
+# File: ../crates/backend/systema-placeholder/src/main.rs, line: 83
+msgid   "State reported before any start or stop action."
+msgstr  "尚未执行 start 或 stop 操作时报告的状态。"
 #
 # File: ../crates/frontend/systema-stagingctl/src/main.rs, line: 89
 msgid   "Failed to parse units JSON."
@@ -2675,9 +2657,78 @@ msgid   "System H — boot-log console frontend"
 msgstr  ""
 #
 #
+# File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 581
+#, rust-format
+#~ msgid        "enqueue failed: {e}"
+#~ msgstr       "入队失败：{e}"
+#
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 831
+#, rust-format
+#~ msgid        "Failed to spawn child for '{unit_name}'."
+#~ msgstr       "无法为“{unit_name}”启动子进程。"
+#
+#
+# File: ../crates/backend/systema-sysk/src/socket.rs, line: 838
+#, rust-format
+#~ msgid        "Failed to wait for child for '{unit_name}'."
+#~ msgstr       "无法等待“{unit_name}”的子进程。"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 72
+#, rust-format
+#~ msgid        "connecting to control socket {path}"
+#~ msgstr       "正在连接到控制套接字 {path}"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 180
+#~ msgid        "manager.hello handshake"
+#~ msgstr       "manager.hello 握手"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 183
+#, rust-format
+#~ msgid        "control bus rejected us: {message}"
+#~ msgstr       "控制总线拒绝了我们：{message}"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 208
+#, rust-format
+#~ msgid        "encoding {method} request"
+#~ msgstr       "正在编码 {method} 请求"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 214
+#~ msgid        "control session closed (writer task gone)"
+#~ msgstr       "控制会话已关闭（写入任务已消失）"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 219
+#~ msgid        "control session closed"
+#~ msgstr       "控制会话已关闭"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 220
+#~ msgid        "control session closed (disconnected)"
+#~ msgstr       "控制会话已关闭（已断开连接）"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 226
+#~ msgid        "decoding manager.error payload"
+#~ msgstr       "正在解码 manager.error 载荷"
+#
+#
+# File: ../crates/backend/systema-sysw/systema-sysw-common/src/client.rs, line: 238
+#, rust-format
+#~ msgid        "decoding {method} reply"
+#~ msgstr       "正在解码 {method} 回复"
+#
+#
+#
 # File: ../crates/backend/systema-sysa/src/main.rs, line: 90
 #~ msgid        "Finder executable to run on daemon-reload (default: Finder= from init.conf; empty disables the scan)."
 #~ msgstr       "daemon-reload 时要运行的 finder 可执行文件（默认：init.conf 中的 Finder=；空值禁用扫描）。"
+#
 #
 #
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 341
@@ -2687,9 +2738,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysf/src/main.rs, line: 106
 #~ msgid        "Run only the finder executable with this file name (default: every finder found)."
 #~ msgstr       "只运行文件名为此值的查找器可执行文件（默认：运行找到的全部查找器）。"
+#
 #
 #
 #
@@ -2703,9 +2756,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 302
 #~ msgid        "Search for the systema-* binaries only in this directory (default: PATH)."
 #~ msgstr       "仅在此目录中查找 systema-* 二进制文件（默认：PATH）。"
+#
 #
 #
 #
@@ -2723,9 +2778,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysm/systema-sysm.linux/src/mount.rs, line: 38
 #~ msgid        "chmod for mount point failed"
 #~ msgstr       "为挂载点执行 chmod 失败"
+#
 #
 #
 #
@@ -2745,9 +2802,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 1443
 #~ msgid        "Worker disconnected"
 #~ msgstr       "工作进程已断开连接"
+#
 #
 #
 #
@@ -2774,9 +2833,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/ipc/control.rs, line: 568
 #~ msgid        "failed to load unit"
 #~ msgstr       "无法加载单元"
+#
 #
 #
 #
@@ -2803,6 +2864,7 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/scheduler/mod.rs, line: 623
 #, rust-format
 #~ msgid        "Cannot forward power transition for '{name}' to System Init (notify socket unreachable)."
@@ -2818,10 +2880,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/loader.rs, line: 275
 #, rust-format
 #~ msgid        "Unit {name} is a template and cannot be loaded directly"
 #~ msgstr       "单元 {name} 是模板，无法直接加载"
+#
 #
 #
 #
@@ -2850,10 +2914,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/graph/mod.rs, line: 142
 #, rust-format
 #~ msgid        "Unable to resolve dependency cycles after removing {count} edges."
 #~ msgstr       "移除 {count} 条边后仍无法解决依赖循环。"
+#
 #
 #
 #
@@ -2885,10 +2951,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-syss/src/pam.rs, line: 249
 #, rust-format
 #~ msgid        "pam_start('{pam_name}') failed: {r}"
 #~ msgstr       "pam_start('{pam_name}') 失败：{r}"
+#
 #
 #
 #
@@ -2922,10 +2990,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/libsysa/src/logging.rs, line: 237
 #, rust-format
 #~ msgid        "Invalid log level '{level}' ({e}); using info"
 #~ msgstr       "无效的日志级别“{level}”（{e}）；使用 info"
+#
 #
 #
 #
@@ -2961,9 +3031,11 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysi/src/main.rs, line: 272
 #~ msgid        "Directory for per-process log files (systema-sysa.log, ...)."
 #~ msgstr       "每个进程日志文件的目录（systema-sysa.log 等）。"
+#
 #
 #
 #
@@ -3003,10 +3075,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 169
 # File: ../crates/backend/systema-sysw/systema-sysw.systemd/src/dbus/mod.rs, line: 202
 #~ msgid        "timed out connecting to the system bus"
 #~ msgstr       "连接系统总线超时"
+#
 #
 #
 #
@@ -3049,10 +3123,12 @@ msgstr  ""
 #
 #
 #
+#
 # File: ../crates/backend/systema-sysa/src/unit/parser.rs, line: 252
 #, rust-format
 #~ msgid        "INI parse error in {name}: {error}."
 #~ msgstr       "{name} 的 INI 解析错误：{error}。"
+#
 #
 #
 #

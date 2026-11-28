@@ -1,0 +1,26 @@
+cargo-features = ["different-binary-name"]
+
+[package]
+name = "systema-sysf-rc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "systema-sysf-rc"
+filename = "systema-sysf.rc"
+path = "src/main.rs"
+
+[dependencies]
+sysa = { path = "../../../libsysa" }
+sysa-pager = { path = "../../../sysa-pager" }
+systema-sysf = { path = ".." }
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+colored.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true

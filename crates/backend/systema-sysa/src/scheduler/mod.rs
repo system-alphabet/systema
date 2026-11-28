@@ -2884,38 +2884,65 @@ fn build_unit_config(
         );
     }
 
-    let mut socket_units: Vec<String> = uf
-        .unit
-        .requires
-        .iter()
-        .chain(uf.unit.binds_to.iter())
-        .filter(|d| d.ends_with(".socket"))
-        .cloned()
-        .collect();
-    // Also include socket units from Sockets= (socket activation).
-    if let Some(svc) = &uf.service {
-        socket_units.extend(svc.sockets.iter().cloned());
-    }
-    socket_units.sort();
-    socket_units.dedup();
-
-    // Name every fd the service receives alongside `socket_units`, in that
-    // same order: the socket unit's `FileDescriptorName=`, or its own unit
-    // name (systemd's `socket_unit_default_fdname`).  Consumers such as
-    // `systemd-udevd` identify their sockets by these names ("varlink",
-    // "systemd-udevd-kernel.socket") and reject unnamed fds, so a
-    // positional-only handover leaves udev dead.
-    let socket_fd_names: Vec<String> = socket_units
-        .iter()
-        .map(|unit| {
+    // An `Accept=yes` socket runs one `foo@<id>.service` instance per
+    // connection and hands it that connection as its only activation fd
+    // (systemd's `service_collect_fds()`), named "connection".  The
+    // instance is a service, so System A routes its fd request through the
+    // socket unit (see `fd_request_source()` in the server).
+    let accept_socket = match uf.kind {
+        UnitKind::Service if sysa::unit_name::is_instance(&uf.name) => {
+            let socket_name = format!("{}.socket", uf.name.split('@').next().unwrap_or_default());
             all_units
-                .get(unit)
-                .and_then(|suf| suf.socket.as_ref())
-                .map(|s| s.file_descriptor_name.clone())
-                .filter(|n| !n.is_empty() && n.len() < 256 && !n.contains(':'))
-                .unwrap_or_else(|| unit.clone())
-        })
-        .collect();
+                .get(&socket_name)
+                .and_then(|unit| unit.socket.as_ref())
+                .filter(|socket| socket.accept)
+                .map(|_| socket_name)
+        }
+        _ => None,
+    };
+
+    let (socket_units, socket_fd_names) = match accept_socket {
+        Some(_) => (
+            vec![uf.name.clone()],
+            vec!["connection".to_string()],
+        ),
+        None => {
+            let mut socket_units: Vec<String> = uf
+                .unit
+                .requires
+                .iter()
+                .chain(uf.unit.binds_to.iter())
+                .filter(|d| d.ends_with(".socket"))
+                .cloned()
+                .collect();
+            // Also include socket units from Sockets= (socket activation).
+            if let Some(svc) = &uf.service {
+                socket_units.extend(svc.sockets.iter().cloned());
+            }
+            socket_units.sort();
+            socket_units.dedup();
+
+            // Name every fd the service receives alongside `socket_units`, in
+            // that same order: the socket unit's `FileDescriptorName=`, or its
+            // own unit name (systemd's `socket_unit_default_fdname`).
+            // Consumers such as `systemd-udevd` identify their sockets by
+            // these names ("varlink", "systemd-udevd-kernel.socket") and
+            // reject unnamed fds, so a positional-only handover leaves udev
+            // dead.
+            let socket_fd_names: Vec<String> = socket_units
+                .iter()
+                .map(|unit| {
+                    all_units
+                        .get(unit)
+                        .and_then(|suf| suf.socket.as_ref())
+                        .map(|s| s.file_descriptor_name.clone())
+                        .filter(|n| !n.is_empty() && n.len() < 256 && !n.contains(':'))
+                        .unwrap_or_else(|| unit.clone())
+                })
+                .collect();
+            (socket_units, socket_fd_names)
+        }
+    };
 
     UnitConfig {
         unit_name: uf.name.clone(),

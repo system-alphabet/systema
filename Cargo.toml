@@ -9,6 +9,7 @@ members = [
     "crates/backend/systema-placeholder",
     "crates/backend/systema-sysf",
     "crates/backend/systema-sysf/systema-sysf-systemd",
+    "crates/backend/systema-sysf/systema-sysf-rc",
     "crates/backend/systema-sysa",
     "crates/backend/systema-syss",
     "crates/backend/systema-syst",

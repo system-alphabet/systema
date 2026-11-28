@@ -40,6 +40,12 @@ pub struct Paths {
     pub runstatedir: &'static str,
     pub unit_search_paths: Vec<String>,
     pub generator_search_paths: Vec<String>,
+    /// SysV init script directories (`/etc/init.d`, ...): where the `rc`
+    /// finder looks for `rc` services.
+    pub sysv_initd_paths: Vec<String>,
+    /// Directories whose `rcN.d` subdirectories hold the SysV runlevel
+    /// links (`/etc` → `/etc/rc3.d`, `/etc/rc.d` → `/etc/rc.d/rc3.d`).
+    pub sysv_rc_paths: Vec<String>,
     /// Search paths for System F finder executables.  The `systema-sysf`
     /// executable locates format-specific finder binaries (e.g.
     /// `systema-sysf.systemd`) in these directories.
@@ -90,6 +96,8 @@ fn compute_paths() -> Paths {
             "SYSTEMA_GENERATOR_PATH",
             builtin::GENERATOR_SEARCH_PATHS,
         ),
+        sysv_initd_paths: resolve_list("SYSTEMA_SYSV_INITD_PATH", builtin::SYSV_INITD_SEARCH_PATHS),
+        sysv_rc_paths: resolve_list("SYSTEMA_SYSV_RC_PATH", builtin::SYSV_RC_SEARCH_PATHS),
         finder_search_paths: resolve_list("SYSTEMA_FINDER_PATH", builtin::FINDER_SEARCH_PATHS),
         systema_bin_search_paths: resolve_list(
             "SYSTEMA_BIN_PATH",
@@ -164,6 +172,11 @@ pub fn builtin_defaults() -> Vec<(&'static str, String)> {
         ("SYSTEMA_RELOAD_SOCKET", builtin::RELOAD_SOCKET.to_string()),
         ("SYSTEMA_UNIT_PATH", list(builtin::UNIT_SEARCH_PATHS)),
         (
+            "SYSTEMA_SYSV_INITD_PATH",
+            list(builtin::SYSV_INITD_SEARCH_PATHS),
+        ),
+        ("SYSTEMA_SYSV_RC_PATH", list(builtin::SYSV_RC_SEARCH_PATHS)),
+        (
             "SYSTEMA_GENERATOR_PATH",
             list(builtin::GENERATOR_SEARCH_PATHS),
         ),
@@ -237,6 +250,8 @@ pub fn debug_dump(log_file: &str) {
         ("SYSTEMA_INIT_CONF_DIR", p.init_conf_dir.to_string()),
         ("SYSTEMA_RELOAD_SOCKET", p.reload_socket.to_string()),
         ("SYSTEMA_UNIT_PATH", list(&p.unit_search_paths)),
+        ("SYSTEMA_SYSV_INITD_PATH", list(&p.sysv_initd_paths)),
+        ("SYSTEMA_SYSV_RC_PATH", list(&p.sysv_rc_paths)),
         ("SYSTEMA_GENERATOR_PATH", list(&p.generator_search_paths)),
         ("SYSTEMA_FINDER_PATH", list(&p.finder_search_paths)),
         ("SYSTEMA_BIN_PATH", list(&p.systema_bin_search_paths)),

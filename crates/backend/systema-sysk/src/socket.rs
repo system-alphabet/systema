@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::os::unix::process::CommandExt;
+use std::os::unix::io::RawFd;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use tokio::net::{TcpListener, UnixListener};
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
 use crate::config::SocketConfig;
@@ -51,8 +53,50 @@ pub struct ManagedSocket {
 /// Global manager for all socket units this worker owns.
 pub type SocketManager = Arc<Mutex<HashMap<String, ManagedSocket>>>;
 
+/// Accepted `Accept=yes` connections, keyed by the service instance unit
+/// name that will handle them.
+///
+/// The socket worker accepts the connection, tells System A to start the
+/// instance, and keeps the fd here until the service worker asks for it
+/// (`socket.request_fd`).  This mirrors systemd's `Service.socket_fd`,
+/// which stays owned by the manager between `accept()` and the service's
+/// `exec`.
+pub type AcceptedConnections = Arc<Mutex<HashMap<String, OwnedFd>>>;
+
 pub fn new_manager() -> SocketManager {
     Arc::new(Mutex::new(HashMap::new()))
+}
+
+pub fn new_accepted_connections() -> AcceptedConnections {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Process-wide sequence for naming `Accept=yes` service instances.
+///
+/// It never resets, so restarting a socket unit cannot reuse a name that a
+/// still-running instance owns.
+static ACCEPT_INSTANCE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Hand the accepted connection for `instance` to its service worker.
+///
+/// Removes the entry: the fd is owned by the caller afterwards.
+pub fn take_accepted_connection(accepted: &AcceptedConnections, instance: &str) -> Option<OwnedFd> {
+    accepted.lock().remove(instance)
+}
+
+/// Drop every accepted connection that belongs to `socket_unit`.
+///
+/// Called when the socket unit stops or restarts: connections that no
+/// service claimed yet are closed with the socket, like systemd's
+/// `socket_release_all()`.
+pub fn clear_accepted_connections(accepted: &AcceptedConnections, socket_unit: &str) {
+    let prefix = socket_unit
+        .strip_suffix(".socket")
+        .unwrap_or(socket_unit)
+        .to_string();
+    accepted
+        .lock()
+        .retain(|instance, _| !instance.starts_with(&format!("{prefix}@")));
 }
 
 /// Raw fd of a bound listener.
@@ -337,9 +381,21 @@ pub fn start_socket(manager: &SocketManager, unit_name: &str, config: &SocketCon
     Ok(())
 }
 
-/// Spawn accept loops for Accept=yes sockets.  Each accepted connection
-/// spawns a child process with the accepted fd as fd 3.
-pub fn spawn_accept_loops(manager: &SocketManager, unit_name: &str) {
+/// Spawn accept loops for `Accept=yes` sockets.
+///
+/// Every accepted connection is named as a fresh instance of
+/// `service_template` (`foo@<n>.service`), stored in `accepted`, and
+/// announced to System A through `accepted_tx` so the instance can be
+/// started.  The service then collects the connection fd with
+/// `socket.request_fd` and receives it as fd 3 (`LISTEN_FDS=1`,
+/// `LISTEN_FDNAMES=connection`), like systemd's `service_collect_fds()`.
+pub fn spawn_accept_loops(
+    manager: &SocketManager,
+    unit_name: &str,
+    service_template: &str,
+    accepted: &AcceptedConnections,
+    accepted_tx: &UnboundedSender<String>,
+) {
     let accept_tasks = {
         let mut guard = manager.lock();
         let ms = match guard.get_mut(unit_name) {
@@ -347,22 +403,29 @@ pub fn spawn_accept_loops(manager: &SocketManager, unit_name: &str) {
             _ => return,
         };
 
+        // Instance names stay unique for the whole process lifetime.
         let mut tasks = Vec::new();
         for ls in &ms.listeners {
             match ls {
                 BoundSocket::Tcp(l) => {
                     let listener = try_clone_tcp(l);
                     let name = unit_name.to_string();
+                    let template = service_template.to_string();
+                    let accepted = accepted.clone();
+                    let accepted_tx = accepted_tx.clone();
                     let task = tokio::spawn(async move {
-                        accept_loop_tcp(listener, &name).await;
+                        accept_loop_tcp(listener, &name, &template, &accepted, &accepted_tx).await;
                     });
                     tasks.push(task);
                 }
                 BoundSocket::UnixStream(l) => {
                     let listener = try_clone_unix(l);
                     let name = unit_name.to_string();
+                    let template = service_template.to_string();
+                    let accepted = accepted.clone();
+                    let accepted_tx = accepted_tx.clone();
                     let task = tokio::spawn(async move {
-                        accept_loop_unix(listener, &name).await;
+                        accept_loop_unix(listener, &name, &template, &accepted, &accepted_tx).await;
                     });
                     tasks.push(task);
                 }
@@ -1300,18 +1363,27 @@ fn create_fifo(path: &str, mode: &str) -> Result<RawFd> {
 // Accept loops for Accept=yes
 // ---------------------------------------------------------------------------
 
-async fn accept_loop_tcp(listener: TcpListener, unit_name: &str) {
+async fn accept_loop_tcp(
+    listener: TcpListener,
+    unit_name: &str,
+    service_template: &str,
+    accepted: &AcceptedConnections,
+    accepted_tx: &UnboundedSender<String>,
+) {
     loop {
         match listener.accept().await {
-            Ok((stream, _)) => {
-                let fd = stream.as_raw_fd();
-                let name = unit_name.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = spawn_child_with_fd(&name, fd).await {
-                        warn!("spawn_child_with_fd (TCP): {}", e);
-                    }
-                });
-            }
+            Ok((stream, _)) => match stream.into_std() {
+                Ok(stream) => {
+                    cache_accepted_connection(
+                        accepted,
+                        accepted_tx,
+                        unit_name,
+                        service_template,
+                        OwnedFd::from(stream),
+                    );
+                }
+                Err(e) => warn!("Cannot take TCP connection on '{}': {}", unit_name, e),
+            },
             Err(e) => {
                 warn!("TCP accept error on '{}': {}", unit_name, e);
                 break;
@@ -1320,18 +1392,27 @@ async fn accept_loop_tcp(listener: TcpListener, unit_name: &str) {
     }
 }
 
-async fn accept_loop_unix(listener: UnixListener, unit_name: &str) {
+async fn accept_loop_unix(
+    listener: UnixListener,
+    unit_name: &str,
+    service_template: &str,
+    accepted: &AcceptedConnections,
+    accepted_tx: &UnboundedSender<String>,
+) {
     loop {
         match listener.accept().await {
-            Ok((stream, _)) => {
-                let fd = stream.as_raw_fd();
-                let name = unit_name.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = spawn_child_with_fd(&name, fd).await {
-                        warn!("spawn_child_with_fd (Unix): {}", e);
-                    }
-                });
-            }
+            Ok((stream, _)) => match stream.into_std() {
+                Ok(stream) => {
+                    cache_accepted_connection(
+                        accepted,
+                        accepted_tx,
+                        unit_name,
+                        service_template,
+                        OwnedFd::from(stream),
+                    );
+                }
+                Err(e) => warn!("Cannot take Unix connection on '{}': {}", unit_name, e),
+            },
             Err(e) => {
                 warn!("Unix accept error on '{}': {}", unit_name, e);
                 break;
@@ -1340,58 +1421,58 @@ async fn accept_loop_unix(listener: UnixListener, unit_name: &str) {
     }
 }
 
-/// Spawn a child process that receives a socket fd as fd 3 (sd_listen_fds
-/// convention).  The child reads/writes to fd 3 directly.
-async fn spawn_child_with_fd(unit_name: &str, fd: RawFd) -> Result<()> {
-    // In a real deployment, the service path would come from the associated
-    // service unit's ExecStart.  Here we use a placeholder — the convention
-    // is that the child reads from / writes to fd 3.
-    let service_path = std::env::var("SYSTEMK_SERVICE_PATH").unwrap_or_else(|_| {
-        sysa::paths::instance()
-            .systema_socket_handler_path
-            .to_string()
-    });
+/// Name an accepted connection as a service instance and park its fd until
+/// the instance collects it.
+///
+/// systemd builds the same name in `socket_load_service_unit()`:
+/// `<socket prefix>@<instance>.service`, with the instance derived from the
+/// connection.  A sequential counter is enough here because the instance
+/// name is only used to pair the queued start with the cached fd.
+fn cache_accepted_connection(
+    accepted: &AcceptedConnections,
+    accepted_tx: &UnboundedSender<String>,
+    socket_unit: &str,
+    service_template: &str,
+    fd: OwnedFd,
+) {
+    let seq = ACCEPT_INSTANCE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let Some(instance) = accept_instance_name(service_template, seq) else {
+        // Accept=yes requires a `foo@.service` template; systemd refuses to
+        // load such a socket unit.  We already run, so drop the connection
+        // instead of failing the listener.
+        warn!(
+            "Socket '{}' has Accept=yes but Service='{}' is not a template; dropping connection",
+            socket_unit, service_template
+        );
+        return;
+    };
 
-    // Extract the raw fd value before the async move so the closure owns it.
-    let raw_fd = fd;
-
-    let mut cmd = tokio::process::Command::new(&service_path);
-    cmd.arg(unit_name);
-
-    unsafe {
-        cmd.as_std_mut().pre_exec(move || {
-            // Pass the accepted connection fd as fd 3.
-            let ret = libc::dup2(raw_fd, 3);
-            if ret < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            // Close the original fd (we don't need it anymore).
-            if raw_fd != 3 {
-                libc::close(raw_fd);
-            }
-            Ok(())
-        });
+    accepted.lock().insert(instance.clone(), fd);
+    let payload = format!("{socket_unit}\n{instance}");
+    if accepted_tx.send(payload).is_err() {
+        // The forwarder is gone (worker shutting down): do not leak the fd.
+        accepted.lock().remove(&instance);
+        warn!(
+            "Cannot request start of '{}': socket worker is shutting down",
+            instance
+        );
+        return;
     }
+    info!(
+        "Socket '{}' accepted a connection, activating '{}'",
+        socket_unit, instance
+    );
+}
 
-    let mut child = cmd.spawn().with_context(|| {
-        sysa::l10n::fmt(
-            sysa::l10n::t_("Failed to spawn child for '{unit_name}'."),
-            &[("unit_name", unit_name)],
-        )
-    })?;
-
-    let status = child.wait().await.with_context(|| {
-        sysa::l10n::fmt(
-            sysa::l10n::t_("Failed to wait for child for '{unit_name}'."),
-            &[("unit_name", unit_name)],
-        )
-    })?;
-
-    if !status.success() {
-        warn!("Child for '{}' exited with: {}", unit_name, status);
+/// `foo@.service` + sequence `n` -> `foo@<n>.service`.
+fn accept_instance_name(service_template: &str, seq: u64) -> Option<String> {
+    if !sysa::unit_name::is_template(service_template) {
+        return None;
     }
-
-    Ok(())
+    let prefix = service_template
+        .strip_suffix(".service")?
+        .strip_suffix('@')?;
+    Some(format!("{prefix}@{seq}.service"))
 }
 
 // ---------------------------------------------------------------------------

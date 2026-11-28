@@ -84,8 +84,13 @@ pub const KEYS: &[&str] = &[
     KEY_SPLASH,
 ];
 
-/// The finder run when `Finder=` is not configured at all.
-pub const DEFAULT_FINDER: &str = "systema-sysf.systemd";
+/// The finders run when `Finder=` is not configured at all.
+///
+/// The SysV (`rc`) finder runs first: when a native systemd unit with the
+/// same name exists, the systemd finder runs later in the same staging pass
+/// and its definition replaces the compatibility unit, so native units stay
+/// authoritative.
+pub const DEFAULT_FINDER: &str = "systema-sysf.rc:systema-sysf.systemd";
 
 /// Environment variable per module, in the `SYSTEMA_SYS*` style used by the
 /// `*_FLAGS` overrides.  Environment variables outrank the files and are

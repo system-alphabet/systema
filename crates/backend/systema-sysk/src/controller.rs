@@ -1,16 +1,21 @@
 use crate::activation::ActivationRegistry;
 use crate::config::SocketConfig;
-use crate::socket::{self, SocketManager};
+use crate::socket::{self, AcceptedConnections, SocketManager};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use sysa::controller::{decode_unit_config, UnitController, UnitStatus};
 use sysa::worker_ipc::EventPublisher;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub struct SocketController {
     manager: SocketManager,
     activation: Arc<ActivationRegistry>,
     events: EventPublisher,
+    accepted: AcceptedConnections,
+    /// Announces accepted `Accept=yes` connections to System A; the
+    /// connection fd itself stays in `accepted` until the service asks.
+    accepted_tx: UnboundedSender<String>,
 }
 
 impl SocketController {
@@ -18,11 +23,15 @@ impl SocketController {
         manager: SocketManager,
         activation: Arc<ActivationRegistry>,
         events: EventPublisher,
+        accepted: AcceptedConnections,
+        accepted_tx: UnboundedSender<String>,
     ) -> Self {
         SocketController {
             manager,
             activation,
             events,
+            accepted,
+            accepted_tx,
         }
     }
 
@@ -81,10 +90,23 @@ impl UnitController for SocketController {
         let sc = SocketConfig::from_unit_config(&cfg)
             .context(sysa::l10n::t_("no SocketConfig in UnitConfig"))?;
         socket::start_socket(&self.manager, unit_name, &sc)?;
-        let service = Self::service_name(&sc, unit_name);
         if sc.accept {
-            socket::spawn_accept_loops(&self.manager, unit_name);
+            // `Accept=yes` instantiates the `foo@.service` template per
+            // connection; `Service=` is not consulted (systemd refuses an
+            // explicit service for accepting socket units).
+            let template = format!(
+                "{}@.service",
+                unit_name.strip_suffix(".socket").unwrap_or(unit_name)
+            );
+            socket::spawn_accept_loops(
+                &self.manager,
+                unit_name,
+                &template,
+                &self.accepted,
+                &self.accepted_tx,
+            );
         } else {
+            let service = Self::service_name(&sc, unit_name);
             // Data-arrival activation: watch the bound fds for readability.
             // The monitor never reads, so the fd handed to the service
             // keeps every byte; it just decides when to start the service.
@@ -102,12 +124,14 @@ impl UnitController for SocketController {
     async fn stop(&self, unit_name: &str) -> Result<()> {
         self.activation.stop_unit(unit_name);
         socket::stop_socket(&self.manager, unit_name)?;
+        socket::clear_accepted_connections(&self.accepted, unit_name);
         Ok(())
     }
 
     async fn restart(&self, unit_name: &str, config: &[u8], invocation_id: &str) -> Result<()> {
         self.activation.stop_unit(unit_name);
         let _ = socket::stop_socket(&self.manager, unit_name);
+        socket::clear_accepted_connections(&self.accepted, unit_name);
         self.start(unit_name, config, invocation_id).await
     }
 

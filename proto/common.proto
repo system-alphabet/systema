@@ -188,12 +188,17 @@ message UnitConfig {
     // Socket units this unit depends on (Requires=/BindsTo= *.socket).
     // The service worker requests their listener fds (LISTEN_FDS) from the
     // socket worker when starting the process (socket activation).
+    // For an `Accept=yes` service instance this holds the instance's own
+    // name: the requested fd is the single connection the socket worker
+    // accepted for that instance.
     repeated string socket_units = 11;
     // File descriptor names for `socket_units`, in the same order (filled by
     // System A from each socket unit's `FileDescriptorName=`, defaulting to
     // the socket unit's own name).  The service worker exports them as
     // `LISTEN_FDNAMES` next to `LISTEN_FDS`; consumers such as systemd-udevd
     // identify their passed sockets by fd name, not by position.
+    // An `Accept=yes` instance carries the single name "connection", like
+    // systemd's `socket_fdname()`.
     repeated string socket_fd_names = 13;
     // Absolute cgroup path the worker must place the spawned process into
     // before exec (filled by System A after a successful `resource.prepare`

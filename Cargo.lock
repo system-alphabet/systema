@@ -1224,6 +1224,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "systema-sysf-rc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "serde_json",
+ "sysa",
+ "systema-sysf",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "systema-sysf-systemd"
 version = "0.1.0"
 dependencies = [

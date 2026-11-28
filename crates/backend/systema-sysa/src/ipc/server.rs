@@ -510,9 +510,8 @@ async fn handle_worker_session(
                         }
                         let target = {
                             let state = alloc_for_recv.read();
-                            state
-                                .worker_for_unit(&unit_name)
-                                .map(|w| w.worker_id.clone())
+                            let source = fd_request_source(&state, &unit_name);
+                            state.worker_for_unit(&source).map(|w| w.worker_id.clone())
                         };
                         let Some(sock_wid) = target else {
                             warn!(
@@ -870,6 +869,62 @@ async fn handle_worker_session(
                         continue;
                     }
 
+                    if env.method == "socket.accepted" {
+                        // `Accept=yes` connection: payload is
+                        // "<socket unit>\n<service instance>" (raw UTF-8).
+                        // The socket worker already accepted the connection
+                        // and holds its fd under the instance name; starting
+                        // the instance makes the service worker collect it
+                        // with `socket.request_fd`.
+                        let payload = String::from_utf8_lossy(&env.payload);
+                        let Some((socket_unit, instance)) = payload.split_once('\n') else {
+                            warn!(
+                                "socket.accepted from worker '{}' with malformed payload",
+                                worker_id_recv
+                            );
+                            continue;
+                        };
+                        let (socket_unit, instance) = (socket_unit.trim(), instance.trim());
+                        if socket_unit.is_empty() || instance.is_empty() {
+                            warn!(
+                                "socket.accepted from worker '{}' with empty unit name",
+                                worker_id_recv
+                            );
+                            continue;
+                        }
+                        info!(
+                            "Socket '{}' accepted a connection — starting '{}'",
+                            socket_unit, instance
+                        );
+                        if let Err(e) =
+                            crate::unit::template::ensure_defined(&alloc_for_recv, instance)
+                        {
+                            warn!(
+                                "Accepted connection has no service instance '{}': {}",
+                                instance, e
+                            );
+                            continue;
+                        }
+                        match crate::scheduler::enqueue_start_with_mode(
+                            alloc_for_recv.clone(),
+                            instance,
+                            crate::state::JobMode::Replace,
+                        )
+                        .await
+                        {
+                            Ok(job_id) => {
+                                info!("Enqueued job {job_id} for accepted connection '{instance}'");
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Cannot start accepted connection service '{}': {}",
+                                    instance, e
+                                );
+                            }
+                        }
+                        continue;
+                    }
+
                     if env.method == "cgroup.metrics" {
                         let update = match CgroupMetricsUpdate::decode(env.payload.as_slice()) {
                             Ok(u) => u,
@@ -1097,6 +1152,28 @@ fn resolve_socket_service(allocator: &AllocatorHandle, socket_unit: &str) -> Str
         .filter(|sc| !sc.service.is_empty())
         .map(|sc| sc.service.clone())
         .unwrap_or(derived)
+}
+
+/// The unit whose worker owns the activation fd for a `socket.request_fd`
+/// payload.
+///
+/// A service normally asks under the name of a socket unit.  An `Accept=yes`
+/// service instance asks under its own name, because the fd it receives is
+/// the connection the socket worker accepted for that instance; route such
+/// a request to the instance's socket unit.
+fn fd_request_source(state: &crate::state::AllocatorState, unit_name: &str) -> String {
+    if let Some(at) = unit_name.find('@') {
+        let socket_name = format!("{}.socket", &unit_name[..at]);
+        if state
+            .units
+            .get(&socket_name)
+            .and_then(|unit| unit.socket.as_ref())
+            .is_some_and(|socket| socket.accept)
+        {
+            return socket_name;
+        }
+    }
+    unit_name.to_string()
 }
 
 /// (Re)register the EventBus subscriber for a worker connection.
